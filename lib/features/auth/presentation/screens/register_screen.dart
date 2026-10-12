@@ -24,6 +24,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // Estados de control
   int _currentStep = 1;
   bool _cedulaError = false;
+  bool _cedulaYaRegistrada = false;
+  String? _colegioId;
   bool _isLoading = false;
   bool _termsAccepted = false;
   bool _obscurePassword = true;
@@ -37,6 +39,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
 
+  /// Cédula en el formato guardado en la base: letra, guion y solo números.
+  /// Ej.: "V-30613062" (quita puntos, espacios y cualquier otro símbolo).
+  String get _cedulaNormalizada =>
+      '$_selectedPrefix${_cedulaController.text.replaceAll(RegExp(r'[^0-9]'), '')}';
+
   @override
   void dispose() {
     _cedulaController.dispose();
@@ -49,51 +56,76 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
-  // --- CONSULTA REAL A SUPABASE: VALIDAR CÉDULA
+  // --- VALIDAR CÉDULA (llama a la función segura de Supabase)
   Future<void> validateCedula() async {
     if (!_step1FormKey.currentState!.validate()) return;
 
     setState(() {
       _isLoading = true;
       _cedulaError = false;
+      _cedulaYaRegistrada = false;
     });
 
-    final fullCedula = '$_selectedPrefix${_cedulaController.text.trim()}';
-
     try {
-      final response = await supabase
-          .from('representantes')
-          .select()
-          .eq('cedula', fullCedula)
-          .maybeSingle();
+      final res = await supabase.rpc(
+        'verificar_cedula_representante',
+        params: {'p_cedula': _cedulaNormalizada},
+      );
+      final data = res as Map<String, dynamic>;
+      if (!mounted) return;
 
-      if (response == null) {
-        setState(() {
-          _cedulaError = true;
-          _isLoading = false;
-        });
-      } else {
-        setState(() {
-          _nombresController.text = response['nombres'] ?? '';
-          _apellidosController.text = response['apellidos'] ?? '';
-          _emailController.text = response['correo_electronico'] ?? '';
-          _phoneController.text = response['telefono_whatsapp'] ?? '';
-          _currentStep = 2;
-          _isLoading = false;
-        });
+      switch (data['estado'] as String) {
+        case 'disponible':
+          setState(() {
+            _colegioId = data['colegio_id'] as String?;
+            _currentStep = 2;
+            _isLoading = false;
+          });
+          break;
+
+        case 'ya_registrada':
+          setState(() {
+            _cedulaYaRegistrada = true;
+            _isLoading = false;
+          });
+          break;
+
+        case 'colegio_requerido':
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Tu cédula figura en más de una institución. Comunícate con la administración.',
+              ),
+              backgroundColor: Colors.redAccent,
+            ),
+          );
+          break;
+
+        default: // no_registrada o formato_invalido
+          setState(() {
+            _cedulaError = true;
+            _isLoading = false;
+          });
       }
+    } on PostgrestException {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No pudimos validar la cédula. Intenta de nuevo.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
     } catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al consultar base de datos: $e'),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error inesperado: $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
     }
   }
 
@@ -102,7 +134,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (!_termsAccepted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Debes aceptar los términos y condiciones para continuar.'),
+          content: Text(
+            'Debes aceptar los términos y condiciones para continuar.',
+          ),
           backgroundColor: Colors.redAccent,
         ),
       );
@@ -123,8 +157,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
         email: email,
         password: password,
         data: {
-          'nombre_completo': '${_nombresController.text} ${_apellidosController.text}',
-          'cedula': '$_selectedPrefix${_cedulaController.text.trim()}',
+          'nombre_completo':
+              '${_nombresController.text} ${_apellidosController.text}',
+          'cedula': _cedulaNormalizada,
+          'colegio_id': _colegioId,
         },
       );
 
@@ -139,9 +175,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
       setState(() {
         _isLoading = false;
       });
+      // La base rechaza el registro si la cédula no está disponible
+      final msg = e.message.contains('Database error')
+          ? 'No pudimos crear la cuenta con esa cédula. Es posible que ya esté registrada; intenta iniciar sesión.'
+          : e.message;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.message), backgroundColor: Colors.redAccent),
+          SnackBar(content: Text(msg), backgroundColor: Colors.redAccent),
         );
       }
     } catch (e) {
@@ -150,7 +190,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error inesperado: $e'), backgroundColor: Colors.redAccent),
+          SnackBar(
+            content: Text('Error inesperado: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
         );
       }
     }
@@ -166,7 +209,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return Dialog(
           backgroundColor: Colors.white,
           surfaceTintColor: Colors.transparent,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
           child: Container(
             width: 440,
             padding: const EdgeInsets.all(32),
@@ -179,11 +224,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     color: const Color(0xFFFFFBEB),
                     borderRadius: BorderRadius.circular(16),
                   ),
-                  child: const Icon(Icons.mail_outline, color: Color(0xFFD97706), size: 30),
+                  child: const Icon(
+                    Icons.mail_outline,
+                    color: Color(0xFFD97706),
+                    size: 30,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFFFEF3C7),
                     borderRadius: BorderRadius.circular(20),
@@ -202,20 +254,36 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 const Text(
                   'Confirma tu correo electrónico',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.darkNavy),
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.darkNavy,
+                  ),
                 ),
                 const SizedBox(height: 10),
                 RichText(
                   textAlign: TextAlign.center,
                   text: TextSpan(
-                    style: const TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.4),
+                    style: const TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 13,
+                      height: 1.4,
+                    ),
                     children: [
-                      const TextSpan(text: 'Hemos enviado un enlace de confirmación a\n'),
+                      const TextSpan(
+                        text: 'Hemos enviado un enlace de confirmación a\n',
+                      ),
                       TextSpan(
                         text: _emailController.text,
-                        style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.darkNavy),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.darkNavy,
+                        ),
                       ),
-                      const TextSpan(text: '.\nPor favor, abre tu correo para activar tu cuenta.'),
+                      const TextSpan(
+                        text:
+                            '.\nPor favor, abre tu correo para activar tu cuenta.',
+                      ),
                     ],
                   ),
                 ),
@@ -229,7 +297,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   child: const Row(
                     children: [
-                      Icon(Icons.access_time, color: Color(0xFFD97706), size: 20),
+                      Icon(
+                        Icons.access_time,
+                        color: Color(0xFFD97706),
+                        size: 20,
+                      ),
                       SizedBox(width: 10),
                       Expanded(
                         child: Column(
@@ -237,11 +309,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           children: [
                             Text(
                               'El enlace expira en 15 minutos',
-                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF92400E)),
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF92400E),
+                              ),
                             ),
                             Text(
                               'Revisa también tu carpeta de correo no deseado (Spam).',
-                              style: TextStyle(fontSize: 11, color: Color(0xFFB45309)),
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFFB45309),
+                              ),
                             ),
                           ],
                         ),
@@ -258,13 +337,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       Navigator.pop(context);
                       Navigator.pushReplacement(
                         context,
-                        MaterialPageRoute(builder: (context) => const LoginScreen()),
+                        MaterialPageRoute(
+                          builder: (context) => const LoginScreen(),
+                        ),
                       );
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primaryBlue,
                       foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                       elevation: 0,
                     ),
                     child: const Text(
@@ -302,7 +385,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return Dialog(
           backgroundColor: Colors.white,
           surfaceTintColor: Colors.transparent,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
           child: Container(
             width: 440,
             padding: const EdgeInsets.all(32),
@@ -315,11 +400,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     color: const Color(0xFFFFFBEB),
                     borderRadius: BorderRadius.circular(16),
                   ),
-                  child: const Icon(Icons.access_time, color: Color(0xFFD97706), size: 30),
+                  child: const Icon(
+                    Icons.access_time,
+                    color: Color(0xFFD97706),
+                    size: 30,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFFFEE2E2),
                     borderRadius: BorderRadius.circular(20),
@@ -338,13 +430,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 const Text(
                   'El enlace de confirmación ha\nexpirado',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.darkNavy),
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.darkNavy,
+                  ),
                 ),
                 const SizedBox(height: 10),
                 const Text(
                   'Por seguridad, los enlaces solo son válidos durante 15 minutos.\nSolicita uno nuevo para continuar.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.4),
+                  style: TextStyle(
+                    color: AppColors.textMuted,
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
                 ),
                 const SizedBox(height: 20),
                 Container(
@@ -356,7 +456,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   child: const Row(
                     children: [
-                      Icon(Icons.access_time, color: Color(0xFFD97706), size: 20),
+                      Icon(
+                        Icons.access_time,
+                        color: Color(0xFFD97706),
+                        size: 20,
+                      ),
                       SizedBox(width: 10),
                       Expanded(
                         child: Column(
@@ -364,11 +468,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           children: [
                             Text(
                               'Enlace vencido',
-                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF92400E)),
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF92400E),
+                              ),
                             ),
                             Text(
                               'Tu cuenta todavía no ha sido activada.',
-                              style: TextStyle(fontSize: 11, color: Color(0xFFB45309)),
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFFB45309),
+                              ),
                             ),
                           ],
                         ),
@@ -394,7 +505,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       } on AuthException catch (e) {
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text(e.message), backgroundColor: Colors.redAccent),
+                            SnackBar(
+                              content: Text(e.message),
+                              backgroundColor: Colors.redAccent,
+                            ),
                           );
                         }
                       }
@@ -402,13 +516,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primaryBlue,
                       foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                       elevation: 0,
                     ),
                     child: const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Text('Reenviar Correo de Verificación', style: TextStyle(fontWeight: FontWeight.bold)),
+                        Text(
+                          'Reenviar Correo de Verificación',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
                         SizedBox(width: 8),
                         Icon(Icons.arrow_forward, size: 18),
                       ],
@@ -433,7 +552,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return Dialog(
           backgroundColor: Colors.white,
           surfaceTintColor: Colors.transparent,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
           child: Container(
             width: 440,
             padding: const EdgeInsets.all(32),
@@ -446,11 +567,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     color: Color(0xFFDCFCE7),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.check, color: AppColors.successGreen, size: 30),
+                  child: const Icon(
+                    Icons.check,
+                    color: AppColors.successGreen,
+                    size: 30,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFFDCFCE7),
                     borderRadius: BorderRadius.circular(20),
@@ -469,13 +597,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 const Text(
                   '¡Cuenta Activada Exitosamente!',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.darkNavy),
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.darkNavy,
+                  ),
                 ),
                 const SizedBox(height: 10),
                 const Text(
                   'Tu identidad y correo fueron verificados. Redirigiendo a tu panel familiar...',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.4),
+                  style: TextStyle(
+                    color: AppColors.textMuted,
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
                 ),
                 const SizedBox(height: 20),
                 Container(
@@ -487,7 +623,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   child: const Row(
                     children: [
-                      Icon(Icons.shield_outlined, color: AppColors.primaryBlue, size: 20),
+                      Icon(
+                        Icons.shield_outlined,
+                        color: AppColors.primaryBlue,
+                        size: 20,
+                      ),
                       SizedBox(width: 10),
                       Expanded(
                         child: Column(
@@ -495,11 +635,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           children: [
                             Text(
                               'Sesión segura emitida',
-                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkNavy),
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.darkNavy,
+                              ),
                             ),
                             Text(
                               'Access Token y Refresh Token mediante Cookie HttpOnly (Secure / SameSite)',
-                              style: TextStyle(fontSize: 10, color: AppColors.textMuted),
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: AppColors.textMuted,
+                              ),
                             ),
                           ],
                         ),
@@ -517,20 +664,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       Navigator.pushReplacement(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => const RepresentativeDashboardScreen(),
+                          builder: (context) =>
+                              const RepresentativeDashboardScreen(),
                         ),
                       );
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primaryBlue,
                       foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                       elevation: 0,
                     ),
                     child: const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Text('Ir a mi panel familiar', style: TextStyle(fontWeight: FontWeight.bold)),
+                        Text(
+                          'Ir a mi panel familiar',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
                         SizedBox(width: 8),
                         Icon(Icons.arrow_forward, size: 18),
                       ],
@@ -584,7 +737,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   color: AppColors.primaryBlue,
                                   borderRadius: BorderRadius.circular(10),
                                 ),
-                                child: const Icon(Icons.phonelink_setup, color: Colors.white, size: 22),
+                                child: const Icon(
+                                  Icons.phonelink_setup,
+                                  color: Colors.white,
+                                  size: 22,
+                                ),
                               ),
                               const SizedBox(width: 12),
                               const Text(
@@ -630,18 +787,34 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 ),
                               ),
                               const SizedBox(height: 32),
-                              _buildFeatureItem(Icons.verified_user_outlined, 'Identidad pre-validada'),
-                              _buildFeatureItem(Icons.people_outline, 'Hijos vinculados automáticamente'),
-                              _buildFeatureItem(Icons.lock_outline, 'Acceso seguro y privado'),
+                              _buildFeatureItem(
+                                Icons.verified_user_outlined,
+                                'Identidad pre-validada',
+                              ),
+                              _buildFeatureItem(
+                                Icons.people_outline,
+                                'Hijos vinculados automáticamente',
+                              ),
+                              _buildFeatureItem(
+                                Icons.lock_outline,
+                                'Acceso seguro y privado',
+                              ),
                             ],
                           ),
                           Row(
                             children: [
-                              const Icon(Icons.shield_outlined, color: Colors.white54, size: 16),
+                              const Icon(
+                                Icons.shield_outlined,
+                                color: Colors.white54,
+                                size: 16,
+                              ),
                               const SizedBox(width: 8),
                               Text(
                                 'Protección de datos y acceso basado en identidad',
-                                style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12),
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.6),
+                                  fontSize: 12,
+                                ),
                               ),
                             ],
                           ),
@@ -666,8 +839,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         alignment: Alignment.centerLeft,
                         child: TextButton.icon(
                           onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.arrow_back, size: 16, color: AppColors.textMuted),
-                          label: const Text('Volver al inicio', style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                          icon: const Icon(
+                            Icons.arrow_back,
+                            size: 16,
+                            color: AppColors.textMuted,
+                          ),
+                          label: const Text(
+                            'Volver al inicio',
+                            style: TextStyle(
+                              color: AppColors.textMuted,
+                              fontSize: 13,
+                            ),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 20),
@@ -682,13 +865,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           children: [
                             Expanded(
                               child: Container(
-                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 10,
+                                ),
                                 decoration: BoxDecoration(
                                   color: Colors.white,
                                   borderRadius: BorderRadius.circular(8),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: Colors.black.withValues(alpha: 0.05),
+                                      color: Colors.black.withValues(
+                                        alpha: 0.05,
+                                      ),
                                       blurRadius: 4,
                                       offset: const Offset(0, 2),
                                     ),
@@ -711,11 +898,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 onTap: () {
                                   Navigator.pushReplacement(
                                     context,
-                                    MaterialPageRoute(builder: (context) => const LoginScreen()),
+                                    MaterialPageRoute(
+                                      builder: (context) => const LoginScreen(),
+                                    ),
                                   );
                                 },
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(vertical: 10),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 10,
+                                  ),
                                   color: Colors.transparent,
                                   child: const Center(
                                     child: Text(
@@ -734,24 +925,47 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         ),
                       ),
                       const SizedBox(height: 32),
-                      if (_currentStep == 1) _buildStep1Widget() else _buildStep2Widget(),
+                      if (_currentStep == 1)
+                        _buildStep1Widget()
+                      else
+                        _buildStep2Widget(),
                       const SizedBox(height: 36),
                       const Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Row(
                             children: [
-                              Icon(Icons.lock_outline, size: 13, color: AppColors.textMuted),
+                              Icon(
+                                Icons.lock_outline,
+                                size: 13,
+                                color: AppColors.textMuted,
+                              ),
                               SizedBox(width: 4),
-                              Text('Conexión Encriptada TLS 1.3', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                              Text(
+                                'Conexión Encriptada TLS 1.3',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: AppColors.textMuted,
+                                ),
+                              ),
                             ],
                           ),
                           SizedBox(width: 16),
                           Row(
                             children: [
-                              Icon(Icons.shield_outlined, size: 13, color: AppColors.textMuted),
+                              Icon(
+                                Icons.shield_outlined,
+                                size: 13,
+                                color: AppColors.textMuted,
+                              ),
                               SizedBox(width: 4),
-                              Text('Datos protegidos', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                              Text(
+                                'Datos protegidos',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: AppColors.textMuted,
+                                ),
+                              ),
                             ],
                           ),
                         ],
@@ -773,17 +987,30 @@ class _RegisterScreenState extends State<RegisterScreen> {
       children: [
         const Text(
           'PASO 1 DE 2',
-          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1.0, color: AppColors.primaryBlue),
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1.0,
+            color: AppColors.primaryBlue,
+          ),
         ),
         const SizedBox(height: 8),
         const Text(
           'Activa tu cuenta familiar',
-          style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: AppColors.darkNavy),
+          style: TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.bold,
+            color: AppColors.darkNavy,
+          ),
         ),
         const SizedBox(height: 6),
         const Text(
           'Primero verificaremos que estés registrado como representante en la institución.',
-          style: TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.4),
+          style: TextStyle(
+            color: AppColors.textMuted,
+            fontSize: 13,
+            height: 1.4,
+          ),
         ),
         const SizedBox(height: 28),
         Form(
@@ -793,7 +1020,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
             children: [
               const Text(
                 'Cédula de Identidad del Representante',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.darkNavy),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.darkNavy,
+                ),
               ),
               const SizedBox(height: 8),
               Row(
@@ -804,16 +1035,40 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: _cedulaError ? Colors.redAccent : AppColors.cardBorder),
+                      border: Border.all(
+                        color: _cedulaError
+                            ? Colors.redAccent
+                            : AppColors.cardBorder,
+                      ),
                     ),
                     child: DropdownButtonHideUnderline(
                       child: DropdownButton<String>(
                         value: _selectedPrefix,
-                        icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.textMuted),
-                        style: const TextStyle(color: AppColors.darkNavy, fontWeight: FontWeight.bold, fontSize: 14),
-                        items: _prefixes.map((val) => DropdownMenuItem(value: val, child: Text(val))).toList(),
+                        icon: const Icon(
+                          Icons.keyboard_arrow_down,
+                          color: AppColors.textMuted,
+                        ),
+                        style: const TextStyle(
+                          color: AppColors.darkNavy,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                        items: _prefixes
+                            .map(
+                              (val) => DropdownMenuItem(
+                                value: val,
+                                child: Text(val),
+                              ),
+                            )
+                            .toList(),
                         onChanged: (val) {
-                          if (val != null) setState(() => _selectedPrefix = val);
+                          if (val != null) {
+                            setState(() {
+                              _selectedPrefix = val;
+                              _cedulaError = false;
+                              _cedulaYaRegistrada = false;
+                            });
+                          }
                         },
                       ),
                     ),
@@ -823,27 +1078,53 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     child: TextFormField(
                       controller: _cedulaController,
                       keyboardType: TextInputType.number,
+                      onChanged: (_) {
+                        if (_cedulaError || _cedulaYaRegistrada) {
+                          setState(() {
+                            _cedulaError = false;
+                            _cedulaYaRegistrada = false;
+                          });
+                        }
+                      },
                       decoration: InputDecoration(
                         hintText: '12.345.678',
-                        hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 14),
+                        hintStyle: const TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 14,
+                        ),
                         filled: true,
                         fillColor: Colors.white,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
+                        ),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide(color: _cedulaError ? Colors.redAccent : AppColors.cardBorder),
+                          borderSide: BorderSide(
+                            color: _cedulaError
+                                ? Colors.redAccent
+                                : AppColors.cardBorder,
+                          ),
                         ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide(color: _cedulaError ? Colors.redAccent : AppColors.cardBorder),
+                          borderSide: BorderSide(
+                            color: _cedulaError
+                                ? Colors.redAccent
+                                : AppColors.cardBorder,
+                          ),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(color: AppColors.primaryBlue, width: 1.5),
+                          borderSide: const BorderSide(
+                            color: AppColors.primaryBlue,
+                            width: 1.5,
+                          ),
                         ),
                       ),
                       validator: (val) {
-                        if (val == null || val.trim().isEmpty) return 'Ingresa tu número de cédula';
+                        if (val == null || val.trim().isEmpty)
+                          return 'Ingresa tu número de cédula';
                         return null;
                       },
                     ),
@@ -875,12 +1156,79 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           children: [
                             Text(
                               'Cédula no registrada',
-                              style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF991B1B), fontSize: 13),
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF991B1B),
+                                fontSize: 13,
+                              ),
                             ),
                             SizedBox(height: 4),
                             Text(
                               'Su Cédula de Identidad no se encuentra registrada como representante en la institución. Por favor, comuníquese con el Departamento de Administración.',
-                              style: TextStyle(color: Color(0xFFB91C1C), fontSize: 11, height: 1.3),
+                              style: TextStyle(
+                                color: Color(0xFFB91C1C),
+                                fontSize: 11,
+                                height: 1.3,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+              if (_cedulaYaRegistrada) ...[
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEFF6FF),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFBFDBFE)),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        Icons.info_outline,
+                        color: AppColors.primaryBlue,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Ya existe una cuenta con esta cédula',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.darkNavy,
+                                fontSize: 13,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              'Esta cédula ya está asociada a una cuenta. Inicia sesión; si no recuerdas tu contraseña, puedes recuperarla desde esa pantalla.',
+                              style: TextStyle(
+                                color: AppColors.textMuted,
+                                fontSize: 11,
+                                height: 1.3,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            TextButton(
+                              onPressed: () => Navigator.pushReplacement(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const LoginScreen(),
+                                ),
+                              ),
+                              child: const Text(
+                                'Ir a Iniciar Sesión',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
                             ),
                           ],
                         ),
@@ -898,19 +1246,30 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryBlue,
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                     elevation: 0,
                   ),
                   child: _isLoading
                       ? const SizedBox(
                           width: 20,
                           height: 20,
-                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
                         )
                       : const Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Text('Validar Cédula e Iniciar Registro', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                            Text(
+                              'Validar Cédula e Iniciar Registro',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                             SizedBox(width: 8),
                             Icon(Icons.arrow_forward, size: 18),
                           ],
@@ -927,12 +1286,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     style: OutlinedButton.styleFrom(
                       foregroundColor: const Color(0xFFDC2626),
                       side: const BorderSide(color: Color(0xFFFECACA)),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                     ),
                     icon: const Icon(Icons.people_outline, size: 18),
                     label: const Text(
                       'Contactar a Administración / Soporte',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
                     ),
                   ),
                 ),
@@ -950,17 +1314,30 @@ class _RegisterScreenState extends State<RegisterScreen> {
       children: [
         const Text(
           'PASO 2 DE 2',
-          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1.0, color: AppColors.primaryBlue),
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1.0,
+            color: AppColors.primaryBlue,
+          ),
         ),
         const SizedBox(height: 8),
         const Text(
           'Completa tus datos',
-          style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: AppColors.darkNavy),
+          style: TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.bold,
+            color: AppColors.darkNavy,
+          ),
         ),
         const SizedBox(height: 6),
         const Text(
           'Tu identidad fue confirmada. Crea tus credenciales de acceso.',
-          style: TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.4),
+          style: TextStyle(
+            color: AppColors.textMuted,
+            fontSize: 13,
+            height: 1.4,
+          ),
         ),
         const SizedBox(height: 20),
         Container(
@@ -987,11 +1364,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   children: [
                     const Text(
                       'Cédula verificada en la base de datos del colegio',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF166534)),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF166534),
+                      ),
                     ),
                     Text(
-                      '$_selectedPrefix${_cedulaController.text.trim()} · Representante pre-registrado',
-                      style: const TextStyle(fontSize: 11, color: Color(0xFF15803D)),
+                      '$_cedulaNormalizada · Representante pre-registrado',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF15803D),
+                      ),
                     ),
                   ],
                 ),
@@ -1004,7 +1388,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 },
                 child: const Text(
                   'Cambiar',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF166534)),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF166534),
+                  ),
                 ),
               ),
             ],
@@ -1022,12 +1410,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Nombres', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
+                        const Text(
+                          'Nombres',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.darkNavy,
+                          ),
+                        ),
                         const SizedBox(height: 6),
                         TextFormField(
                           controller: _nombresController,
-                          decoration: _buildInputDecoration('Nombres', Icons.person_outline),
-                          validator: (val) => val == null || val.trim().isEmpty ? 'Requerido' : null,
+                          decoration: _buildInputDecoration(
+                            'Nombres',
+                            Icons.person_outline,
+                          ),
+                          validator: (val) => val == null || val.trim().isEmpty
+                              ? 'Requerido'
+                              : null,
                         ),
                       ],
                     ),
@@ -1037,12 +1437,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Apellidos', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
+                        const Text(
+                          'Apellidos',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.darkNavy,
+                          ),
+                        ),
                         const SizedBox(height: 6),
                         TextFormField(
                           controller: _apellidosController,
-                          decoration: _buildInputDecoration('Apellidos', Icons.person_outline),
-                          validator: (val) => val == null || val.trim().isEmpty ? 'Requerido' : null,
+                          decoration: _buildInputDecoration(
+                            'Apellidos',
+                            Icons.person_outline,
+                          ),
+                          validator: (val) => val == null || val.trim().isEmpty
+                              ? 'Requerido'
+                              : null,
                         ),
                       ],
                     ),
@@ -1050,40 +1462,84 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ],
               ),
               const SizedBox(height: 16),
-              const Text('Correo electrónico', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
+              const Text(
+                'Correo electrónico',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.darkNavy,
+                ),
+              ),
               const SizedBox(height: 6),
               TextFormField(
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
-                decoration: _buildInputDecoration('nombre@correo.com', Icons.email_outlined),
+                decoration: _buildInputDecoration(
+                  'nombre@correo.com',
+                  Icons.email_outlined,
+                ),
                 validator: (val) {
-                  if (val == null || val.trim().isEmpty) return 'Ingresa tu correo';
+                  if (val == null || val.trim().isEmpty)
+                    return 'Ingresa tu correo';
                   if (!val.contains('@')) return 'Correo no válido';
                   return null;
                 },
               ),
               const SizedBox(height: 16),
-              const Text('Número de teléfono (WhatsApp)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
+              const Text(
+                'Número de teléfono (WhatsApp)',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.darkNavy,
+                ),
+              ),
               const SizedBox(height: 6),
               TextFormField(
                 controller: _phoneController,
                 keyboardType: TextInputType.phone,
                 decoration: InputDecoration(
                   hintText: '412 555 0174',
-                  hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 14),
+                  hintStyle: const TextStyle(
+                    color: AppColors.textMuted,
+                    fontSize: 14,
+                  ),
                   prefixIcon: Container(
                     width: 50,
                     alignment: Alignment.center,
-                    child: const Text('+58', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
+                    child: const Text(
+                      '+58',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.darkNavy,
+                      ),
+                    ),
                   ),
                   filled: true,
                   fillColor: Colors.white,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.cardBorder)),
-                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.cardBorder)),
-                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.primaryBlue, width: 1.5)),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: AppColors.cardBorder),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: AppColors.cardBorder),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(
+                      color: AppColors.primaryBlue,
+                      width: 1.5,
+                    ),
+                  ),
                 ),
-                validator: (val) => val == null || val.trim().isEmpty ? 'Ingresa tu teléfono' : null,
+                validator: (val) => val == null || val.trim().isEmpty
+                    ? 'Ingresa tu teléfono'
+                    : null,
               ),
               const SizedBox(height: 16),
               Row(
@@ -1092,7 +1548,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Contraseña', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
+                        const Text(
+                          'Contraseña',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.darkNavy,
+                          ),
+                        ),
                         const SizedBox(height: 6),
                         TextFormField(
                           controller: _passwordController,
@@ -1101,11 +1564,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             'Min. 8 caracteres',
                             Icons.lock_outline,
                             suffixIcon: IconButton(
-                              icon: Icon(_obscurePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined, size: 18, color: AppColors.textMuted),
-                              onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                              icon: Icon(
+                                _obscurePassword
+                                    ? Icons.visibility_outlined
+                                    : Icons.visibility_off_outlined,
+                                size: 18,
+                                color: AppColors.textMuted,
+                              ),
+                              onPressed: () => setState(
+                                () => _obscurePassword = !_obscurePassword,
+                              ),
                             ),
                           ),
-                          validator: (val) => val == null || val.length < 6 ? 'Mínimo 6 caracteres' : null,
+                          validator: (val) => val == null || val.length < 6
+                              ? 'Mínimo 6 caracteres'
+                              : null,
                         ),
                       ],
                     ),
@@ -1115,7 +1588,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Confirmar contraseña', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
+                        const Text(
+                          'Confirmar contraseña',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.darkNavy,
+                          ),
+                        ),
                         const SizedBox(height: 6),
                         TextFormField(
                           controller: _confirmPasswordController,
@@ -1124,12 +1604,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             'Repetir contraseña',
                             Icons.lock_outline,
                             suffixIcon: IconButton(
-                              icon: Icon(_obscureConfirmPassword ? Icons.visibility_outlined : Icons.visibility_off_outlined, size: 18, color: AppColors.textMuted),
-                              onPressed: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
+                              icon: Icon(
+                                _obscureConfirmPassword
+                                    ? Icons.visibility_outlined
+                                    : Icons.visibility_off_outlined,
+                                size: 18,
+                                color: AppColors.textMuted,
+                              ),
+                              onPressed: () => setState(
+                                () => _obscureConfirmPassword =
+                                    !_obscureConfirmPassword,
+                              ),
                             ),
                           ),
                           validator: (val) {
-                            if (val != _passwordController.text) return 'No coinciden';
+                            if (val != _passwordController.text)
+                              return 'No coinciden';
                             return null;
                           },
                         ),
@@ -1148,15 +1638,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     child: Checkbox(
                       value: _termsAccepted,
                       activeColor: AppColors.primaryBlue,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                      onChanged: (val) => setState(() => _termsAccepted = val ?? false),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      onChanged: (val) =>
+                          setState(() => _termsAccepted = val ?? false),
                     ),
                   ),
                   const SizedBox(width: 8),
                   const Expanded(
                     child: Text(
                       'Acepto los términos del servicio y el tratamiento seguro de mis datos.',
-                      style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                      ),
                     ),
                   ),
                 ],
@@ -1170,21 +1666,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryBlue,
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                     elevation: 0,
                   ),
                   child: _isLoading
                       ? const SizedBox(
                           width: 20,
                           height: 20,
-                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
                         )
                       : const Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Text(
                               'Crear Cuenta y Enviar Correo de Confirmación',
-                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                             SizedBox(width: 8),
                             Icon(Icons.arrow_forward, size: 18),
@@ -1199,7 +1703,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  InputDecoration _buildInputDecoration(String hint, IconData icon, {Widget? suffixIcon}) {
+  InputDecoration _buildInputDecoration(
+    String hint,
+    IconData icon, {
+    Widget? suffixIcon,
+  }) {
     return InputDecoration(
       hintText: hint,
       hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 13),
@@ -1208,9 +1716,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
       filled: true,
       fillColor: Colors.white,
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.cardBorder)),
-      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.cardBorder)),
-      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.primaryBlue, width: 1.5)),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: AppColors.cardBorder),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: AppColors.cardBorder),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: AppColors.primaryBlue, width: 1.5),
+      ),
     );
   }
 
@@ -1221,7 +1738,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
         children: [
           Icon(icon, color: Colors.white70, size: 20),
           const SizedBox(width: 12),
-          Text(text, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
+          Text(
+            text,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
         ],
       ),
     );

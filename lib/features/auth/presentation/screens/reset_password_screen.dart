@@ -34,22 +34,25 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
     });
 
     try {
-      // Actualiza la contraseña del usuario en Supabase usando la sesión activa del enlace
+      // 1. Actualiza la contraseña del usuario en Supabase usando la sesión activa del enlace
       await Supabase.instance.client.auth.updateUser(
-        UserAttributes(
-          password: _passwordController.text.trim(),
-        ),
+        UserAttributes(password: _passwordController.text.trim()),
       );
+
+      // 2. Cierra la sesión de recuperación para obligar al usuario a autenticarse con sus nuevas credenciales
+      await Supabase.instance.client.auth.signOut();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('¡Contraseña actualizada con éxito! Inicia sesión con tu nueva clave.'),
+            content: Text(
+              '¡Contraseña actualizada con éxito! Inicia sesión con tu nueva clave.',
+            ),
             backgroundColor: Colors.green,
           ),
         );
 
-        // Redirige al usuario a la pantalla de inicio de sesión limpiando el historial de navegación
+        // 3. Redirige al usuario a la pantalla de inicio de sesión limpiando el historial de navegación
         Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(builder: (context) => const LoginScreen()),
@@ -124,10 +127,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
                 const SizedBox(height: 8),
                 const Text(
                   'Ingresa tu nueva contraseña para asegurar tu cuenta en EduPago.',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: AppColors.textMuted,
-                  ),
+                  style: TextStyle(fontSize: 14, color: AppColors.textMuted),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 32),
@@ -248,7 +248,8 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
                             iconSize: 20,
                             onPressed: () {
                               setState(() {
-                                _obscureConfirmPassword = !_obscureConfirmPassword;
+                                _obscureConfirmPassword =
+                                    !_obscureConfirmPassword;
                               });
                             },
                           ),

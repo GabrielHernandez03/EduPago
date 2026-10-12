@@ -55,7 +55,8 @@ class _MyAppState extends State<MyApp> {
     if (kIsWeb) {
       final uri = Uri.base;
       // Verifica si la URL en el navegador incluye los parámetros de recuperación de Supabase
-      final isRecovery = uri.fragment.contains('type=recovery') ||
+      final isRecovery =
+          uri.fragment.contains('type=recovery') ||
           uri.toString().contains('type=recovery') ||
           uri.queryParameters['type'] == 'recovery';
 
@@ -67,9 +68,7 @@ class _MyAppState extends State<MyApp> {
 
   void _navigateToResetPassword() {
     _navigatorKey.currentState?.pushAndRemoveUntil(
-      MaterialPageRoute(
-        builder: (context) => const ResetPasswordScreen(),
-      ),
+      MaterialPageRoute(builder: (context) => const ResetPasswordScreen()),
       (route) => false,
     );
   }
