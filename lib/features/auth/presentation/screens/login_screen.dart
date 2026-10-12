@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../main.dart';
 import '../widgets/forgot_password_dialog.dart';
 import 'register_screen.dart';
-
+import '../../../dashboard/presentation/screens/representative_dashboard_screen.dart';
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -15,9 +17,10 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
 
-  bool _isRepresentanteRole = true; // true = Portal Representante, false = Administrativo
+  bool _isRepresentanteRole = true;
   bool _obscurePassword = true;
   bool _rememberMe = false;
+  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -26,24 +29,65 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _submitLogin() {
+ // --- INICIO DE SESIÓN CON SUPABASE ---
+  Future<void> _submitLogin() async {
     if (_formKey.currentState!.validate()) {
-      final roleName = _isRepresentanteRole ? 'Representante' : 'Administrativo';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Iniciando sesión como $roleName con ${_emailController.text}...'),
-          backgroundColor: AppColors.primaryBlue,
-        ),
-      );
+      setState(() {
+        _isLoading = true;
+      });
+
+      try {
+        final response = await supabase.auth.signInWithPassword(
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
+        );
+
+        setState(() {
+          _isLoading = false;
+        });
+
+        if (response.user != null && mounted) {
+          // Redirección al Dashboard del Representante
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const RepresentativeDashboardScreen(),
+            ),
+          );
+        }
+      } on AuthException catch (e) {
+        setState(() {
+          _isLoading = false;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error al iniciar sesión: ${e.message}'),
+              backgroundColor: Colors.redAccent,
+            ),
+          );
+        }
+      } catch (e) {
+        setState(() {
+          _isLoading = false;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error inesperado: $e'),
+              backgroundColor: Colors.redAccent,
+            ),
+          );
+        }
+      }
     }
   }
 
-  // Método que dispara el modal de recuperación de contraseña (HU4)
   void _showForgotPasswordModal() {
     showDialog(
       context: context,
       barrierDismissible: true,
-      barrierColor: Colors.black.withOpacity(0.5),
+      barrierColor: Colors.black.withValues(alpha: 0.5),
       builder: (BuildContext context) {
         return const ForgotPasswordDialog();
       },
@@ -59,7 +103,6 @@ class _LoginScreenState extends State<LoginScreen> {
       backgroundColor: Colors.white,
       body: Row(
         children: [
-          // PANEL IZQUIERDO: Branding & Testimonio (Solo en Desktop)
           if (isDesktop)
             Expanded(
               flex: 5,
@@ -67,7 +110,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 color: AppColors.darkNavy,
                 child: Stack(
                   children: [
-                    // Imagen de fondo con overlay oscuro
                     Positioned.fill(
                       child: Opacity(
                         opacity: 0.15,
@@ -83,7 +125,6 @@ class _LoginScreenState extends State<LoginScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          // Logo EduPago Blanco
                           Row(
                             children: [
                               Container(
@@ -106,8 +147,6 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                             ],
                           ),
-
-                          // Mensaje Central
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -141,8 +180,6 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                             ],
                           ),
-
-                          // Tarjeta de Colegio / Testimonio
                           Container(
                             padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
@@ -204,7 +241,6 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
 
-          // PANEL DERECHO: Formulario de Iniciar Sesión
           Expanded(
             flex: 6,
             child: SingleChildScrollView(
@@ -215,7 +251,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      // Botón Volver al inicio
                       Align(
                         alignment: Alignment.centerLeft,
                         child: TextButton.icon(
@@ -229,7 +264,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 20),
 
-                      // Icono Candado Azul Superior
                       Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
@@ -240,7 +274,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 20),
 
-                      // Título & Subtítulo
                       const Text(
                         'Bienvenido de nuevo',
                         style: TextStyle(
@@ -256,7 +289,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 28),
 
-                      // Selector de Rol (Segmented Tabs)
                       Container(
                         padding: const EdgeInsets.all(4),
                         decoration: BoxDecoration(
@@ -351,13 +383,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 24),
 
-                      // Formulario Inputs
                       Form(
                         key: _formKey,
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // Campo Correo Electrónico
                             const Text(
                               'Correo electrónico',
                               style: TextStyle(
@@ -402,7 +432,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             const SizedBox(height: 18),
 
-                            // Campo Contraseña
                             const Text(
                               'Contraseña',
                               style: TextStyle(
@@ -459,7 +488,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             const SizedBox(height: 14),
 
-                            // Checkbox Recordar & Link Olvidó contraseña
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
@@ -485,7 +513,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ],
                                 ),
                                 InkWell(
-                                  onTap: _showForgotPasswordModal, // Dispara el modal
+                                  onTap: _showForgotPasswordModal,
                                   child: const Text(
                                     '¿Olvidó su contraseña?',
                                     style: TextStyle(
@@ -499,12 +527,11 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             const SizedBox(height: 24),
 
-                            // Botón Iniciar Sesión
                             SizedBox(
                               width: double.infinity,
                               height: 48,
                               child: ElevatedButton(
-                                onPressed: _submitLogin,
+                                onPressed: _isLoading ? null : _submitLogin,
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: AppColors.primaryBlue,
                                   foregroundColor: Colors.white,
@@ -513,17 +540,23 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ),
                                   elevation: 0,
                                 ),
-                                child: const Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Text(
-                                      'Iniciar sesión',
-                                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                                    ),
-                                    SizedBox(width: 8),
-                                    Icon(Icons.arrow_forward, size: 18),
-                                  ],
-                                ),
+                                child: _isLoading
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                                      )
+                                    : const Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          Text(
+                                            'Iniciar sesión',
+                                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                                          ),
+                                          SizedBox(width: 8),
+                                          Icon(Icons.arrow_forward, size: 18),
+                                        ],
+                                      ),
                               ),
                             ),
                           ],
@@ -531,7 +564,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 24),
 
-                      // Enlace a Registro
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -541,7 +573,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                           InkWell(
                             onTap: () {
-                              Navigator.push(
+                              Navigator.pushReplacement(
                                 context,
                                 MaterialPageRoute(builder: (context) => const RegisterScreen()),
                               );
@@ -559,7 +591,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 36),
 
-                      // Badges de Seguridad Inferiores
                       const Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [

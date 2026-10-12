@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../main.dart';
+import '../../../dashboard/presentation/screens/representative_dashboard_screen.dart';
 import 'login_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -19,13 +22,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final List<String> _prefixes = ['V-', 'E-', 'J-', 'P-'];
 
   // Estados de control
-  int _currentStep = 1; // 1 = Validar Cédula, 2 = Completa tus datos
-  bool _cedulaError = false; // true si la cédula no existe en la BD
+  int _currentStep = 1;
+  bool _cedulaError = false;
+  bool _isLoading = false;
   bool _termsAccepted = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
 
-  // Paso 2: Datos de contacto
+  // Paso 2: Inputs
   final _nombresController = TextEditingController();
   final _apellidosController = TextEditingController();
   final _emailController = TextEditingController();
@@ -45,32 +49,56 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
-  // --- LÓGICA PASO 1: VALIDAR CÉDULA ---
-  void _validateCedula() {
-    if (_step1FormKey.currentState!.validate()) {
-      final input = _cedulaController.text.trim();
+  // --- CONSULTA REAL A SUPABASE: VALIDAR CÉDULA ---
+  Future<void> _validateCedula() async {
+    if (!_step1FormKey.currentState!.validate()) return;
 
-      if (input == '9999' || input == '0000') {
+    setState(() {
+      _isLoading = true;
+      _cedulaError = false;
+    });
+
+    final fullCedula = '$_selectedPrefix${_cedulaController.text.trim()}';
+
+    try {
+      final response = await supabase
+          .from('representantes')
+          .select()
+          .eq('cedula', fullCedula)
+          .maybeSingle();
+
+      if (response == null) {
         setState(() {
           _cedulaError = true;
+          _isLoading = false;
         });
       } else {
         setState(() {
-          _cedulaError = false;
+          _nombresController.text = response['nombres'] ?? '';
+          _apellidosController.text = response['apellidos'] ?? '';
+          _emailController.text = response['correo_electronico'] ?? '';
+          _phoneController.text = response['telefono_whatsapp'] ?? '';
           _currentStep = 2;
-          if (_nombresController.text.isEmpty) {
-            _nombresController.text = 'Mariana';
-            _apellidosController.text = 'Rodríguez';
-            _emailController.text = 'mariana@correo.com';
-            _phoneController.text = '412 555 0174';
-          }
+          _isLoading = false;
         });
+      }
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al consultar base de datos: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
       }
     }
   }
 
-  // --- LÓGICA PASO 2: CREAR CUENTA Y MOSTRAR MODAL CORREO ---
-  void _submitRegistration() {
+  // --- CREAR CUENTA EN SUPABASE AUTH ---
+  Future<void> _submitRegistration() async {
     if (!_termsAccepted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -81,17 +109,59 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    if (_step2FormKey.currentState!.validate()) {
-      _showPendingVerificationModal();
+    if (!_step2FormKey.currentState!.validate()) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final email = _emailController.text.trim();
+      final password = _passwordController.text;
+
+      final authResponse = await supabase.auth.signUp(
+        email: email,
+        password: password,
+        data: {
+          'nombre_completo': '${_nombresController.text} ${_apellidosController.text}',
+          'cedula': '$_selectedPrefix${_cedulaController.text.trim()}',
+        },
+      );
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      if (authResponse.user != null) {
+        _showPendingVerificationModal();
+      }
+    } on AuthException catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message), backgroundColor: Colors.redAccent),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error inesperado: $e'), backgroundColor: Colors.redAccent),
+        );
+      }
     }
   }
 
-  // --- MODAL 1: CONFIRMAR CORREO ELECTRONICO (PENDIENTE_VERIFICACION) ---
+  // --- MODALES ---
   void _showPendingVerificationModal() {
     showDialog(
       context: context,
       barrierDismissible: false,
-      barrierColor: Colors.black.withOpacity(0.5),
+      barrierColor: Colors.black.withValues(alpha: 0.5),
       builder: (context) {
         return Dialog(
           backgroundColor: Colors.white,
@@ -112,7 +182,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   child: const Icon(Icons.mail_outline, color: Color(0xFFD97706), size: 30),
                 ),
                 const SizedBox(height: 16),
-
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
@@ -130,14 +199,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-
                 const Text(
                   'Confirma tu correo electrónico',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.darkNavy),
                 ),
                 const SizedBox(height: 10),
-
                 RichText(
                   textAlign: TextAlign.center,
                   text: TextSpan(
@@ -145,7 +212,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     children: [
                       const TextSpan(text: 'Hemos enviado un enlace de confirmación a\n'),
                       TextSpan(
-                        text: _emailController.text.isNotEmpty ? _emailController.text : 'mariana@correo.com',
+                        text: _emailController.text,
                         style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.darkNavy),
                       ),
                       const TextSpan(text: '. Válido por 15 minutos.'),
@@ -153,7 +220,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                 ),
                 const SizedBox(height: 20),
-
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
@@ -170,7 +236,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'El enlace expira a las 11:05 AM',
+                              'El enlace expira en 15 minutos',
                               style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF92400E)),
                             ),
                             Text(
@@ -184,7 +250,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                 ),
                 const SizedBox(height: 24),
-
                 SizedBox(
                   width: double.infinity,
                   height: 48,
@@ -205,8 +270,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 const SizedBox(height: 12),
                 TextButton(
                   onPressed: () {
-                    Navigator.pop(context); // Cierra modal 1
-                    _showExpiredTokenModal(); // Abre modal de enlace expirado
+                    Navigator.pop(context);
+                    _showExpiredTokenModal();
                   },
                   child: const Text('Ver estado de enlace expirado', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
                 ),
@@ -218,12 +283,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  // --- MODAL 2: ENLACE EXPIRADO (TOKEN_EXPIRADO) ---
   void _showExpiredTokenModal() {
     showDialog(
       context: context,
       barrierDismissible: false,
-      barrierColor: Colors.black.withOpacity(0.5),
+      barrierColor: Colors.black.withValues(alpha: 0.5),
       builder: (context) {
         return Dialog(
           backgroundColor: Colors.white,
@@ -235,7 +299,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Icono Reloj Naranja
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
@@ -245,8 +308,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   child: const Icon(Icons.access_time, color: Color(0xFFD97706), size: 30),
                 ),
                 const SizedBox(height: 16),
-
-                // Chip TOKEN_EXPIRADO
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
@@ -264,22 +325,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-
                 const Text(
                   'El enlace de confirmación ha\nexpirado',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.darkNavy),
                 ),
                 const SizedBox(height: 10),
-
                 const Text(
                   'Por seguridad, los enlaces solo son válidos durante 15 minutos.\nSolicita uno nuevo para continuar.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.4),
                 ),
                 const SizedBox(height: 20),
-
-                // Caja de alerta Enlace vencido
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
@@ -310,15 +367,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                 ),
                 const SizedBox(height: 24),
-
-                // Botón Reenviar Correo de Verificación
                 SizedBox(
                   width: double.infinity,
                   height: 48,
                   child: ElevatedButton(
                     onPressed: () {
-                      Navigator.pop(context); // Cierra modal expirado
-                      _showPendingVerificationModal(); // Vuelve a enviar correo y abre modal 1
+                      Navigator.pop(context);
+                      _showPendingVerificationModal();
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primaryBlue,
@@ -344,12 +399,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  // --- MODAL 3: ¡CUENTA ACTIVADA EXITOSAMENTE! ---
   void _showAccountActivatedModal() {
     showDialog(
       context: context,
       barrierDismissible: false,
-      barrierColor: Colors.black.withOpacity(0.5),
+      barrierColor: Colors.black.withValues(alpha: 0.5),
       builder: (context) {
         return Dialog(
           backgroundColor: Colors.white,
@@ -370,7 +424,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   child: const Icon(Icons.check, color: AppColors.successGreen, size: 30),
                 ),
                 const SizedBox(height: 16),
-
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
@@ -388,21 +441,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-
                 const Text(
                   '¡Cuenta Activada Exitosamente!',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.darkNavy),
                 ),
                 const SizedBox(height: 10),
-
                 const Text(
                   'Tu identidad y correo fueron verificados. Redirigiendo a tu\npanel familiar...',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: AppColors.textMuted, fontSize: 13, height: 1.4),
                 ),
                 const SizedBox(height: 20),
-
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
@@ -433,16 +483,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                 ),
                 const SizedBox(height: 24),
-
                 SizedBox(
                   width: double.infinity,
                   height: 48,
                   child: ElevatedButton(
                     onPressed: () {
                       Navigator.pop(context);
+                      // REDIRECCIÓN DIRECTA AL DASHBOARD DEL REPRESENTANTE
                       Navigator.pushReplacement(
                         context,
-                        MaterialPageRoute(builder: (context) => const LoginScreen()),
+                        MaterialPageRoute(
+                          builder: (context) => const RepresentativeDashboardScreen(),
+                        ),
                       );
                     },
                     style: ElevatedButton.styleFrom(
@@ -548,7 +600,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               Text(
                                 'Activa tu acceso con la cédula previamente registrada por la\ninstitución y gestiona todo desde un solo lugar.',
                                 style: TextStyle(
-                                  color: Colors.white.withOpacity(0.7),
+                                  color: Colors.white.withValues(alpha: 0.7),
                                   fontSize: 15,
                                   height: 1.5,
                                 ),
@@ -565,7 +617,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               const SizedBox(width: 8),
                               Text(
                                 'Protección de datos y acceso basado en identidad',
-                                style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12),
+                                style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12),
                               ),
                             ],
                           ),
@@ -613,7 +665,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   color: Colors.white,
                                   borderRadius: BorderRadius.circular(8),
                                   boxShadow: [
-                                    BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2)),
+                                    BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4, offset: const Offset(0, 2)),
                                   ],
                                 ),
                                 child: const Center(
@@ -776,15 +828,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: const Color(0xFFFCA5A5)),
                   ),
-                  child: Row(
+                  child: const Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.close, color: Color(0xFFDC2626), size: 20),
-                      const SizedBox(width: 10),
+                      Icon(Icons.close, color: Color(0xFFDC2626), size: 20),
+                      SizedBox(width: 10),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          children: const [
+                          children: [
                             Text(
                               'Cédula no registrada',
                               style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF991B1B), fontSize: 13),
@@ -807,21 +859,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 width: double.infinity,
                 height: 48,
                 child: ElevatedButton(
-                  onPressed: _validateCedula,
+                  onPressed: _isLoading ? null : _validateCedula,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryBlue,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     elevation: 0,
                   ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('Validar Cédula e Iniciar Registro', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                      SizedBox(width: 8),
-                      Icon(Icons.arrow_forward, size: 18),
-                    ],
-                  ),
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                        )
+                      : const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text('Validar Cédula e Iniciar Registro', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                            SizedBox(width: 8),
+                            Icon(Icons.arrow_forward, size: 18),
+                          ],
+                        ),
                 ),
               ),
 
@@ -896,7 +954,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF166534)),
                     ),
                     Text(
-                      '$_selectedPrefix${_cedulaController.text.isNotEmpty ? _cedulaController.text : '12345678'} · Representante pre-registrado',
+                      '$_selectedPrefix${_cedulaController.text.trim()} · Representante pre-registrado',
                       style: const TextStyle(fontSize: 11, color: Color(0xFF15803D)),
                     ),
                   ],
@@ -933,7 +991,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         const SizedBox(height: 6),
                         TextFormField(
                           controller: _nombresController,
-                          decoration: _buildInputDecoration('Mariana', Icons.person_outline),
+                          decoration: _buildInputDecoration('Nombres', Icons.person_outline),
                           validator: (val) => val == null || val.trim().isEmpty ? 'Requerido' : null,
                         ),
                       ],
@@ -948,7 +1006,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         const SizedBox(height: 6),
                         TextFormField(
                           controller: _apellidosController,
-                          decoration: _buildInputDecoration('Rodríguez', Icons.person_outline),
+                          decoration: _buildInputDecoration('Apellidos', Icons.person_outline),
                           validator: (val) => val == null || val.trim().isEmpty ? 'Requerido' : null,
                         ),
                       ],
@@ -963,7 +1021,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               TextFormField(
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
-                decoration: _buildInputDecoration('mariana@correo.com', Icons.email_outlined),
+                decoration: _buildInputDecoration('nombre@correo.com', Icons.email_outlined),
                 validator: (val) {
                   if (val == null || val.trim().isEmpty) return 'Ingresa tu correo';
                   if (!val.contains('@')) return 'Correo no válido';
@@ -1070,21 +1128,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 width: double.infinity,
                 height: 48,
                 child: ElevatedButton(
-                  onPressed: _submitRegistration,
+                  onPressed: _isLoading ? null : _submitRegistration,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryBlue,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     elevation: 0,
                   ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('Crear Cuenta y Enviar Correo de Confirmación', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                      SizedBox(width: 8),
-                      Icon(Icons.arrow_forward, size: 18),
-                    ],
-                  ),
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                        )
+                      : const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text('Crear Cuenta y Enviar Correo de Confirmación', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                            SizedBox(width: 8),
+                            Icon(Icons.arrow_forward, size: 18),
+                          ],
+                        ),
                 ),
               ),
             ],
