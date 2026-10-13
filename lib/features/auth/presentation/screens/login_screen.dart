@@ -5,6 +5,7 @@ import '../../../../main.dart';
 import '../widgets/forgot_password_dialog.dart';
 import 'register_screen.dart';
 import '../../../dashboard/presentation/screens/representative_dashboard_screen.dart';
+import '../../../dashboard/presentation/screens/admin_dashboard_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -30,7 +31,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // Inicio de sesión con Supabase Auth
+  // Inicio de sesión con Supabase Auth y redirección basada en roles
   Future<void> _submitLogin() async {
     if (_formKey.currentState!.validate()) {
       setState(() {
@@ -48,13 +49,25 @@ class _LoginScreenState extends State<LoginScreen> {
         });
 
         if (response.user != null && mounted) {
-          // Redirección al Dashboard del Representante
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const RepresentativeDashboardScreen(),
-            ),
-          );
+          final user = response.user!;
+          // Obtenemos el rol almacenado en los metadatos del usuario en Supabase
+          final role = user.userMetadata?['role'] ?? 'representante';
+
+          if (role == 'admin') {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const AdminDashboardScreen(),
+              ),
+            );
+          } else {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const RepresentativeDashboardScreen(),
+              ),
+            );
+          }
         }
       } on AuthException catch (e) {
         setState(() {
@@ -236,16 +249,31 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                                 const Row(
                                   children: [
-                                    Icon(Icons.star,
-                                        color: Colors.amber, size: 16),
-                                    Icon(Icons.star,
-                                        color: Colors.amber, size: 16),
-                                    Icon(Icons.star,
-                                        color: Colors.amber, size: 16),
-                                    Icon(Icons.star,
-                                        color: Colors.amber, size: 16),
-                                    Icon(Icons.star,
-                                        color: Colors.amber, size: 16),
+                                    Icon(
+                                      Icons.star,
+                                      color: Colors.amber,
+                                      size: 16,
+                                    ),
+                                    Icon(
+                                      Icons.star,
+                                      color: Colors.amber,
+                                      size: 16,
+                                    ),
+                                    Icon(
+                                      Icons.star,
+                                      color: Colors.amber,
+                                      size: 16,
+                                    ),
+                                    Icon(
+                                      Icons.star,
+                                      color: Colors.amber,
+                                      size: 16,
+                                    ),
+                                    Icon(
+                                      Icons.star,
+                                      color: Colors.amber,
+                                      size: 16,
+                                    ),
                                   ],
                                 ),
                               ],
@@ -261,8 +289,7 @@ class _LoginScreenState extends State<LoginScreen> {
           Expanded(
             flex: 6,
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 40, vertical: 30),
+              padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 30),
               child: Center(
                 child: Container(
                   constraints: const BoxConstraints(maxWidth: 440),
@@ -329,11 +356,12 @@ class _LoginScreenState extends State<LoginScreen> {
                           children: [
                             Expanded(
                               child: GestureDetector(
-                                onTap: () => setState(
-                                    () => _isRepresentanteRole = true),
+                                onTap: () =>
+                                    setState(() => _isRepresentanteRole = true),
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(
-                                      vertical: 10),
+                                    vertical: 10,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: _isRepresentanteRole
                                         ? Colors.white
@@ -342,8 +370,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                     boxShadow: _isRepresentanteRole
                                         ? [
                                             BoxShadow(
-                                              color: Colors.black
-                                                  .withValues(alpha: 0.05),
+                                              color: Colors.black.withValues(
+                                                alpha: 0.05,
+                                              ),
                                               blurRadius: 4,
                                               offset: const Offset(0, 2),
                                             ),
@@ -351,8 +380,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                         : [],
                                   ),
                                   child: Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.center,
+                                    mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
                                       Icon(
                                         Icons.person_outline,
@@ -382,10 +410,12 @@ class _LoginScreenState extends State<LoginScreen> {
                             Expanded(
                               child: GestureDetector(
                                 onTap: () => setState(
-                                    () => _isRepresentanteRole = false),
+                                  () => _isRepresentanteRole = false,
+                                ),
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(
-                                      vertical: 10),
+                                    vertical: 10,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: !_isRepresentanteRole
                                         ? Colors.white
@@ -394,8 +424,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                     boxShadow: !_isRepresentanteRole
                                         ? [
                                             BoxShadow(
-                                              color: Colors.black
-                                                  .withValues(alpha: 0.05),
+                                              color: Colors.black.withValues(
+                                                alpha: 0.05,
+                                              ),
                                               blurRadius: 4,
                                               offset: const Offset(0, 2),
                                             ),
@@ -403,8 +434,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                         : [],
                                   ),
                                   child: Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.center,
+                                    mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
                                       Icon(
                                         Icons.account_balance_outlined,
@@ -586,12 +616,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                         value: _rememberMe,
                                         activeColor: AppColors.primaryBlue,
                                         shape: RoundedRectangleBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(4),
+                                          borderRadius: BorderRadius.circular(
+                                            4,
+                                          ),
                                         ),
                                         onChanged: (val) {
-                                          setState(() =>
-                                              _rememberMe = val ?? false);
+                                          setState(
+                                            () => _rememberMe = val ?? false,
+                                          );
                                         },
                                       ),
                                     ),
