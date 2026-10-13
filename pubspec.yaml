@@ -14,6 +14,8 @@ dependencies:
   supabase_flutter: ^2.8.0
   excel: ^4.0.6
   file_picker: ^8.0.0
+  carousel_slider_plus: ^7.1.2
+  google_fonts: ^9.0.0
 
 dev_dependencies:
   flutter_test:
@@ -23,3 +25,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # Agrégalo exactamente aquí (respetando los espacios de indentación):
+  assets:
+    - assets/images/

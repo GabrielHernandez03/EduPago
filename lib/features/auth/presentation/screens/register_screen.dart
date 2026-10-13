@@ -734,23 +734,52 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               Container(
                                 padding: const EdgeInsets.all(8),
                                 decoration: BoxDecoration(
-                                  color: AppColors.primaryBlue,
-                                  borderRadius: BorderRadius.circular(10),
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      Colors.white.withValues(alpha: 0.15),
+                                      AppColors.primaryBlue.withValues(
+                                        alpha: 0.4,
+                                      ),
+                                    ],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: 0.2),
+                                  ),
                                 ),
-                                child: const Icon(
-                                  Icons.phonelink_setup,
-                                  color: Colors.white,
-                                  size: 22,
+                                child: Image.asset(
+                                  'assets/images/logo_edupago.png',
+                                  width: 46,
+                                  height: 46,
+                                  fit: BoxFit.contain,
                                 ),
                               ),
                               const SizedBox(width: 12),
-                              const Text(
-                                'EduPago',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: -0.5,
+                              RichText(
+                                text: const TextSpan(
+                                  style: TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: -0.5,
+                                  ),
+                                  children: [
+                                    TextSpan(
+                                      text: 'Edu',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    TextSpan(
+                                      text: 'Pago',
+                                      style: TextStyle(
+                                        color: AppColors.primaryBlue,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ],

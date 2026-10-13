@@ -3,6 +3,7 @@ import '../../../../core/widgets/custom_navbar.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
 import '../../../auth/presentation/screens/register_screen.dart';
 import '../widgets/hero_section.dart';
+import '../widgets/stats_bar_section.dart'; // <--- Importación corregida en la misma carpeta de widgets
 import '../widgets/features_section.dart';
 import '../widgets/security_section.dart';
 import '../widgets/cta_and_footer_section.dart';
@@ -48,7 +49,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF8FAFC),
       body: Column(
         children: [
           // Header Fijo Superior
@@ -57,8 +58,8 @@ class _HomeScreenState extends State<HomeScreen> {
             onSolucionesPressed: () => _scrollToSection(_solucionesKey),
             onSeguridadPressed: () => _scrollToSection(_seguridadKey),
             onContactoPressed: () => _scrollToSection(_contactoKey),
-            onLoginPressed: _navigateToLogin,      // Conecta a LoginScreen
-            onRegisterPressed: _navigateToRegister, // Conecta a RegisterScreen
+            onLoginPressed: _navigateToLogin,
+            onRegisterPressed: _navigateToRegister,
           ),
 
           // Cuerpo
@@ -71,12 +72,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     onStartPressed: _navigateToRegister,
                     onLoginPressed: _navigateToLogin,
                   ),
-                  FeaturesSection(
-                    key: _solucionesKey,
-                  ),
-                  SecuritySection(
-                    key: _seguridadKey,
-                  ),
+                  const StatsBarSection(), // <--- ¡Aquí va exactamente debajo del HeroSection!
+                  FeaturesSection(key: _solucionesKey),
+                  SecuritySection(key: _seguridadKey),
                   CtaAndFooterSection(
                     key: _contactoKey,
                     onRegisterPressed: _navigateToRegister,

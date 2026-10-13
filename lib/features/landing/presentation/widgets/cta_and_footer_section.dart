@@ -27,21 +27,35 @@ class CtaAndFooterSection extends StatelessWidget {
                 ),
                 child: Wrap(
                   alignment: WrapAlignment.spaceBetween,
-                  crossAxisAlignment: WrapCrossAlignment.center, // Propiedad corregida
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   spacing: 20,
                   runSpacing: 20,
                   children: [
                     const Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('EMPIEZA HOY', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 12)),
+                        Text(
+                          'EMPIEZA HOY',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
                         SizedBox(height: 8),
                         Text(
                           'Una escuela solvente es una escuela\nque crece.',
-                          style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         SizedBox(height: 8),
-                        Text('Únete a las instituciones que ya simplificaron su gestión financiera con EduPago.', style: TextStyle(color: Colors.white70)),
+                        Text(
+                          'Únete a las instituciones que ya simplificaron su gestión financiera con EduPago.',
+                          style: TextStyle(color: Colors.white70),
+                        ),
                       ],
                     ),
                     ElevatedButton.icon(
@@ -49,10 +63,18 @@ class CtaAndFooterSection extends StatelessWidget {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.white,
                         foregroundColor: AppColors.primaryBlue,
-                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 18,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
                       ),
-                      label: const Text('Crear mi cuenta', style: TextStyle(fontWeight: FontWeight.bold)),
+                      label: const Text(
+                        'Crear mi cuenta',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
                       icon: const Icon(Icons.arrow_forward, size: 16),
                     ),
                   ],
@@ -71,20 +93,21 @@ class CtaAndFooterSection extends StatelessWidget {
                 constraints: const BoxConstraints(maxWidth: 1200),
                 child: Wrap(
                   alignment: WrapAlignment.spaceBetween,
-                  crossAxisAlignment: WrapCrossAlignment.center, // Propiedad corregida
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   spacing: 20,
                   runSpacing: 20,
                   children: [
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: AppColors.primaryBlue,
-                            borderRadius: BorderRadius.circular(8),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.asset(
+                            'assets/images/logo_edupago.png',
+                            width: 32,
+                            height: 32,
+                            fit: BoxFit.contain,
                           ),
-                          child: const Icon(Icons.phonelink_setup, color: Colors.white, size: 18),
                         ),
                         const SizedBox(width: 10),
                         const Text(
@@ -105,11 +128,20 @@ class CtaAndFooterSection extends StatelessWidget {
                     const Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text('Privacidad', style: TextStyle(color: Colors.white60, fontSize: 12)),
+                        Text(
+                          'Privacidad',
+                          style: TextStyle(color: Colors.white60, fontSize: 12),
+                        ),
                         SizedBox(width: 16),
-                        Text('Términos', style: TextStyle(color: Colors.white60, fontSize: 12)),
+                        Text(
+                          'Términos',
+                          style: TextStyle(color: Colors.white60, fontSize: 12),
+                        ),
                         SizedBox(width: 16),
-                        Text('Ayuda', style: TextStyle(color: Colors.white60, fontSize: 12)),
+                        Text(
+                          'Ayuda',
+                          style: TextStyle(color: Colors.white60, fontSize: 12),
+                        ),
                       ],
                     ),
                   ],
@@ -122,3 +154,4 @@ class CtaAndFooterSection extends StatelessWidget {
     );
   }
 }
+  

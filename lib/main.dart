@@ -86,7 +86,7 @@ class _MyAppState extends State<MyApp> {
       title: 'EduPago',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        fontFamily: 'Inter',
+        fontFamily: 'Roboto',
         colorScheme: ColorScheme.fromSeed(seedColor: AppColors.primaryBlue),
         useMaterial3: true,
       ),

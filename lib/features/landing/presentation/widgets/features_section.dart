@@ -9,7 +9,7 @@ class FeaturesSection extends StatelessWidget {
     final bool isDesktop = MediaQuery.of(context).size.width > 900;
 
     return Container(
-      color: AppColors.backgroundLight,
+      color: const Color.fromRGBO(248, 250, 252, 1),
       padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 60),
       child: Column(
         children: [

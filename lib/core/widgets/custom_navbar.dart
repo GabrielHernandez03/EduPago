@@ -27,6 +27,14 @@ class CustomNavbar extends StatelessWidget {
       width: double.infinity,
       decoration: BoxDecoration(
         color: Colors.white,
+        border: const Border(
+          bottom: BorderSide(
+            color: Color(
+              0xFFE2E8F0,
+            ), // Borde definido y elegante para diferenciarlo
+            width: 1.5,
+          ),
+        ),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.04),
@@ -39,29 +47,63 @@ class CustomNavbar extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // Logo EduPago
+          // Logo e Identidad EduPago (Bicolor y Logo Personalizado)
           InkWell(
             onTap: onInicioPressed,
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(12),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: AppColors.primaryBlue,
-                    borderRadius: BorderRadius.circular(10),
+                // Contenedor con Stack para proyectar sombra exacta en la silueta
+                SizedBox(
+                  width: 54,
+                  height: 54,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // Sombra difuminada detrás con desplazamiento
+                      Positioned(
+                        top: 8,
+                        child: Opacity(
+                          opacity: 0.10, // Intensidad de la sombra
+                          child: Image.asset(
+                            'assets/images/logo_edupago.png',
+                            width: 48,
+                            height: 48,
+                            color: Colors
+                                .black, // Vuelve silueta negra la copia trasera
+                            fit: BoxFit.contain,
+                          ),
+                        ),
+                      ),
+                      // Logo real al frente
+                      Image.asset(
+                        'assets/images/logo_edupago.png',
+                        width: 64,
+                        height: 64,
+                        fit: BoxFit.contain,
+                      ),
+                    ],
                   ),
-                  child: const Icon(Icons.phonelink_setup, color: Colors.white, size: 22),
                 ),
-                const SizedBox(width: 10),
-                const Text(
-                  'EduPago',
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.5,
-                    color: AppColors.darkNavy,
+                const SizedBox(width: 12),
+                RichText(
+                  text: const TextSpan(
+                    style: TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -0.5,
+                    ),
+                    children: [
+                      TextSpan(
+                        text: 'Edu',
+                        style: TextStyle(color: AppColors.darkNavy),
+                      ),
+                      TextSpan(
+                        text: 'Pago',
+                        style: TextStyle(color: AppColors.primaryBlue),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -98,13 +140,19 @@ class CustomNavbar extends StatelessWidget {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryBlue,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 16,
+                  ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
                   elevation: 0,
                 ),
-                label: const Text('Crear cuenta', style: TextStyle(fontWeight: FontWeight.bold)),
+                label: const Text(
+                  'Crear cuenta',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
                 icon: const Icon(Icons.arrow_forward, size: 16),
               ),
             ],
@@ -119,10 +167,7 @@ class _NavLink extends StatelessWidget {
   final String title;
   final VoidCallback onTap;
 
-  const _NavLink({
-    required this.title,
-    required this.onTap,
-  });
+  const _NavLink({required this.title, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
