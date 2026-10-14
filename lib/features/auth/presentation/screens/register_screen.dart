@@ -758,25 +758,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               ),
                               const SizedBox(width: 12),
                               RichText(
-                                text: const TextSpan(
+                                text: TextSpan(
+                                  // Extraemos la fuente configurada globalmente en el ThemeData
                                   style: TextStyle(
+                                    fontFamily: Theme.of(
+                                      context,
+                                    ).textTheme.bodyMedium?.fontFamily,
                                     fontSize: 22,
                                     fontWeight: FontWeight.w900,
                                     letterSpacing: -0.5,
+                                    decoration: TextDecoration.none,
                                   ),
                                   children: [
-                                    TextSpan(
+                                    const TextSpan(
                                       text: 'Edu',
                                       style: TextStyle(
                                         color: Colors.white,
-                                        fontWeight: FontWeight.w900,
+                                        // No volvemos a declarar TextStyle complejo para no sobreescribir la fuente
                                       ),
                                     ),
                                     TextSpan(
                                       text: 'Pago',
                                       style: TextStyle(
                                         color: AppColors.primaryBlue,
-                                        fontWeight: FontWeight.w900,
                                       ),
                                     ),
                                   ],

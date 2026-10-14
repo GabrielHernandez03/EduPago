@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/theme/app_colors.dart';
 import 'features/auth/presentation/screens/reset_password_screen.dart';
@@ -86,9 +87,9 @@ class _MyAppState extends State<MyApp> {
       title: 'EduPago',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        fontFamily: 'Roboto',
-        colorScheme: ColorScheme.fromSeed(seedColor: AppColors.primaryBlue),
         useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: AppColors.primaryBlue),
+        textTheme: GoogleFonts.lexendTextTheme(ThemeData.light().textTheme),
       ),
       home: const HomeScreen(),
     );
