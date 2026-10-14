@@ -1,36 +1,66 @@
+// lib/features/dashboard/presentation/widgets/students_import_card.dart
+
 import 'dart:typed_data';
+
 import 'package:excel/excel.dart' hide Border;
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:universal_html/html.dart' as html;
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../main.dart';
 
-const _kRequired = ['nombres', 'apellidos'];
-const _kAllColumns = [
-  'codigo_estudiantil',
+// ---------------------------------------------------------------------------
+// Columnas obligatorias del Excel
+// ---------------------------------------------------------------------------
+const _kRequiredCols = [
+  'cedula_estudiante',
+  'nombres_estudiante',
+  'apellidos_estudiante',
+];
+
+// Columnas fijas del estudiante (sin representantes)
+const _kStudentCols = [
+  'cedula_estudiante',
+  'nombres_estudiante',
+  'apellidos_estudiante',
+  'fecha_nacimiento',
+  'grado_seccion',
+];
+
+// Campos de cada representante (se buscan como repN_campo)
+const _kRepFields = [
   'cedula',
   'nombres',
   'apellidos',
-  'fecha_nacimiento',
-  'activo',
-  'grado_seccion',
-  'grado', // por compatibilidad con encabezados antiguos
+  'telefono',
+  'email',
+  'parentesco',
+  'es_financiero',
 ];
 
+// ---------------------------------------------------------------------------
+// Resultado del parser
+// ---------------------------------------------------------------------------
 class StudentImportResult {
   final List<Map<String, dynamic>> rows;
   final List<String> errors;
-  const StudentImportResult(this.rows, this.errors);
+  final int repCount; // total de representantes detectados en todas las filas
+  const StudentImportResult(this.rows, this.errors, {this.repCount = 0});
 }
 
+// ---------------------------------------------------------------------------
+// Parser de Excel — lógica pura, sin Flutter
+// ---------------------------------------------------------------------------
 class StudentExcelParser {
-  static StudentImportResult parse(List<int> bytes, String colegioId) {
+  static StudentImportResult parse(List<int> bytes) {
+    // ── Decodificar ─────────────────────────────────────────────────────────
     final Excel excel;
     try {
-      // Convertimos a Uint8List para compatibilidad total con la librería excel
-      final uint8Bytes = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
-      excel = Excel.decodeBytes(uint8Bytes);
+      final uint8 = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
+      excel = Excel.decodeBytes(uint8);
     } catch (e) {
       return StudentImportResult([], [
         'No se pudo leer el archivo. Asegúrate de que sea un .xlsx válido. ($e)',
@@ -38,119 +68,170 @@ class StudentExcelParser {
     }
 
     if (excel.tables.isEmpty) {
-      return const StudentImportResult([], ['El archivo no tiene hojas.']);
+      return StudentImportResult([], ['El archivo no tiene hojas.']);
     }
+
     final sheet = excel.tables.values.first;
     if (sheet.rows.length < 2) {
-      return const StudentImportResult([], [
+      return StudentImportResult([], [
         'El archivo no contiene filas de datos debajo del encabezado.',
       ]);
     }
 
+    // ── Mapa encabezado → índice ─────────────────────────────────────────
     final idx = <String, int>{};
-    final header = sheet.rows.first;
-    for (var i = 0; i < header.length; i++) {
-      final name = _norm(_text(header[i]?.value));
+    final headerRow = sheet.rows.first;
+    for (var i = 0; i < headerRow.length; i++) {
+      final name = _norm(_text(headerRow[i]?.value));
       if (name.isNotEmpty) idx.putIfAbsent(name, () => i);
     }
 
-    final missing = _kRequired.where((c) => !idx.containsKey(c)).toList();
+    // Verificar columnas obligatorias
+    final missing = _kRequiredCols.where((c) => !idx.containsKey(c)).toList();
     if (missing.isNotEmpty) {
       return StudentImportResult([], [
         'Faltan columnas obligatorias: ${missing.join(', ')}.',
+        'Comprueba que el encabezado use exactamente estos nombres '
+            '(minúsculas, sin tildes, con guión bajo).',
       ]);
     }
 
+    // Detectar cuántos bloques de representantes hay en el encabezado (rep1…repN)
+    int maxRepCols = 0;
+    for (var n = 1; n <= 20; n++) {
+      if (idx.containsKey('rep${n}_cedula') ||
+          idx.containsKey('rep${n}_nombres')) {
+        maxRepCols = n;
+      }
+    }
+
+    // ── Helpers de lectura ───────────────────────────────────────────────
     String cell(List<Data?> row, String col) {
       final i = idx[col];
       if (i == null || i >= row.length) return '';
       return _text(row[i]?.value).trim();
     }
 
+    // ── Procesar filas ────────────────────────────────────────────────────
     final rows = <Map<String, dynamic>>[];
     final errors = <String>[];
-    final seen = <String>{};
+    final seenCed = <String>{};
+    int totalRepresentatives = 0;
 
     for (var r = 1; r < sheet.rows.length; r++) {
       final row = sheet.rows[r];
-      final line = r + 1;
+      final fila = r + 1; // número visible en Excel
 
-      final values = {for (final c in _kAllColumns) c: cell(row, c)};
-      if (values.values.every((v) => v.isEmpty)) continue;
+      // Valores fijos del estudiante
+      final vals = {for (final c in _kStudentCols) c: cell(row, c)};
 
-      // Toma la cédula o el codigo_estudiantil indistintamente como código único
-      final cedulaRaw = values['cedula']!.isNotEmpty
-          ? values['cedula']!
-          : values['codigo_estudiantil']!;
+      // Saltar filas completamente vacías
+      if (vals.values.every((v) => v.isEmpty)) continue;
 
-      final codigo = cedulaRaw;
-      final nombres = values['nombres']!;
-      final apellidos = values['apellidos']!;
+      final cedEst = vals['cedula_estudiante']!;
+      final nombres = vals['nombres_estudiante']!;
+      final apellidos = vals['apellidos_estudiante']!;
 
-      if (codigo.isEmpty) {
+      if (cedEst.isEmpty || nombres.isEmpty || apellidos.isEmpty) {
         errors.add(
-          'Fila $line: Se requiere la cédula o el código estudiantil.',
+          'Fila $fila: cedula_estudiante, nombres_estudiante '
+          'y apellidos_estudiante son obligatorios.',
         );
         continue;
       }
 
-      if (nombres.isEmpty || apellidos.isEmpty) {
-        errors.add('Fila $line: nombres y apellidos son obligatorios.');
-        continue;
-      }
-
-      if (!seen.add(codigo.toLowerCase())) {
+      if (!seenCed.add(cedEst.toLowerCase())) {
         errors.add(
-          'Fila $line: La cédula / código "$codigo" está repetido en el archivo.',
+          'Fila $fila: La cédula "$cedEst" está repetida en el archivo.',
         );
         continue;
       }
 
-      String? fecha;
-      final fechaRaw = values['fecha_nacimiento']!;
+      // Fecha de nacimiento (opcional)
+      String? fechaNac;
+      final fechaRaw = vals['fecha_nacimiento']!;
       if (fechaRaw.isNotEmpty) {
         final d = _parseDate(fechaRaw);
         if (d == null) {
           errors.add(
-            'Fila $line: fecha_nacimiento "$fechaRaw" no es válida (usa dd/mm/aaaa).',
+            'Fila $fila: fecha_nacimiento "$fechaRaw" no es válida. '
+            'Usa dd/mm/aaaa o aaaa-mm-dd.',
           );
           continue;
         }
-        fecha = _iso(d);
+        fechaNac = _iso(d);
       }
 
-      final activo = _parseBool(values['activo']!);
-      if (activo == null) {
-        errors.add(
-          'Fila $line: activo "${values['activo']}" no es válido (usa SI/NO).',
-        );
-        continue;
+      // ── Representantes: leer rep1_*, rep2_*, … repN_* ─────────────────
+      final representantes = <Map<String, dynamic>>[];
+
+      for (var n = 1; n <= maxRepCols; n++) {
+        final repVals = {
+          for (final f in _kRepFields) f: cell(row, 'rep${n}_$f'),
+        };
+
+        final hasSomeData = repVals.values.any((v) => v.isNotEmpty);
+        if (!hasSomeData) continue;
+
+        // Ignorar marcadores explícitos de celda vacía como "(vacío)"
+        final cedRep = repVals['cedula']!;
+        final nomRep = repVals['nombres']!;
+        final apRep = repVals['apellidos']!;
+
+        if (cedRep.toLowerCase() == '(vacío)' ||
+            nomRep.toLowerCase() == '(vacío)' ||
+            apRep.toLowerCase() == '(vacío)') {
+          continue;
+        }
+
+        if (cedRep.isEmpty || nomRep.isEmpty || apRep.isEmpty) {
+          errors.add(
+            'Fila $fila (rep$n): si incluyes un representante, '
+            'cedula, nombres y apellidos son obligatorios.',
+          );
+          continue;
+        }
+
+        representantes.add({
+          'cedula': cedRep,
+          'nombres': nomRep,
+          'apellidos': apRep,
+          'telefono': repVals['telefono']!.isNotEmpty
+              ? repVals['telefono']
+              : null,
+          'email': repVals['email']!.isNotEmpty ? repVals['email'] : null,
+          'parentesco': repVals['parentesco']!.isNotEmpty
+              ? repVals['parentesco']
+              : null,
+          'es_financiero': repVals['es_financiero'],
+        });
       }
 
-      // Mapea grado o grado_seccion para coincidir exactamente con la tabla en Supabase
-      final gradoSeccion = values['grado_seccion']!.isNotEmpty
-          ? values['grado_seccion']!
-          : (values['grado']!.isNotEmpty ? values['grado']! : null);
+      totalRepresentatives += representantes.length;
 
       rows.add({
-        'colegio_id': colegioId,
-        'codigo_estudiantil': codigo, // Cédula usada como código estudiantil
-        'cedula': codigo, // Guarda también la cédula
-        'nombres': nombres,
-        'apellidos': apellidos,
-        'fecha_nacimiento': fecha,
-        'activo': activo,
-        'grado_seccion': gradoSeccion, // Mapeado a la columna real de Supabase
+        'cedula_estudiante': cedEst,
+        'nombres_estudiante': nombres,
+        'apellidos_estudiante': apellidos,
+        'fecha_nacimiento': fechaNac,
+        'grado_seccion': vals['grado_seccion']!.isNotEmpty
+            ? vals['grado_seccion']
+            : null,
+        'representantes': representantes,
       });
     }
 
     if (rows.isEmpty && errors.isEmpty) {
       errors.add('No se encontraron estudiantes en el archivo.');
     }
-    return StudentImportResult(rows, errors);
+
+    return StudentImportResult(rows, errors, repCount: totalRepresentatives);
   }
 
-  static String _norm(String s) => s.trim().toLowerCase().replaceAll(' ', '_');
+  // ── Utilidades ────────────────────────────────────────────────────────────
+
+  static String _norm(String s) =>
+      s.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '_');
 
   static String _iso(DateTime d) =>
       '${d.year.toString().padLeft(4, '0')}-'
@@ -175,56 +256,41 @@ class StudentExcelParser {
   }
 
   static DateTime? _parseDate(String s) {
-    DateTime? d;
     final serial = double.tryParse(s);
     if (serial != null) {
       if (serial < 1000 || serial > 80000) return null;
-      d = DateTime(1899, 12, 30).add(Duration(days: serial.floor()));
-    } else {
-      final iso = RegExp(r'^(\d{4})-(\d{1,2})-(\d{1,2})').firstMatch(s);
-      final latin = RegExp(
-        r'^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$',
-      ).firstMatch(s);
-      if (iso != null) {
-        d = _safeDate(
-          int.parse(iso.group(1)!),
-          int.parse(iso.group(2)!),
-          int.parse(iso.group(3)!),
-        );
-      } else if (latin != null) {
-        d = _safeDate(
-          int.parse(latin.group(3)!),
-          int.parse(latin.group(2)!),
-          int.parse(latin.group(1)!),
-        );
-      }
+      return DateTime(1899, 12, 30).add(Duration(days: serial.floor()));
     }
-
-    if (d == null) return null;
-    final now = DateTime.now();
-    if (d.year < 1980 || d.isAfter(now)) return null;
-    return d;
+    final iso = RegExp(r'^(\d{4})-(\d{1,2})-(\d{1,2})').firstMatch(s);
+    if (iso != null) {
+      return _safeDate(
+        int.parse(iso.group(1)!),
+        int.parse(iso.group(2)!),
+        int.parse(iso.group(3)!),
+      );
+    }
+    final latin = RegExp(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$').firstMatch(s);
+    if (latin != null) {
+      return _safeDate(
+        int.parse(latin.group(3)!),
+        int.parse(latin.group(2)!),
+        int.parse(latin.group(1)!),
+      );
+    }
+    return null;
   }
 
   static DateTime? _safeDate(int y, int m, int d) {
     final dt = DateTime(y, m, d);
-    return (dt.year == y && dt.month == m && dt.day == d) ? dt : null;
-  }
-
-  static bool? _parseBool(String s) {
-    final v = s.trim().toLowerCase();
-    if (v.isEmpty) return true;
-    const yes = {'si', 'sí', 's', 'true', '1', 'x', 'activo', 'yes', 'y'};
-    const no = {'no', 'n', 'false', '0', 'inactivo'};
-    if (yes.contains(v)) return true;
-    if (no.contains(v)) return false;
-    return null;
+    if (dt.year != y || dt.month != m || dt.day != d) return null;
+    if (y < 1980 || dt.isAfter(DateTime.now())) return null;
+    return dt;
   }
 }
 
-// ---------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // Widget
-// ---------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 enum _Step { idle, reading, ready, importing }
 
 class StudentsImportCard extends StatefulWidget {
@@ -246,15 +312,350 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
   String? _fileName;
   StudentImportResult? _result;
   String? _fatal;
+  List<Map<String, dynamic>> _serverErrors = [];
 
-  static const _chunk = 500;
+  // ── Descargar plantilla (Compatible con Web y Escritorio/Móvil) ────────────
+  Future<void> _downloadTemplate() async {
+    try {
+      final byteData = await rootBundle.load(
+        'assets/Plantilla de Insercion.xlsx',
+      );
+      final fileBytes = byteData.buffer.asUint8List();
 
+      if (kIsWeb) {
+        final blob = html.Blob([fileBytes]);
+        final url = html.Url.createObjectUrlFromBlob(blob);
+        html.AnchorElement(href: url)
+          ..setAttribute('download', 'Plantilla de Insercion.xlsx')
+          ..click();
+        html.Url.revokeObjectUrl(url);
+      } else {
+        await FilePicker.platform.saveFile(
+          dialogTitle: 'Guardar plantilla de ejemplo',
+          fileName: 'Plantilla de Insercion.xlsx',
+          bytes: fileBytes,
+        );
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Plantilla descargada con éxito.'),
+            backgroundColor: Color(0xFF059669),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al descargar plantilla: $e'),
+            backgroundColor: const Color(0xFFB91C1C),
+          ),
+        );
+      }
+    }
+  }
+
+  // ── Agregar manualmente ───────────────────────────────────────────────────
+  void _showManualAddDialog() {
+    final cedEstController = TextEditingController();
+    final nomEstController = TextEditingController();
+    final apEstController = TextEditingController();
+    final fechaNacController = TextEditingController();
+    final gradoController = TextEditingController();
+
+    final cedRepController = TextEditingController();
+    final nomRepController = TextEditingController();
+    final apRepController = TextEditingController();
+    final telRepController = TextEditingController();
+    final emailRepController = TextEditingController();
+    String parentesco = 'madre';
+    bool esFinanciero = true;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: const Text('Agregar Estudiante Manualmente'),
+              content: SizedBox(
+                width: 500,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Datos del Estudiante',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primaryBlue,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: cedEstController,
+                        decoration: const InputDecoration(
+                          labelText: 'Cédula Estudiante * (ej. V-30123456)',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: nomEstController,
+                        decoration: const InputDecoration(
+                          labelText: 'Nombres Estudiante *',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: apEstController,
+                        decoration: const InputDecoration(
+                          labelText: 'Apellidos Estudiante *',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: fechaNacController,
+                        decoration: const InputDecoration(
+                          labelText:
+                              'Fecha de Nacimiento (YYYY-MM-DD, opcional)',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: gradoController,
+                        decoration: const InputDecoration(
+                          labelText: 'Grado y Sección (opcional)',
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      const Text(
+                        'Representante Principal (Opcional)',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primaryBlue,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: cedRepController,
+                        decoration: const InputDecoration(
+                          labelText: 'Cédula Representante',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: nomRepController,
+                        decoration: const InputDecoration(
+                          labelText: 'Nombres Representante',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: apRepController,
+                        decoration: const InputDecoration(
+                          labelText: 'Apellidos Representante',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: telRepController,
+                        decoration: const InputDecoration(
+                          labelText: 'Teléfono',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: emailRepController,
+                        decoration: const InputDecoration(labelText: 'Email'),
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<String>(
+                        value: parentesco,
+                        decoration: const InputDecoration(
+                          labelText: 'Parentesco',
+                        ),
+                        items:
+                            [
+                                  'madre',
+                                  'padre',
+                                  'tutor',
+                                  'tutora',
+                                  'abuelo',
+                                  'abuela',
+                                  'tío',
+                                  'tía',
+                                  'familiar',
+                                  'otro',
+                                ]
+                                .map(
+                                  (p) => DropdownMenuItem(
+                                    value: p,
+                                    child: Text(p.toUpperCase()),
+                                  ),
+                                )
+                                .toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            setDialogState(() => parentesco = val);
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      SwitchListTile(
+                        title: const Text('¿Es responsable financiero?'),
+                        value: esFinanciero,
+                        onChanged: (val) =>
+                            setDialogState(() => esFinanciero = val),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancelar'),
+                ),
+                ElevatedButton(
+                  style: _primaryStyle(),
+                  onPressed: () async {
+                    final cedEst = cedEstController.text.trim();
+                    final nomEst = nomEstController.text.trim();
+                    final apEst = apEstController.text.trim();
+
+                    if (cedEst.isEmpty || nomEst.isEmpty || apEst.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Cédula, nombres y apellidos del estudiante son obligatorios.',
+                          ),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                      return;
+                    }
+
+                    final Map<String, dynamic> rowData = {
+                      'cedula_estudiante': cedEst,
+                      'nombres_estudiante': nomEst,
+                      'apellidos_estudiante': apEst,
+                      'fecha_nacimiento': fechaNacController.text.trim().isEmpty
+                          ? null
+                          : fechaNacController.text.trim(),
+                      'grado_seccion': gradoController.text.trim().isEmpty
+                          ? null
+                          : gradoController.text.trim(),
+                      'representantes': [],
+                    };
+
+                    final cedRep = cedRepController.text.trim();
+                    final nomRep = nomRepController.text.trim();
+                    final apRep = apRepController.text.trim();
+
+                    if (cedRep.isNotEmpty ||
+                        nomRep.isNotEmpty ||
+                        apRep.isNotEmpty) {
+                      if (cedRep.isEmpty || nomRep.isEmpty || apRep.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Si incluye representante, cédula, nombres y apellidos son obligatorios.',
+                            ),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                        return;
+                      }
+                      (rowData['representantes'] as List).add({
+                        'cedula': cedRep,
+                        'nombres': nomRep,
+                        'apellidos': apRep,
+                        'telefono': telRepController.text.trim().isEmpty
+                            ? null
+                            : telRepController.text.trim(),
+                        'email': emailRepController.text.trim().isEmpty
+                            ? null
+                            : emailRepController.text.trim(),
+                        'parentesco': parentesco,
+                        'es_financiero': esFinanciero,
+                      });
+                    }
+
+                    Navigator.pop(context);
+
+                    setState(() {
+                      _step = _Step.importing;
+                    });
+
+                    try {
+                      final response = await supabase.functions.invoke(
+                        'import-students',
+                        body: {
+                          'colegio_id': widget.colegioId,
+                          'rows': [rowData],
+                        },
+                      );
+
+                      if (!mounted) return;
+                      final data = response.data as Map<String, dynamic>?;
+                      final exitosos =
+                          (data?['exitosos'] as num?)?.toInt() ?? 0;
+                      final errores =
+                          (data?['errores'] as List?)
+                              ?.map((e) => Map<String, dynamic>.from(e as Map))
+                              .toList() ??
+                          [];
+
+                      if (exitosos > 0) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Estudiante registrado correctamente.',
+                            ),
+                            backgroundColor: Color(0xFF059669),
+                          ),
+                        );
+                        widget.onImported();
+                      } else {
+                        setState(() => _step = _Step.idle);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Error al registrar: ${errores.isNotEmpty ? errores.first['motivo'] : 'Desconocido'}',
+                            ),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      if (!mounted) return;
+                      setState(() => _step = _Step.idle);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Error de conexión: $e'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  },
+                  child: const Text('Guardar Estudiante'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ── Selección de archivo ──────────────────────────────────────────────────
   Future<void> _pick() async {
-    setState(() {
-      _fatal = null;
-      _result = null;
-    });
-
     final picked = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['xlsx'],
@@ -265,17 +666,22 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
     final file = picked.files.first;
     final bytes = file.bytes;
     if (bytes == null) {
-      setState(() => _fatal = 'No se pudo leer el archivo seleccionado.');
+      setState(() {
+        _fatal = 'No se pudo leer el archivo seleccionado.';
+      });
       return;
     }
 
     setState(() {
+      _fatal = null;
+      _result = null;
+      _serverErrors = [];
       _step = _Step.reading;
       _fileName = file.name;
     });
 
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    final result = StudentExcelParser.parse(bytes, widget.colegioId);
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    final result = StudentExcelParser.parse(bytes);
 
     if (!mounted) return;
     setState(() {
@@ -284,6 +690,7 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
     });
   }
 
+  // ── Importación ───────────────────────────────────────────────────────────
   Future<void> _import() async {
     final result = _result;
     if (result == null || result.rows.isEmpty || result.errors.isNotEmpty) {
@@ -293,31 +700,67 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
     setState(() {
       _step = _Step.importing;
       _fatal = null;
+      _serverErrors = [];
     });
 
     try {
-      for (var i = 0; i < result.rows.length; i += _chunk) {
-        final end = (i + _chunk).clamp(0, result.rows.length);
-        await supabase
-            .from('estudiantes')
-            .upsert(
-              result.rows.sublist(i, end),
-              onConflict: 'colegio_id,codigo_estudiantil',
-            );
-      }
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${result.rows.length} estudiantes importados.'),
-        ),
+      final response = await supabase.functions.invoke(
+        'import-students',
+        body: {'colegio_id': widget.colegioId, 'rows': result.rows},
       );
+
+      if (!mounted) return;
+
+      final data = response.data as Map<String, dynamic>?;
+      if (data == null) {
+        setState(() {
+          _step = _Step.ready;
+          _fatal =
+              'La función no devolvió respuesta. Revisa los logs de Supabase.';
+        });
+        return;
+      }
+
+      final exitosos = (data['exitosos'] as num?)?.toInt() ?? 0;
+      final errores =
+          (data['errores'] as List?)
+              ?.map((e) => Map<String, dynamic>.from(e as Map))
+              .toList() ??
+          [];
+
+      if (exitosos == 0 && errores.isNotEmpty) {
+        setState(() {
+          _step = _Step.ready;
+          _serverErrors = errores;
+          _fatal = 'No se importó ningún estudiante. Revisa los errores.';
+        });
+        return;
+      }
+
+      setState(() => _serverErrors = errores);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              errores.isEmpty
+                  ? '$exitosos estudiantes importados correctamente.'
+                  : '$exitosos importados · ${errores.length} con errores.',
+            ),
+            backgroundColor: errores.isEmpty
+                ? const Color(0xFF059669)
+                : const Color(0xFFD97706),
+          ),
+        );
+      }
+
       widget.onImported();
     } catch (e) {
-      debugPrint('Error al importar estudiantes: $e');
+      debugPrint('Error al invocar import-students: $e');
       if (!mounted) return;
       setState(() {
         _step = _Step.ready;
-        _fatal = 'No se pudo completar la importación: $e';
+        _fatal = 'Error de conexión: $e';
       });
     }
   }
@@ -327,56 +770,45 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
     _result = null;
     _fileName = null;
     _fatal = null;
+    _serverErrors = [];
   });
 
+  // ── UI ────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Center(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620),
+          constraints: const BoxConstraints(maxWidth: 720),
           child: Container(
-            padding: const EdgeInsets.all(28),
+            padding: const EdgeInsets.all(32),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.cardBorder),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.20),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.20),
+                  blurRadius: 4,
+                  offset: const Offset(0, 1),
+                ),
+              ],
+              border: Border.all(color: const Color(0xFFF1F5F9), width: 1.5),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFEFF6FF),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.upload_file_outlined,
-                    color: AppColors.primaryBlue,
-                    size: 30,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Aún no hay estudiantes registrados',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.darkNavy,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Importa tu matrícula desde un archivo Excel (.xlsx) para activar el panel.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 13, color: AppColors.textMuted),
-                ),
-                const SizedBox(height: 18),
-                _columnsHint(),
-                const SizedBox(height: 20),
-                _content(),
+                _buildHeader(),
+                const SizedBox(height: 24),
+                _buildTemplateDownloadSection(),
+                const SizedBox(height: 28),
+                _buildContent(),
               ],
             ),
           ),
@@ -385,126 +817,286 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
     );
   }
 
-  Widget _columnsHint() {
-    const displayCols = [
-      'cedula',
-      'nombres',
-      'apellidos',
-      'fecha_nacimiento',
-      'activo',
-      'grado',
-    ];
-    return Wrap(
-      spacing: 6,
-      runSpacing: 6,
-      alignment: WrapAlignment.center,
+  Widget _buildHeader() {
+    return Column(
       children: [
-        for (final c in displayCols)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: _kRequired.contains(c) || c == 'cedula'
-                  ? const Color(0xFFDBEAFE)
-                  : const Color(0xFFF1F5F9),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              _kRequired.contains(c) || c == 'cedula' ? '$c *' : c,
-              style: const TextStyle(
-                fontSize: 11,
-                fontFamily: 'monospace',
-                color: AppColors.darkNavy,
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFEFF6FF),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primaryBlue.withOpacity(0.12),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
               ),
-            ),
+            ],
           ),
+          child: const Icon(
+            Icons.upload_file_rounded,
+            color: AppColors.primaryBlue,
+            size: 32,
+          ),
+        ),
+        const SizedBox(height: 16),
+        const Text(
+          'Aún no hay estudiantes registrados',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: AppColors.darkNavy,
+            letterSpacing: -0.3,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Importa tu matrícula masivamente desde un archivo Excel (.xlsx) o registra estudiantes de forma manual.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 13,
+            color: AppColors.textMuted,
+            height: 1.4,
+          ),
+        ),
       ],
     );
   }
 
-  Widget _content() {
+  Widget _buildTemplateDownloadSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.10),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+          BoxShadow(
+            color: Colors.black.withOpacity(0.10),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+        border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEFF6FF),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.table_chart_rounded,
+              color: AppColors.primaryBlue,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 14),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Plantilla de Inserción Excel',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.darkNavy,
+                  ),
+                ),
+                SizedBox(height: 3),
+                Text(
+                  'Descarga el archivo de ejemplo con las columnas y formato requeridos.',
+                  style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          OutlinedButton.icon(
+            onPressed: _downloadTemplate,
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.white,
+              foregroundColor: AppColors.darkNavy,
+              side: const BorderSide(color: Color(0xFFCBD5E1)),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            icon: const Icon(
+              Icons.download_rounded,
+              size: 16,
+              color: AppColors.primaryBlue,
+            ),
+            label: const Text(
+              'Descargar',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContent() {
     switch (_step) {
       case _Step.reading:
-        return const Padding(
-          padding: EdgeInsets.all(12),
-          child: CircularProgressIndicator(),
-        );
+        return const _Loader(label: 'Leyendo archivo…');
+
       case _Step.importing:
-        return Column(
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 12),
-            Text(
-              'Importando ${_result?.rows.length ?? 0} estudiantes…',
-              style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
-            ),
-          ],
-        );
+        return const _Loader(label: 'Procesando estudiantes…');
+
       case _Step.ready:
-        return _preview();
+        return _buildPreview();
+
       case _Step.idle:
         return Column(
           children: [
             if (_fatal != null) _errorBox([_fatal!]),
-            ElevatedButton.icon(
-              onPressed: _pick,
-              style: _primaryStyle(),
-              icon: const Icon(Icons.folder_open, size: 18),
-              label: const Text('Seleccionar archivo Excel'),
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              '* obligatorias · fecha en formato dd/mm/aaaa · activo: SI/NO (vacío = SI)',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 10, color: AppColors.textMuted),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              alignment: WrapAlignment.center,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: _pick,
+                  style: _primaryStyle(),
+                  icon: const Icon(Icons.folder_open_rounded, size: 18),
+                  label: const Text('Seleccionar archivo Excel'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _showManualAddDialog,
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: AppColors.darkNavy,
+                    side: const BorderSide(color: Color(0xFFCBD5E1)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 14,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  icon: const Icon(
+                    Icons.person_add_rounded,
+                    size: 18,
+                    color: AppColors.primaryBlue,
+                  ),
+                  label: const Text(
+                    'Agregar manualmente',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
             ),
           ],
         );
     }
   }
 
-  Widget _preview() {
+  Widget _buildPreview() {
     final r = _result!;
-    final hasErrors = r.errors.isNotEmpty;
+    final hasLocalErrors = r.errors.isNotEmpty;
 
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          _fileName ?? '',
-          style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-            color: AppColors.darkNavy,
-          ),
+        Row(
+          children: [
+            const Icon(
+              Icons.description_outlined,
+              size: 16,
+              color: AppColors.textMuted,
+            ),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                _fileName ?? '',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.darkNavy,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 10),
-        if (!hasErrors)
-          Text(
-            '${r.rows.length} estudiantes listos para importar.',
-            style: const TextStyle(fontSize: 13, color: Color(0xFF059669)),
+        const SizedBox(height: 12),
+
+        if (!hasLocalErrors)
+          _infoBox(
+            '${r.rows.length} estudiantes listos · '
+            '${r.repCount} representante${r.repCount == 1 ? '' : 's'} detectado${r.repCount == 1 ? '' : 's'}.',
+            icon: Icons.check_circle_outline,
+            color: const Color(0xFF059669),
+            bg: const Color(0xFFF0FDF4),
+            border: const Color(0xFFBBF7D0),
           ),
-        if (hasErrors)
+
+        if (hasLocalErrors)
           _errorBox([
             '${r.errors.length} ${r.errors.length == 1 ? 'problema' : 'problemas'} '
-                'encontrados. Corrige el archivo y vuelve a cargarlo (no se importó nada):',
-            ...r.errors.take(8),
-            if (r.errors.length > 8) '… y ${r.errors.length - 8} más.',
+                'encontrados — corrige el archivo y vuelve a cargarlo:',
+            ...r.errors.take(12),
+            if (r.errors.length > 12) '… y ${r.errors.length - 12} más.',
           ]),
-        if (_fatal != null) _errorBox([_fatal!]),
-        const SizedBox(height: 14),
+
+        if (_serverErrors.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _errorBox([
+            '${_serverErrors.length} fila${_serverErrors.length == 1 ? '' : 's'} '
+                'con errores en el servidor:',
+            ..._serverErrors
+                .take(10)
+                .map(
+                  (e) => 'Fila ${e['fila']} (${e['cedula']}): ${e['motivo']}',
+                ),
+            if (_serverErrors.length > 10)
+              '… y ${_serverErrors.length - 10} más.',
+          ]),
+        ],
+
+        if (_fatal != null) ...[
+          const SizedBox(height: 8),
+          _errorBox([_fatal!]),
+        ],
+
+        const SizedBox(height: 16),
         Wrap(
           spacing: 10,
           runSpacing: 10,
-          alignment: WrapAlignment.center,
           children: [
-            OutlinedButton(
-              onPressed: _reset,
-              child: Text(hasErrors ? 'Elegir otro archivo' : 'Cancelar'),
+            OutlinedButton.icon(
+              onPressed: _pick,
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              icon: const Icon(Icons.upload_file_outlined, size: 16),
+              label: Text(
+                hasLocalErrors ? 'Elegir otro archivo' : 'Cambiar archivo',
+              ),
             ),
-            if (!hasErrors && r.rows.isNotEmpty)
+            if (!hasLocalErrors && r.rows.isNotEmpty)
               ElevatedButton.icon(
                 onPressed: _import,
                 style: _primaryStyle(),
-                icon: const Icon(Icons.check, size: 18),
+                icon: const Icon(Icons.cloud_upload_outlined, size: 18),
                 label: Text('Importar ${r.rows.length} estudiantes'),
               ),
           ],
@@ -513,10 +1105,45 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
     );
   }
 
-  Widget _errorBox(List<String> lines) {
+  Widget _infoBox(
+    String text, {
+    required IconData icon,
+    required Color color,
+    required Color bg,
+    required Color border,
+  }) {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: border),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 16),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 12,
+                color: color,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _errorBox(List<String> lines) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 4),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: const Color(0xFFFEF2F2),
@@ -546,4 +1173,28 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
   );
+}
+
+class _Loader extends StatelessWidget {
+  final String label;
+  const _Loader({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    print("Loader rendered"); // Placeholder
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(),
+          const SizedBox(height: 14),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+          ),
+        ],
+      ),
+    );
+  }
 }

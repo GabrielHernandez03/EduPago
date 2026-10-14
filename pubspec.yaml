@@ -15,7 +15,7 @@ dependencies:
   excel: ^4.0.6
   file_picker: ^8.0.0
   carousel_slider_plus: ^7.1.2
-  google_fonts: ^9.0.0
+  universal_html: ^2.2.4
 
 dev_dependencies:
   flutter_test:
@@ -29,3 +29,4 @@ flutter:
   # Agrégalo exactamente aquí (respetando los espacios de indentación):
   assets:
     - assets/images/
+    - assets/Plantilla de Insercion.xlsx
