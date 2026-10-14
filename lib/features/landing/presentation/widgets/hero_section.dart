@@ -42,7 +42,19 @@ class _HeroSectionState extends State<HeroSection> {
       constraints: BoxConstraints(
         minHeight: isMobile ? 0 : (minHeroHeight > 600 ? minHeroHeight : 600),
       ),
-      color: const Color(0xFFF8FAFC),
+      // Background con gradiente de arriba hacia abajo
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color.fromARGB(255, 242, 244, 247), // Color superior
+            Color(
+              0xFFF8FAFC,
+            ), // Color inferior (puedes ajustarlo si prefieres otro tono)
+          ],
+        ),
+      ),
       padding: EdgeInsets.symmetric(
         horizontal: isMobile ? 20 : 80,
         vertical: isMobile ? 40 : 60,
@@ -228,21 +240,18 @@ class _HeroSectionState extends State<HeroSection> {
                               imgPath,
                               fit: BoxFit.cover,
                               width: double.infinity,
-                              cacheWidth:
-                                  800, // Mantén la optimización de caché
+                              cacheWidth: 800,
                             );
                           }).toList(),
                           options: CarouselOptions(
                             height: 420,
-                            autoPlay: true, // Reproducción automática
-                            autoPlayInterval: const Duration(
-                              seconds: 5,
-                            ), // Cada 5 segundos
+                            autoPlay: true,
+                            autoPlayInterval: const Duration(seconds: 5),
                             autoPlayAnimationDuration: const Duration(
                               milliseconds: 800,
-                            ), // Suavidad
+                            ),
                             autoPlayCurve: Curves.fastOutSlowIn,
-                            viewportFraction: 1.0, // Que ocupe todo el ancho
+                            viewportFraction: 1.0,
                             enlargeCenterPage: false,
                             onPageChanged: (index, reason) {
                               setState(() {
@@ -309,9 +318,7 @@ class _HeroSectionState extends State<HeroSection> {
 
                     // Floating Badge 2: Pago verificado (Sin cambios)
                     Positioned(
-                      bottom: isMobile
-                          ? -30
-                          : -20, // Ajuste para que no tape los indicadores en móvil
+                      bottom: isMobile ? -30 : -20,
                       left: -10,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
@@ -370,7 +377,7 @@ class _HeroSectionState extends State<HeroSection> {
                       ),
                     ),
 
-                    // --- AQUÍ ESTÁN LOS INDICADORES CIRCULARES ---
+                    // --- INDICADORES CIRCULARES ---
                     Positioned(
                       bottom: 12,
                       right: 12,

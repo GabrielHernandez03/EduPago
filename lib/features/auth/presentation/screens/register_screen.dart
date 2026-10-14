@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../main.dart';
-import '../../../dashboard/presentation/screens/representative_dashboard_screen.dart';
 import 'login_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -16,10 +15,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _step1FormKey = GlobalKey<FormState>();
   final _step2FormKey = GlobalKey<FormState>();
 
-  // Paso 1: Cédula
+  // Paso 1: Cédula y FocusNode
   final _cedulaController = TextEditingController();
+  final _cedulaFocusNode = FocusNode();
   String _selectedPrefix = 'V-';
   final List<String> _prefixes = ['V-', 'E-', 'J-', 'P-'];
+
+  // Regex de validación reutilizables
+  static final RegExp _emailRegex = RegExp(
+    r'^[\w\.\-]+@[\w\-]+\.[a-zA-Z]{2,}$',
+  );
+  static final RegExp _onlyDigitsRegex = RegExp(r'^\d+$');
+  static final RegExp _phoneRegex = RegExp(r'^\d{7,10}$');
 
   // Estados de control
   int _currentStep = 1;
@@ -30,8 +37,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _termsAccepted = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
+  bool _isLogoHovered = false;
 
-  // Paso 2: Inputs
+  // Paso 2: Inputs y FocusNodes para navegación con Enter
   final _nombresController = TextEditingController();
   final _apellidosController = TextEditingController();
   final _emailController = TextEditingController();
@@ -39,21 +47,44 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
 
+  final _nombresFocusNode = FocusNode();
+  final _apellidosFocusNode = FocusNode();
+  final _emailFocusNode = FocusNode();
+  final _phoneFocusNode = FocusNode();
+  final _passwordFocusNode = FocusNode();
+  final _confirmPasswordFocusNode = FocusNode();
+
   /// Cédula en el formato guardado en la base: letra, guion y solo números.
-  /// Ej.: "V-30613062" (quita puntos, espacios y cualquier otro símbolo).
   String get _cedulaNormalizada =>
       '$_selectedPrefix${_cedulaController.text.replaceAll(RegExp(r'[^0-9]'), '')}';
 
   @override
   void dispose() {
     _cedulaController.dispose();
+    _cedulaFocusNode.dispose();
     _nombresController.dispose();
     _apellidosController.dispose();
     _emailController.dispose();
     _phoneController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _nombresFocusNode.dispose();
+    _apellidosFocusNode.dispose();
+    _emailFocusNode.dispose();
+    _phoneFocusNode.dispose();
+    _passwordFocusNode.dispose();
+    _confirmPasswordFocusNode.dispose();
     super.dispose();
+  }
+
+  void _showSnack(String msg, {bool isError = true}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: isError ? Colors.redAccent : AppColors.successGreen,
+      ),
+    );
   }
 
   // --- VALIDAR CÉDULA (llama a la función segura de Supabase)
@@ -92,17 +123,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
         case 'colegio_requerido':
           setState(() => _isLoading = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Tu cédula figura en más de una institución. Comunícate con la administración.',
-              ),
-              backgroundColor: Colors.redAccent,
-            ),
+          _showSnack(
+            'Tu cédula figura en más de una institución. Comunícate con la administración.',
           );
           break;
 
-        default: // no_registrada o formato_invalido
+        default:
           setState(() {
             _cedulaError = true;
             _isLoading = false;
@@ -111,35 +137,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
     } on PostgrestException {
       if (!mounted) return;
       setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No pudimos validar la cédula. Intenta de nuevo.'),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
+      _showSnack('No pudimos validar la cédula. Intenta de nuevo.');
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error inesperado: $e'),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
+      // No mostramos el error crudo al usuario; lo registramos para diagnóstico.
+      debugPrint('validateCedula error: $e');
+      _showSnack('Ocurrió un error inesperado. Intenta de nuevo.');
     }
   }
 
   // --- CREAR CUENTA EN SUPABASE AUTH
   Future<void> submitRegistration() async {
     if (!_termsAccepted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Debes aceptar los términos y condiciones para continuar.',
-          ),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
+      _showSnack('Debes aceptar los términos y condiciones para continuar.');
       return;
     }
 
@@ -158,45 +169,63 @@ class _RegisterScreenState extends State<RegisterScreen> {
         password: password,
         data: {
           'nombre_completo':
-              '${_nombresController.text} ${_apellidosController.text}',
+              '${_nombresController.text.trim()} ${_apellidosController.text.trim()}',
           'cedula': _cedulaNormalizada,
           'colegio_id': _colegioId,
         },
       );
 
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
 
-      if (authResponse.user != null) {
+      final user = authResponse.user;
+
+      // CLAVE: Supabase NO lanza excepción cuando el email ya existe y está
+      // confirmado; devuelve un user con identities vacío para no filtrar
+      // si el correo existe (anti-enumeración). Hay que chequearlo a mano.
+      final bool emailYaRegistrado =
+          user != null && (user.identities?.isEmpty ?? false);
+
+      if (emailYaRegistrado) {
+        _showSnack(
+          'Este correo ya está asociado a una cuenta. Inicia sesión o recupera tu contraseña.',
+        );
+        return;
+      }
+
+      if (user != null) {
         _showPendingVerificationModal();
+      } else {
+        _showSnack('No pudimos crear la cuenta. Intenta de nuevo.');
       }
     } on AuthException catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
-      // La base rechaza el registro si la cédula no está disponible
       final msg = e.message.contains('Database error')
           ? 'No pudimos crear la cuenta con esa cédula. Es posible que ya esté registrada; intenta iniciar sesión.'
           : e.message;
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(msg), backgroundColor: Colors.redAccent),
-        );
-      }
+      _showSnack(msg);
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error inesperado: $e'),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
+      debugPrint('submitRegistration error: $e');
+      _showSnack('Ocurrió un error inesperado. Intenta de nuevo.');
     }
+  }
+
+  Future<void> _contactSupport() async {
+    // TODO: reemplazar por tu canal real de soporte
+    // (mailto:, WhatsApp, o pantalla de contacto dentro de la app).
+    _showSnack(
+      'Escribe a soporte@edupago.com o contacta a la administración de tu institución.',
+      isError: false,
+    );
   }
 
   // --- MODAL DE VERIFICACIÓN PENDIENTE
@@ -503,14 +532,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           _showPendingVerificationModal();
                         }
                       } on AuthException catch (e) {
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(e.message),
-                              backgroundColor: Colors.redAccent,
-                            ),
-                          );
-                        }
+                        _showSnack(e.message);
+                      } catch (e) {
+                        debugPrint('resend error: $e');
+                        _showSnack(
+                          'No pudimos reenviar el correo. Intenta de nuevo.',
+                        );
                       }
                     },
                     style: ElevatedButton.styleFrom(
@@ -526,162 +553,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       children: [
                         Text(
                           'Reenviar Correo de Verificación',
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                        SizedBox(width: 8),
-                        Icon(Icons.arrow_forward, size: 18),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  // --- MODAL DE CUENTA ACTIVADA
-  void _showAccountActivatedModal() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      barrierColor: Colors.black.withValues(alpha: 0.5),
-      builder: (context) {
-        return Dialog(
-          backgroundColor: Colors.white,
-          surfaceTintColor: Colors.transparent,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Container(
-            width: 440,
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFDCFCE7),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.check,
-                    color: AppColors.successGreen,
-                    size: 30,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFDCFCE7),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: const Text(
-                    'CUENTA ACTIVA',
-                    style: TextStyle(
-                      color: AppColors.successGreen,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  '¡Cuenta Activada Exitosamente!',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.darkNavy,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Tu identidad y correo fueron verificados. Redirigiendo a tu panel familiar...',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: AppColors.textMuted,
-                    fontSize: 13,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFEFF6FF),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFFBFDBFE)),
-                  ),
-                  child: const Row(
-                    children: [
-                      Icon(
-                        Icons.shield_outlined,
-                        color: AppColors.primaryBlue,
-                        size: 20,
-                      ),
-                      SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Sesión segura emitida',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: AppColors.darkNavy,
-                              ),
-                            ),
-                            Text(
-                              'Access Token y Refresh Token mediante Cookie HttpOnly (Secure / SameSite)',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: AppColors.textMuted,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.pop(context);
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                              const RepresentativeDashboardScreen(),
-                        ),
-                      );
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryBlue,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      elevation: 0,
-                    ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          'Ir a mi panel familiar',
                           style: TextStyle(fontWeight: FontWeight.bold),
                         ),
                         SizedBox(width: 8),
@@ -717,8 +588,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     Positioned.fill(
                       child: Opacity(
                         opacity: 0.15,
-                        child: Image.network(
-                          'https://images.unsplash.com/photo-1524178232363-1fb2b075b655?auto=format&fit=crop&q=80',
+                        child: Image.asset(
+                          'assets/images/register_img1.webp',
                           fit: BoxFit.cover,
                         ),
                       ),
@@ -729,83 +600,105 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      Colors.white.withValues(alpha: 0.15),
-                                      AppColors.primaryBlue.withValues(
-                                        alpha: 0.4,
-                                      ),
-                                    ],
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
-                                  ),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: Colors.white.withValues(alpha: 0.2),
-                                  ),
-                                ),
-                                child: Image.asset(
-                                  'assets/images/logo_edupago.png',
-                                  width: 46,
-                                  height: 46,
-                                  fit: BoxFit.contain,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              RichText(
-                                text: TextSpan(
-                                  // Extraemos la fuente configurada globalmente en el ThemeData
-                                  style: TextStyle(
-                                    fontFamily: Theme.of(
-                                      context,
-                                    ).textTheme.bodyMedium?.fontFamily,
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.w900,
-                                    letterSpacing: -0.5,
-                                    decoration: TextDecoration.none,
-                                  ),
+                          MouseRegion(
+                            onEnter: (_) =>
+                                setState(() => _isLogoHovered = true),
+                            onExit: (_) =>
+                                setState(() => _isLogoHovered = false),
+                            cursor: SystemMouseCursors.click,
+                            child: GestureDetector(
+                              onTap: () => Navigator.pop(context),
+                              child: AnimatedScale(
+                                scale: _isLogoHovered ? 1.05 : 1.0,
+                                duration: const Duration(milliseconds: 200),
+                                curve: Curves.easeInOut,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    const TextSpan(
-                                      text: 'Edu',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        // No volvemos a declarar TextStyle complejo para no sobreescribir la fuente
+                                    Container(
+                                      padding: const EdgeInsets.all(8),
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          colors: [
+                                            Colors.white.withValues(
+                                              alpha: _isLogoHovered
+                                                  ? 0.22
+                                                  : 0.15,
+                                            ),
+                                            AppColors.primaryBlue.withValues(
+                                              alpha: _isLogoHovered
+                                                  ? 0.55
+                                                  : 0.4,
+                                            ),
+                                          ],
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                        ),
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(
+                                          color: Colors.white.withValues(
+                                            alpha: _isLogoHovered ? 0.35 : 0.2,
+                                          ),
+                                        ),
+                                      ),
+                                      child: Image.asset(
+                                        'assets/images/logo_edupago.png',
+                                        width: 46,
+                                        height: 46,
+                                        fit: BoxFit.contain,
                                       ),
                                     ),
-                                    TextSpan(
-                                      text: 'Pago',
-                                      style: TextStyle(
-                                        color: AppColors.primaryBlue,
+                                    const SizedBox(width: 12),
+                                    RichText(
+                                      text: TextSpan(
+                                        style: TextStyle(
+                                          fontFamily: Theme.of(
+                                            context,
+                                          ).textTheme.bodyMedium?.fontFamily,
+                                          fontSize: 22,
+                                          fontWeight: FontWeight.w900,
+                                          letterSpacing: -0.5,
+                                          decoration: TextDecoration.none,
+                                        ),
+                                        children: [
+                                          const TextSpan(
+                                            text: 'Edu',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                          TextSpan(
+                                            text: 'Pago',
+                                            style: TextStyle(
+                                              color: AppColors.primaryBlue,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
-                            ],
+                            ),
                           ),
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               const Text(
-                                '01',
+                                'Registrate Ahora!',
                                 style: TextStyle(
                                   color: AppColors.primaryBlue,
-                                  fontSize: 72,
+                                  fontSize: 48,
                                   height: 0.8,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
-                              const SizedBox(height: 10),
+                              const SizedBox(height: 22),
                               const Text(
-                                'Tu familia ya forma parte de\nnuestra comunidad.',
+                                '¿Tu familia ya forma parte de\nnuestra comunidad?',
                                 style: TextStyle(
                                   color: Colors.white,
-                                  fontSize: 34,
+                                  fontSize: 28,
                                   fontWeight: FontWeight.bold,
                                   height: 1.2,
                                 ),
@@ -886,77 +779,80 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           ),
                         ),
                       ),
-                      const SizedBox(height: 20),
-                      Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: AppColors.backgroundLight,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: AppColors.cardBorder),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 10,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(8),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withValues(
-                                        alpha: 0.05,
-                                      ),
-                                      blurRadius: 4,
-                                      offset: const Offset(0, 2),
-                                    ),
-                                  ],
-                                ),
-                                child: const Center(
-                                  child: Text(
-                                    'Formulario de Registro',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.bold,
-                                      color: AppColors.primaryBlue,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: GestureDetector(
-                                onTap: () {
-                                  Navigator.pushReplacement(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => const LoginScreen(),
-                                    ),
-                                  );
-                                },
+                      if (_currentStep == 1) ...[
+                        const SizedBox(height: 20),
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: AppColors.backgroundLight,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: AppColors.cardBorder),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(
                                     vertical: 10,
                                   ),
-                                  color: Colors.transparent,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(
+                                          alpha: 0.05,
+                                        ),
+                                        blurRadius: 4,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ],
+                                  ),
                                   child: const Center(
                                     child: Text(
-                                      'Iniciar Sesión',
+                                      'Formulario de Registro',
                                       style: TextStyle(
                                         fontSize: 13,
-                                        fontWeight: FontWeight.w500,
-                                        color: AppColors.textMuted,
+                                        fontWeight: FontWeight.bold,
+                                        color: AppColors.primaryBlue,
                                       ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                          ],
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () {
+                                    Navigator.pushReplacement(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            const LoginScreen(),
+                                      ),
+                                    );
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 10,
+                                    ),
+                                    color: Colors.transparent,
+                                    child: const Center(
+                                      child: Text(
+                                        'Iniciar Sesión',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w500,
+                                          color: AppColors.textMuted,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
+                      ],
                       const SizedBox(height: 32),
                       if (_currentStep == 1)
                         _buildStep1Widget()
@@ -1110,7 +1006,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   Expanded(
                     child: TextFormField(
                       controller: _cedulaController,
+                      focusNode: _cedulaFocusNode,
                       keyboardType: TextInputType.number,
+                      textInputAction: TextInputAction.done,
+                      onFieldSubmitted: (_) => validateCedula(),
                       onChanged: (_) {
                         if (_cedulaError || _cedulaYaRegistrada) {
                           setState(() {
@@ -1156,8 +1055,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         ),
                       ),
                       validator: (val) {
-                        if (val == null || val.trim().isEmpty)
+                        final cleaned =
+                            val?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+                        if (val == null || val.trim().isEmpty) {
                           return 'Ingresa tu número de cédula';
+                        }
+                        if (!_onlyDigitsRegex.hasMatch(cleaned) ||
+                            cleaned.length < 6 ||
+                            cleaned.length > 9) {
+                          return 'Cédula inválida (solo números, 6-9 dígitos)';
+                        }
                         return null;
                       },
                     ),
@@ -1315,7 +1222,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   width: double.infinity,
                   height: 48,
                   child: OutlinedButton.icon(
-                    onPressed: () {},
+                    // FIX: antes no hacía nada (onPressed: () {}).
+                    onPressed: _contactSupport,
                     style: OutlinedButton.styleFrom(
                       foregroundColor: const Color(0xFFDC2626),
                       side: const BorderSide(color: Color(0xFFFECACA)),
@@ -1454,13 +1362,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         const SizedBox(height: 6),
                         TextFormField(
                           controller: _nombresController,
+                          focusNode: _nombresFocusNode,
+                          textInputAction: TextInputAction.next,
+                          onFieldSubmitted: (_) {
+                            FocusScope.of(
+                              context,
+                            ).requestFocus(_apellidosFocusNode);
+                          },
                           decoration: _buildInputDecoration(
                             'Nombres',
                             Icons.person_outline,
                           ),
-                          validator: (val) => val == null || val.trim().isEmpty
-                              ? 'Requerido'
-                              : null,
+                          validator: (val) {
+                            if (val == null || val.trim().isEmpty) {
+                              return 'Requerido';
+                            }
+                            return null;
+                          },
                         ),
                       ],
                     ),
@@ -1481,13 +1399,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         const SizedBox(height: 6),
                         TextFormField(
                           controller: _apellidosController,
+                          focusNode: _apellidosFocusNode,
+                          textInputAction: TextInputAction.next,
+                          onFieldSubmitted: (_) {
+                            FocusScope.of(
+                              context,
+                            ).requestFocus(_emailFocusNode);
+                          },
                           decoration: _buildInputDecoration(
                             'Apellidos',
                             Icons.person_outline,
                           ),
-                          validator: (val) => val == null || val.trim().isEmpty
-                              ? 'Requerido'
-                              : null,
+                          validator: (val) {
+                            if (val == null || val.trim().isEmpty) {
+                              return 'Requerido';
+                            }
+                            return null;
+                          },
                         ),
                       ],
                     ),
@@ -1506,15 +1434,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
               const SizedBox(height: 6),
               TextFormField(
                 controller: _emailController,
+                focusNode: _emailFocusNode,
                 keyboardType: TextInputType.emailAddress,
+                textInputAction: TextInputAction.next,
+                onFieldSubmitted: (_) {
+                  FocusScope.of(context).requestFocus(_phoneFocusNode);
+                },
                 decoration: _buildInputDecoration(
                   'nombre@correo.com',
                   Icons.email_outlined,
                 ),
                 validator: (val) {
-                  if (val == null || val.trim().isEmpty)
-                    return 'Ingresa tu correo';
-                  if (!val.contains('@')) return 'Correo no válido';
+                  final v = val?.trim() ?? '';
+                  if (v.isEmpty) return 'Ingresa tu correo';
+                  if (!_emailRegex.hasMatch(v)) return 'Correo no válido';
                   return null;
                 },
               ),
@@ -1530,7 +1463,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
               const SizedBox(height: 6),
               TextFormField(
                 controller: _phoneController,
+                focusNode: _phoneFocusNode,
                 keyboardType: TextInputType.phone,
+                textInputAction: TextInputAction.next,
+                onFieldSubmitted: (_) {
+                  FocusScope.of(context).requestFocus(_passwordFocusNode);
+                },
                 decoration: InputDecoration(
                   hintText: '412 555 0174',
                   hintStyle: const TextStyle(
@@ -1570,9 +1508,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                   ),
                 ),
-                validator: (val) => val == null || val.trim().isEmpty
-                    ? 'Ingresa tu teléfono'
-                    : null,
+                validator: (val) {
+                  final cleaned = val?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+                  if (val == null || val.trim().isEmpty) {
+                    return 'Ingresa tu teléfono';
+                  }
+                  if (!_phoneRegex.hasMatch(cleaned)) {
+                    return 'Teléfono inválido (solo números, 7-10 dígitos)';
+                  }
+                  return null;
+                },
               ),
               const SizedBox(height: 16),
               Row(
@@ -1592,8 +1537,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         const SizedBox(height: 6),
                         TextFormField(
                           controller: _passwordController,
+                          focusNode: _passwordFocusNode,
                           obscureText: _obscurePassword,
+                          textInputAction: TextInputAction.next,
+                          onFieldSubmitted: (_) {
+                            FocusScope.of(
+                              context,
+                            ).requestFocus(_confirmPasswordFocusNode);
+                          },
                           decoration: _buildInputDecoration(
+                            // FIX: coincide con el validador (antes decía "Min. 8").
                             'Min. 8 caracteres',
                             Icons.lock_outline,
                             suffixIcon: IconButton(
@@ -1609,9 +1562,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               ),
                             ),
                           ),
-                          validator: (val) => val == null || val.length < 6
-                              ? 'Mínimo 6 caracteres'
-                              : null,
+                          validator: (val) {
+                            if (val == null || val.length < 8) {
+                              return 'Mínimo 8 caracteres';
+                            }
+                            if (!RegExp(r'[0-9]').hasMatch(val)) {
+                              return 'Debe incluir al menos un número';
+                            }
+                            return null;
+                          },
                         ),
                       ],
                     ),
@@ -1632,7 +1591,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         const SizedBox(height: 6),
                         TextFormField(
                           controller: _confirmPasswordController,
+                          focusNode: _confirmPasswordFocusNode,
                           obscureText: _obscureConfirmPassword,
+                          textInputAction: TextInputAction.done,
+                          onFieldSubmitted: (_) => submitRegistration(),
                           decoration: _buildInputDecoration(
                             'Repetir contraseña',
                             Icons.lock_outline,
@@ -1651,8 +1613,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             ),
                           ),
                           validator: (val) {
-                            if (val != _passwordController.text)
+                            if (val != _passwordController.text) {
                               return 'No coinciden';
+                            }
                             return null;
                           },
                         ),

@@ -19,15 +19,22 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
 
+  // FocusNodes para controlar el salto entre campos con Enter
+  final _emailFocusNode = FocusNode();
+  final _passwordFocusNode = FocusNode();
+
   bool _isRepresentanteRole = true;
   bool _obscurePassword = true;
   bool _rememberMe = false;
   bool _isLoading = false;
+  bool _isLogoHovered = false; // Estado para el efecto hover del logo
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _emailFocusNode.dispose();
+    _passwordFocusNode.dispose();
     super.dispose();
   }
 
@@ -44,30 +51,65 @@ class _LoginScreenState extends State<LoginScreen> {
           password: _passwordController.text,
         );
 
+        if (response.user == null || !mounted) {
+          setState(() => _isLoading = false);
+          return;
+        }
+
+        final user = response.user!;
+        final role = user.userMetadata?['role'] ?? 'representante';
+        final bool esCuentaAdmin = role == 'admin';
+
+        if (_isRepresentanteRole && esCuentaAdmin) {
+          await supabase.auth.signOut();
+          if (!mounted) return;
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Esta cuenta pertenece al portal Administrativo. Selecciona esa opción para continuar.',
+              ),
+              backgroundColor: Colors.redAccent,
+            ),
+          );
+          return;
+        }
+
+        if (!_isRepresentanteRole && !esCuentaAdmin) {
+          await supabase.auth.signOut();
+          if (!mounted) return;
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Esta cuenta pertenece al Portal Representante. Selecciona esa opción para continuar.',
+              ),
+              backgroundColor: Colors.redAccent,
+            ),
+          );
+          return;
+        }
+
         setState(() {
           _isLoading = false;
         });
 
-        if (response.user != null && mounted) {
-          final user = response.user!;
-          // Obtenemos el rol almacenado en los metadatos del usuario en Supabase
-          final role = user.userMetadata?['role'] ?? 'representante';
+        if (!mounted) return;
 
-          if (role == 'admin') {
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (context) => const AdminDashboardScreen(),
-              ),
-            );
-          } else {
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (context) => const RepresentativeDashboardScreen(),
-              ),
-            );
-          }
+        if (esCuentaAdmin) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const AdminDashboardScreen(),
+            ),
+          );
+        } else {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const RepresentativeDashboardScreen(),
+            ),
+          );
         }
       } on AuthException catch (e) {
         setState(() {
@@ -97,7 +139,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // Despliega el modal de Olvidó su contraseña
   void _showForgotPasswordModal() {
     showDialog(
       context: context,
@@ -114,13 +155,18 @@ class _LoginScreenState extends State<LoginScreen> {
     final double screenWidth = MediaQuery.of(context).size.width;
     final bool isDesktop = screenWidth > 900;
 
+    // Color dinámico para diferenciar visualmente el rol activo
+    final Color activeColor = _isRepresentanteRole
+        ? AppColors.primaryBlue
+        : AppColors.darkNavy;
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: Row(
         children: [
           if (isDesktop)
             Expanded(
-              flex: 5,
+              flex: 6,
               child: Container(
                 color: AppColors.darkNavy,
                 child: Stack(
@@ -128,8 +174,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     Positioned.fill(
                       child: Opacity(
                         opacity: 0.15,
-                        child: Image.network(
-                          'https://images.unsplash.com/photo-1524178232363-1fb2b075b655?auto=format&fit=crop&q=80',
+                        child: Image.asset(
+                          'assets/images/login_img1.webp',
                           fit: BoxFit.cover,
                         ),
                       ),
@@ -140,83 +186,106 @@ class _LoginScreenState extends State<LoginScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      Colors.white.withValues(alpha: 0.15),
-                                      AppColors.primaryBlue.withValues(
-                                        alpha: 0.4,
-                                      ),
-                                    ],
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
-                                  ),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: Colors.white.withValues(alpha: 0.2),
-                                  ),
-                                ),
-                                child: Image.asset(
-                                  'assets/images/logo_edupago.png',
-                                  width: 46,
-                                  height: 46,
-                                  fit: BoxFit.contain,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              RichText(
-                                text: TextSpan(
-                                  // Extraemos la fuente configurada globalmente en el ThemeData
-                                  style: TextStyle(
-                                    fontFamily: Theme.of(
-                                      context,
-                                    ).textTheme.bodyMedium?.fontFamily,
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.w900,
-                                    letterSpacing: -0.5,
-                                    decoration: TextDecoration.none,
-                                  ),
+                          // Logo y nombre interactivos con hover de escala y sin marco
+                          MouseRegion(
+                            onEnter: (_) =>
+                                setState(() => _isLogoHovered = true),
+                            onExit: (_) =>
+                                setState(() => _isLogoHovered = false),
+                            cursor: SystemMouseCursors.click,
+                            child: GestureDetector(
+                              onTap: () => Navigator.pop(context),
+                              child: AnimatedScale(
+                                scale: _isLogoHovered ? 1.05 : 1.0,
+                                duration: const Duration(milliseconds: 200),
+                                curve: Curves.easeInOut,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    const TextSpan(
-                                      text: 'Edu',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        // No volvemos a declarar TextStyle complejo para no sobreescribir la fuente
+                                    Container(
+                                      padding: const EdgeInsets.all(8),
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          colors: [
+                                            Colors.white.withValues(
+                                              alpha: _isLogoHovered
+                                                  ? 0.22
+                                                  : 0.15,
+                                            ),
+                                            AppColors.primaryBlue.withValues(
+                                              alpha: _isLogoHovered
+                                                  ? 0.55
+                                                  : 0.4,
+                                            ),
+                                          ],
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                        ),
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(
+                                          color: Colors.white.withValues(
+                                            alpha: _isLogoHovered ? 0.35 : 0.2,
+                                          ),
+                                        ),
+                                      ),
+                                      child: Image.asset(
+                                        'assets/images/logo_edupago.png',
+                                        width: 46,
+                                        height: 46,
+                                        fit: BoxFit.contain,
                                       ),
                                     ),
-                                    TextSpan(
-                                      text: 'Pago',
-                                      style: TextStyle(
-                                        color: AppColors.primaryBlue,
+                                    const SizedBox(width: 12),
+                                    RichText(
+                                      text: TextSpan(
+                                        style: TextStyle(
+                                          fontFamily: Theme.of(
+                                            context,
+                                          ).textTheme.bodyMedium?.fontFamily,
+                                          fontSize: 22,
+                                          fontWeight: FontWeight.w900,
+                                          letterSpacing: -0.5,
+                                          decoration: TextDecoration.none,
+                                        ),
+                                        children: [
+                                          const TextSpan(
+                                            text: 'Edu',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                          TextSpan(
+                                            text: 'Pago',
+                                            style: TextStyle(
+                                              color: AppColors.primaryBlue,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
-                            ],
+                            ),
                           ),
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               const Text(
-                                '01',
+                                '¿Ya tienes cuenta?',
                                 style: TextStyle(
                                   color: AppColors.primaryBlue,
-                                  fontSize: 72,
+                                  fontSize: 48,
                                   height: 0.8,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
-                              const SizedBox(height: 10),
+                              const SizedBox(height: 15),
                               const Text(
                                 'Administrar la educación\ntambién puede sentirse simple.',
                                 style: TextStyle(
                                   color: Colors.white,
-                                  fontSize: 34,
+                                  fontSize: 32,
                                   fontWeight: FontWeight.bold,
                                   height: 1.2,
                                 ),
@@ -320,15 +389,16 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
           Expanded(
-            flex: 6,
+            flex: 5,
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 30),
+              padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
               child: Center(
                 child: Container(
                   constraints: const BoxConstraints(maxWidth: 440),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
+                      // Botón Volver al inicio
                       Align(
                         alignment: Alignment.centerLeft,
                         child: TextButton.icon(
@@ -347,37 +417,45 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
                       ),
-                      const SizedBox(height: 20),
-                      Container(
-                        padding: const EdgeInsets.all(14),
+                      const SizedBox(height: 10),
+
+                      // Icono superior animado según el rol seleccionado
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOut,
+                        padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          color: AppColors.primaryBlue.withValues(alpha: 0.08),
-                          borderRadius: BorderRadius.circular(16),
+                          color: activeColor.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(14),
                         ),
-                        child: const Icon(
-                          Icons.lock_outline,
-                          color: AppColors.primaryBlue,
-                          size: 28,
+                        child: Icon(
+                          _isRepresentanteRole
+                              ? Icons.lock_outline
+                              : Icons.admin_panel_settings_outlined,
+                          color: activeColor,
+                          size: 22,
                         ),
                       ),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 10),
                       const Text(
                         'Bienvenido de nuevo',
                         style: TextStyle(
-                          fontSize: 26,
+                          fontSize: 22,
                           fontWeight: FontWeight.bold,
                           color: AppColors.darkNavy,
                         ),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 4),
                       const Text(
                         'Ingresa a tu espacio de gestión escolar.',
                         style: TextStyle(
                           color: AppColors.textMuted,
-                          fontSize: 14,
+                          fontSize: 13,
                         ),
                       ),
-                      const SizedBox(height: 28),
+                      const SizedBox(height: 14),
+
+                      // Selector de portal animado
                       Container(
                         padding: const EdgeInsets.all(4),
                         decoration: BoxDecoration(
@@ -391,9 +469,11 @@ class _LoginScreenState extends State<LoginScreen> {
                               child: GestureDetector(
                                 onTap: () =>
                                     setState(() => _isRepresentanteRole = true),
-                                child: Container(
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 250),
+                                  curve: Curves.easeInOut,
                                   padding: const EdgeInsets.symmetric(
-                                    vertical: 10,
+                                    vertical: 9,
                                   ),
                                   decoration: BoxDecoration(
                                     color: _isRepresentanteRole
@@ -403,10 +483,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                     boxShadow: _isRepresentanteRole
                                         ? [
                                             BoxShadow(
-                                              color: Colors.black.withValues(
-                                                alpha: 0.05,
-                                              ),
-                                              blurRadius: 4,
+                                              color: AppColors.primaryBlue
+                                                  .withValues(alpha: 0.15),
+                                              blurRadius: 6,
                                               offset: const Offset(0, 2),
                                             ),
                                           ]
@@ -417,16 +496,16 @@ class _LoginScreenState extends State<LoginScreen> {
                                     children: [
                                       Icon(
                                         Icons.person_outline,
-                                        size: 18,
+                                        size: 17,
                                         color: _isRepresentanteRole
                                             ? AppColors.primaryBlue
                                             : AppColors.textMuted,
                                       ),
-                                      const SizedBox(width: 8),
+                                      const SizedBox(width: 7),
                                       Text(
                                         'Portal Representante',
                                         style: TextStyle(
-                                          fontSize: 13,
+                                          fontSize: 12,
                                           fontWeight: _isRepresentanteRole
                                               ? FontWeight.bold
                                               : FontWeight.w500,
@@ -445,9 +524,11 @@ class _LoginScreenState extends State<LoginScreen> {
                                 onTap: () => setState(
                                   () => _isRepresentanteRole = false,
                                 ),
-                                child: Container(
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 250),
+                                  curve: Curves.easeInOut,
                                   padding: const EdgeInsets.symmetric(
-                                    vertical: 10,
+                                    vertical: 9,
                                   ),
                                   decoration: BoxDecoration(
                                     color: !_isRepresentanteRole
@@ -457,10 +538,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                     boxShadow: !_isRepresentanteRole
                                         ? [
                                             BoxShadow(
-                                              color: Colors.black.withValues(
-                                                alpha: 0.05,
-                                              ),
-                                              blurRadius: 4,
+                                              color: AppColors.darkNavy
+                                                  .withValues(alpha: 0.15),
+                                              blurRadius: 6,
                                               offset: const Offset(0, 2),
                                             ),
                                           ]
@@ -471,21 +551,21 @@ class _LoginScreenState extends State<LoginScreen> {
                                     children: [
                                       Icon(
                                         Icons.account_balance_outlined,
-                                        size: 18,
+                                        size: 17,
                                         color: !_isRepresentanteRole
-                                            ? AppColors.primaryBlue
+                                            ? AppColors.darkNavy
                                             : AppColors.textMuted,
                                       ),
-                                      const SizedBox(width: 8),
+                                      const SizedBox(width: 7),
                                       Text(
                                         'Administrativo',
                                         style: TextStyle(
-                                          fontSize: 13,
+                                          fontSize: 12,
                                           fontWeight: !_isRepresentanteRole
                                               ? FontWeight.bold
                                               : FontWeight.w500,
                                           color: !_isRepresentanteRole
-                                              ? AppColors.primaryBlue
+                                              ? AppColors.darkNavy
                                               : AppColors.textMuted,
                                         ),
                                       ),
@@ -497,7 +577,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ],
                         ),
                       ),
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 16),
                       Form(
                         key: _formKey,
                         child: Column(
@@ -514,7 +594,14 @@ class _LoginScreenState extends State<LoginScreen> {
                             const SizedBox(height: 8),
                             TextFormField(
                               controller: _emailController,
+                              focusNode: _emailFocusNode,
                               keyboardType: TextInputType.emailAddress,
+                              textInputAction: TextInputAction.next,
+                              onFieldSubmitted: (_) {
+                                FocusScope.of(
+                                  context,
+                                ).requestFocus(_passwordFocusNode);
+                              },
                               decoration: InputDecoration(
                                 hintText: 'nombre@correo.com',
                                 hintStyle: const TextStyle(
@@ -530,7 +617,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 fillColor: Colors.white,
                                 contentPadding: const EdgeInsets.symmetric(
                                   horizontal: 16,
-                                  vertical: 14,
+                                  vertical: 12,
                                 ),
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(10),
@@ -546,8 +633,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                                 focusedBorder: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(10),
-                                  borderSide: const BorderSide(
-                                    color: AppColors.primaryBlue,
+                                  borderSide: BorderSide(
+                                    color: activeColor,
                                     width: 1.5,
                                   ),
                                 ),
@@ -562,7 +649,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 return null;
                               },
                             ),
-                            const SizedBox(height: 18),
+                            const SizedBox(height: 12),
                             const Text(
                               'Contraseña',
                               style: TextStyle(
@@ -574,7 +661,12 @@ class _LoginScreenState extends State<LoginScreen> {
                             const SizedBox(height: 8),
                             TextFormField(
                               controller: _passwordController,
+                              focusNode: _passwordFocusNode,
                               obscureText: _obscurePassword,
+                              textInputAction: TextInputAction.done,
+                              onFieldSubmitted: (_) {
+                                _submitLogin();
+                              },
                               decoration: InputDecoration(
                                 hintText: 'Mínimo 8 caracteres',
                                 hintStyle: const TextStyle(
@@ -604,7 +696,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 fillColor: Colors.white,
                                 contentPadding: const EdgeInsets.symmetric(
                                   horizontal: 16,
-                                  vertical: 14,
+                                  vertical: 12,
                                 ),
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(10),
@@ -620,8 +712,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                                 focusedBorder: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(10),
-                                  borderSide: const BorderSide(
-                                    color: AppColors.primaryBlue,
+                                  borderSide: BorderSide(
+                                    color: activeColor,
                                     width: 1.5,
                                   ),
                                 ),
@@ -636,7 +728,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 return null;
                               },
                             ),
-                            const SizedBox(height: 14),
+                            const SizedBox(height: 10),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
@@ -647,7 +739,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                       height: 20,
                                       child: Checkbox(
                                         value: _rememberMe,
-                                        activeColor: AppColors.primaryBlue,
+                                        activeColor: activeColor,
                                         shape: RoundedRectangleBorder(
                                           borderRadius: BorderRadius.circular(
                                             4,
@@ -672,61 +764,64 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                                 InkWell(
                                   onTap: _showForgotPasswordModal,
-                                  child: const Text(
+                                  child: Text(
                                     '¿Olvidó su contraseña?',
                                     style: TextStyle(
                                       fontSize: 13,
                                       fontWeight: FontWeight.bold,
-                                      color: AppColors.primaryBlue,
+                                      color: activeColor,
                                     ),
                                   ),
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 24),
+                            const SizedBox(height: 16),
                             SizedBox(
                               width: double.infinity,
-                              height: 48,
-                              child: ElevatedButton(
-                                onPressed: _isLoading ? null : _submitLogin,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppColors.primaryBlue,
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10),
+                              height: 46,
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 300),
+                                child: ElevatedButton(
+                                  onPressed: _isLoading ? null : _submitLogin,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: activeColor,
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    elevation: 0,
                                   ),
-                                  elevation: 0,
-                                ),
-                                child: _isLoading
-                                    ? const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                          color: Colors.white,
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: [
-                                          Text(
-                                            'Iniciar sesión',
-                                            style: TextStyle(
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.bold,
-                                            ),
+                                  child: _isLoading
+                                      ? const SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(
+                                            color: Colors.white,
+                                            strokeWidth: 2,
                                           ),
-                                          SizedBox(width: 8),
-                                          Icon(Icons.arrow_forward, size: 18),
-                                        ],
-                                      ),
+                                        )
+                                      : const Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            Text(
+                                              'Iniciar sesión',
+                                              style: TextStyle(
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            SizedBox(width: 8),
+                                            Icon(Icons.arrow_forward, size: 18),
+                                          ],
+                                        ),
+                                ),
                               ),
                             ),
                           ],
                         ),
                       ),
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 14),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -746,10 +841,10 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                               );
                             },
-                            child: const Text(
+                            child: Text(
                               'Créala aquí',
                               style: TextStyle(
-                                color: AppColors.primaryBlue,
+                                color: activeColor,
                                 fontWeight: FontWeight.bold,
                                 fontSize: 13,
                               ),
@@ -757,7 +852,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 36),
+                      const SizedBox(height: 14),
                       const Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [

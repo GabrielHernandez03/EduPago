@@ -3,10 +3,11 @@ import '../../../../core/widgets/custom_navbar.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
 import '../../../auth/presentation/screens/register_screen.dart';
 import '../widgets/hero_section.dart';
-import '../widgets/stats_bar_section.dart'; // <--- Importación corregida en la misma carpeta de widgets
+import '../widgets/stats_bar_section.dart';
 import '../widgets/features_section.dart';
 import '../widgets/security_section.dart';
 import '../widgets/cta_and_footer_section.dart';
+import '../widgets/contact_section.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -72,12 +73,14 @@ class _HomeScreenState extends State<HomeScreen> {
                     onStartPressed: _navigateToRegister,
                     onLoginPressed: _navigateToLogin,
                   ),
-                  const StatsBarSection(), // <--- ¡Aquí va exactamente debajo del HeroSection!
+                  const StatsBarSection(),
                   FeaturesSection(key: _solucionesKey),
                   SecuritySection(key: _seguridadKey),
+                  ContactSection(key: _contactoKey),
                   CtaAndFooterSection(
-                    key: _contactoKey,
                     onRegisterPressed: _navigateToRegister,
+                    // Mismo mecanismo de scroll que usa el navbar para "Contacto".
+                    onContactPressed: () => _scrollToSection(_contactoKey),
                   ),
                 ],
               ),
