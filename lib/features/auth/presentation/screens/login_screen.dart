@@ -57,8 +57,29 @@ class _LoginScreenState extends State<LoginScreen> {
         }
 
         final user = response.user!;
-        final role = user.userMetadata?['role'] ?? 'representante';
-        final bool esCuentaAdmin = role == 'admin';
+
+        final perfil = await supabase
+            .from('perfiles')
+            .select('rol, activo')
+            .eq('id', user.id)
+            .maybeSingle();
+
+        if (perfil == null || perfil['activo'] != true) {
+          await supabase.auth.signOut();
+          if (!mounted) return;
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Tu cuenta no tiene un perfil activo. Contacta a la administración.',
+              ),
+              backgroundColor: Colors.redAccent,
+            ),
+          );
+          return;
+        }
+
+        final bool esCuentaAdmin = perfil['rol'] == 'administrador';
 
         if (_isRepresentanteRole && esCuentaAdmin) {
           await supabase.auth.signOut();

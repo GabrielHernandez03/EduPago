@@ -26,7 +26,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     r'^[\w\.\-]+@[\w\-]+\.[a-zA-Z]{2,}$',
   );
   static final RegExp _onlyDigitsRegex = RegExp(r'^\d+$');
-  static final RegExp _phoneRegex = RegExp(r'^\d{7,10}$');
+  static final RegExp _phoneRegex = RegExp(r'^\d{10}$');
 
   // Estados de control
   int _currentStep = 1;
@@ -57,6 +57,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   /// Cédula en el formato guardado en la base: letra, guion y solo números.
   String get _cedulaNormalizada =>
       '$_selectedPrefix${_cedulaController.text.replaceAll(RegExp(r'[^0-9]'), '')}';
+
+  /// Teléfono en formato E.164 (+58XXXXXXXXXX), el que usa el bot de WhatsApp.
+  String get _telefonoE164 {
+    var d = _phoneController.text.replaceAll(RegExp(r'[^0-9]'), '');
+    if (d.startsWith('0')) d = d.substring(1);
+    return '+58$d';
+  }
 
   @override
   void dispose() {
@@ -170,6 +177,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
         data: {
           'nombre_completo':
               '${_nombresController.text.trim()} ${_apellidosController.text.trim()}',
+          'nombres': _nombresController.text.trim(),
+          'apellidos': _apellidosController.text.trim(),
+          'telefono_whatsapp': _telefonoE164,
           'cedula': _cedulaNormalizada,
           'colegio_id': _colegioId,
         },
@@ -1509,12 +1519,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                 ),
                 validator: (val) {
-                  final cleaned = val?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+                  var cleaned = val?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+                  if (cleaned.startsWith('0')) cleaned = cleaned.substring(1);
                   if (val == null || val.trim().isEmpty) {
                     return 'Ingresa tu teléfono';
                   }
                   if (!_phoneRegex.hasMatch(cleaned)) {
-                    return 'Teléfono inválido (solo números, 7-10 dígitos)';
+                    return 'Teléfono inválido. Ejemplo: 412 555 0174';
                   }
                   return null;
                 },
