@@ -144,7 +144,7 @@ class _LogoBrandState extends State<_LogoBrand> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: AnimatedScale(
-          scale: _isHovered ? 1.04 : 1.0,
+          scale: _isHovered ? 1.02 : 1.0,
           duration: duration,
           curve: curve,
           alignment: Alignment.centerLeft,
@@ -362,18 +362,7 @@ class _GlowingRegisterButtonState extends State<_GlowingRegisterButton> {
       onExit: (_) => setState(() => _isHovered = false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(10),
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.primaryBlue.withOpacity(
-                _isHovered ? 0.38 : 0.22,
-              ),
-              blurRadius: _isHovered ? 20 : 12,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(10)),
         transform: Matrix4.identity()..scale(_isHovered ? 1.03 : 1.0),
         transformAlignment: Alignment.center,
         child: ElevatedButton.icon(

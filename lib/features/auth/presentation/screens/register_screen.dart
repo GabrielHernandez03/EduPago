@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../main.dart';
@@ -11,6 +12,13 @@ class RegisterScreen extends StatefulWidget {
   State<RegisterScreen> createState() => _RegisterScreenState();
 }
 
+const _kCedPrefixes = {
+  'V-': 'Venezolano',
+  'E-': 'Extranjero',
+  'J-': 'Jurídico',
+  'P-': 'Pasaporte',
+};
+
 class _RegisterScreenState extends State<RegisterScreen> {
   final _step1FormKey = GlobalKey<FormState>();
   final _step2FormKey = GlobalKey<FormState>();
@@ -19,7 +27,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _cedulaController = TextEditingController();
   final _cedulaFocusNode = FocusNode();
   String _selectedPrefix = 'V-';
-  final List<String> _prefixes = ['V-', 'E-', 'J-', 'P-'];
 
   // Regex de validación reutilizables
   static final RegExp _emailRegex = RegExp(
@@ -37,6 +44,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _termsAccepted = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
+
+  // Contraseña: causa concreta de rechazo
+  bool _showPasswordErrors = false;
+  String? _passwordServerError;
   bool _isLogoHovered = false;
 
   // Paso 2: Inputs y FocusNodes para navegación con Enter
@@ -148,7 +159,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
-      // No mostramos el error crudo al usuario; lo registramos para diagnóstico.
       debugPrint('validateCedula error: $e');
       _showSnack('Ocurrió un error inesperado. Intenta de nuevo.');
     }
@@ -161,7 +171,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    if (!_step2FormKey.currentState!.validate()) return;
+    if (!_step2FormKey.currentState!.validate()) {
+      setState(() => _showPasswordErrors = true);
+      return;
+    }
 
     setState(() {
       _isLoading = true;
@@ -192,9 +205,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       final user = authResponse.user;
 
-      // CLAVE: Supabase NO lanza excepción cuando el email ya existe y está
-      // confirmado; devuelve un user con identities vacío para no filtrar
-      // si el correo existe (anti-enumeración). Hay que chequearlo a mano.
       final bool emailYaRegistrado =
           user != null && (user.identities?.isEmpty ?? false);
 
@@ -206,6 +216,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
 
       if (user != null) {
+        _passwordController.clear();
+        _confirmPasswordController.clear();
         _showPendingVerificationModal();
       } else {
         _showSnack('No pudimos crear la cuenta. Intenta de nuevo.');
@@ -215,10 +227,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
       setState(() {
         _isLoading = false;
       });
-      final msg = e.message.contains('Database error')
-          ? 'No pudimos crear la cuenta con esa cédula. Es posible que ya esté registrada; intenta iniciar sesión.'
-          : e.message;
-      _showSnack(msg);
+      final reason = _passwordServerReason(e.message);
+      if (reason != null) {
+        setState(() {
+          _passwordServerError = reason;
+          _showPasswordErrors = true;
+        });
+        _step2FormKey.currentState?.validate();
+        _showSnack(reason);
+        return;
+      }
+      _showSnack(
+        e.message.contains('Database error')
+            ? 'No pudimos crear la cuenta con esa cédula. Es posible que ya esté registrada; intenta iniciar sesión.'
+            : e.message,
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -230,8 +253,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _contactSupport() async {
-    // TODO: reemplazar por tu canal real de soporte
-    // (mailto:, WhatsApp, o pantalla de contacto dentro de la app).
     _showSnack(
       'Escribe a soporte@edupago.com o contacta a la administración de tu institución.',
       isError: false,
@@ -966,120 +987,42 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  Container(
-                    height: 48,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: _cedulaError
-                            ? Colors.redAccent
-                            : AppColors.cardBorder,
-                      ),
-                    ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: _selectedPrefix,
-                        icon: const Icon(
-                          Icons.keyboard_arrow_down,
-                          color: AppColors.textMuted,
-                        ),
-                        style: const TextStyle(
-                          color: AppColors.darkNavy,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                        items: _prefixes
-                            .map(
-                              (val) => DropdownMenuItem(
-                                value: val,
-                                child: Text(val),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (val) {
-                          if (val != null) {
-                            setState(() {
-                              _selectedPrefix = val;
-                              _cedulaError = false;
-                              _cedulaYaRegistrada = false;
-                            });
-                          }
-                        },
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _cedulaController,
-                      focusNode: _cedulaFocusNode,
-                      keyboardType: TextInputType.number,
-                      textInputAction: TextInputAction.done,
-                      onFieldSubmitted: (_) => validateCedula(),
-                      onChanged: (_) {
-                        if (_cedulaError || _cedulaYaRegistrada) {
-                          setState(() {
-                            _cedulaError = false;
-                            _cedulaYaRegistrada = false;
-                          });
-                        }
-                      },
-                      decoration: InputDecoration(
-                        hintText: '12.345.678',
-                        hintStyle: const TextStyle(
-                          color: AppColors.textMuted,
-                          fontSize: 14,
-                        ),
-                        filled: true,
-                        fillColor: Colors.white,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 14,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide(
-                            color: _cedulaError
-                                ? Colors.redAccent
-                                : AppColors.cardBorder,
-                          ),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide(
-                            color: _cedulaError
-                                ? Colors.redAccent
-                                : AppColors.cardBorder,
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(
-                            color: AppColors.primaryBlue,
-                            width: 1.5,
-                          ),
-                        ),
-                      ),
-                      validator: (val) {
-                        final cleaned =
-                            val?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
-                        if (val == null || val.trim().isEmpty) {
-                          return 'Ingresa tu número de cédula';
-                        }
-                        if (!_onlyDigitsRegex.hasMatch(cleaned) ||
-                            cleaned.length < 6 ||
-                            cleaned.length > 9) {
-                          return 'Cédula inválida (solo números, 6-9 dígitos)';
-                        }
-                        return null;
-                      },
-                    ),
-                  ),
-                ],
+              _CedulaField(
+                controller: _cedulaController,
+                focusNode: _cedulaFocusNode,
+                prefix: _selectedPrefix,
+                onPrefixChanged: (p) {
+                  setState(() {
+                    _selectedPrefix = p;
+                    if (p != 'J-') {
+                      _cedulaController.text = _cedulaController.text
+                          .replaceAll(RegExp(r'\D'), '');
+                    }
+                    _cedulaError = false;
+                    _cedulaYaRegistrada = false;
+                  });
+                },
+                onChanged: (_) {
+                  if (_cedulaError || _cedulaYaRegistrada) {
+                    setState(() {
+                      _cedulaError = false;
+                      _cedulaYaRegistrada = false;
+                    });
+                  }
+                },
+                onSubmitted: () => validateCedula(),
+                validator: (val) {
+                  final cleaned = val?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+                  if (val == null || val.trim().isEmpty) {
+                    return 'Ingresa tu número de cédula';
+                  }
+                  if (!_onlyDigitsRegex.hasMatch(cleaned) ||
+                      cleaned.length < 6 ||
+                      cleaned.length > 9) {
+                    return 'Cédula inválida (solo números, 6-9 dígitos)';
+                  }
+                  return null;
+                },
               ),
               const SizedBox(height: 6),
               const Text(
@@ -1232,7 +1175,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   width: double.infinity,
                   height: 48,
                   child: OutlinedButton.icon(
-                    // FIX: antes no hacía nada (onPressed: () {}).
                     onPressed: _contactSupport,
                     style: OutlinedButton.styleFrom(
                       foregroundColor: const Color(0xFFDC2626),
@@ -1446,6 +1388,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 controller: _emailController,
                 focusNode: _emailFocusNode,
                 keyboardType: TextInputType.emailAddress,
+                autofillHints: const [AutofillHints.email],
                 textInputAction: TextInputAction.next,
                 onFieldSubmitted: (_) {
                   FocusScope.of(context).requestFocus(_phoneFocusNode);
@@ -1495,6 +1438,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         color: AppColors.darkNavy,
                       ),
                     ),
+                  ),
+                  prefixIconConstraints: const BoxConstraints(
+                    minWidth: 0,
+                    minHeight: 0,
                   ),
                   filled: true,
                   fillColor: Colors.white,
@@ -1550,6 +1497,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           controller: _passwordController,
                           focusNode: _passwordFocusNode,
                           obscureText: _obscurePassword,
+                          autofillHints: const [AutofillHints.newPassword],
+                          onChanged: (_) =>
+                              setState(() => _passwordServerError = null),
                           textInputAction: TextInputAction.next,
                           onFieldSubmitted: (_) {
                             FocusScope.of(
@@ -1557,8 +1507,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             ).requestFocus(_confirmPasswordFocusNode);
                           },
                           decoration: _buildInputDecoration(
-                            // FIX: coincide con el validador (antes decía "Min. 8").
-                            'Min. 8 caracteres',
+                            'Crea una contraseña',
                             Icons.lock_outline,
                             suffixIcon: IconButton(
                               icon: Icon(
@@ -1573,15 +1522,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               ),
                             ),
                           ),
-                          validator: (val) {
-                            if (val == null || val.length < 8) {
-                              return 'Mínimo 8 caracteres';
-                            }
-                            if (!RegExp(r'[0-9]').hasMatch(val)) {
-                              return 'Debe incluir al menos un número';
-                            }
-                            return null;
-                          },
+                          validator: _validatePassword,
                         ),
                       ],
                     ),
@@ -1604,6 +1545,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           controller: _confirmPasswordController,
                           focusNode: _confirmPasswordFocusNode,
                           obscureText: _obscureConfirmPassword,
+                          autofillHints: const [AutofillHints.newPassword],
                           textInputAction: TextInputAction.done,
                           onFieldSubmitted: (_) => submitRegistration(),
                           decoration: _buildInputDecoration(
@@ -1635,6 +1577,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                 ],
               ),
+              const SizedBox(height: 12),
+              _buildPasswordChecklist(),
               const SizedBox(height: 16),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
@@ -1710,6 +1654,187 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
+  // ---------------------------------------------------------------------
+  // CONTRASEÑA SEGURA
+  // ---------------------------------------------------------------------
+  static final RegExp _hasUpper = RegExp(r'[A-Z]');
+  static final RegExp _hasLower = RegExp(r'[a-z]');
+  static final RegExp _hasDigit = RegExp(r'[0-9]');
+  static final RegExp _hasSymbol = RegExp(
+    r'''[!@#$%^&*()_+\-=\[\]{};':"\\|<>?,./`~]''',
+  );
+
+  List<_PwRule> _passwordRulesFor(String p) => [
+    _PwRule('Mínimo 8 caracteres', 'mínimo 8 caracteres', p.length >= 8),
+    _PwRule('Una mayúscula (A-Z)', 'una mayúscula', _hasUpper.hasMatch(p)),
+    _PwRule('Una minúscula (a-z)', 'una minúscula', _hasLower.hasMatch(p)),
+    _PwRule('Un número (0-9)', 'un número', _hasDigit.hasMatch(p)),
+    _PwRule(
+      'Un símbolo (! @ # \$ % & *)',
+      'un símbolo',
+      _hasSymbol.hasMatch(p),
+    ),
+  ];
+
+  String? _validatePassword(String? val) {
+    final p = val ?? '';
+    if (p.isEmpty) return 'Ingresa una contraseña';
+    final faltan = _passwordRulesFor(
+      p,
+    ).where((r) => !r.ok).map((r) => r.short).toList();
+    if (faltan.isNotEmpty) return 'Falta: ${faltan.join(', ')}';
+    return _passwordServerError;
+  }
+
+  String? _passwordServerReason(String message) {
+    final m = message.toLowerCase();
+    if (m.contains('known to be weak') ||
+        m.contains('easy to guess') ||
+        m.contains('pwned') ||
+        m.contains('leaked')) {
+      return 'Esa contraseña aparece en filtraciones de datos conocidas. Elige una distinta.';
+    }
+    if (m.contains('one character of each')) {
+      return 'El servidor exige mayúscula, minúscula, número y símbolo en la contraseña.';
+    }
+    if (m.contains('at least') && m.contains('characters')) {
+      return 'La contraseña es demasiado corta: el servidor exige más caracteres.';
+    }
+    if (m.contains('password')) {
+      return 'El servidor rechazó la contraseña por no cumplir la política de seguridad.';
+    }
+    return null;
+  }
+
+  Widget _buildPasswordChecklist() {
+    final p = _passwordController.text;
+    final rules = _passwordRulesFor(p);
+    final done = rules.where((r) => r.ok).length;
+    const red = Color(0xFFDC2626);
+    const green = Color(0xFF059669);
+
+    final Color barColor;
+    final String label;
+    if (p.isEmpty) {
+      barColor = AppColors.cardBorder;
+      label = '';
+    } else if (done <= 2) {
+      barColor = red;
+      label = 'Débil';
+    } else if (done < rules.length) {
+      barColor = const Color(0xFFD97706);
+      label = 'Media';
+    } else {
+      barColor = green;
+      label = 'Segura';
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Tu contraseña debe tener:',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.darkNavy,
+                  ),
+                ),
+              ),
+              if (label.isNotEmpty)
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: barColor,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: p.isEmpty ? 0 : done / rules.length,
+              minHeight: 4,
+              color: barColor,
+              backgroundColor: const Color(0xFFE2E8F0),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 18,
+            runSpacing: 6,
+            children: [
+              for (final r in rules)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      r.ok
+                          ? Icons.check_circle
+                          : (_showPasswordErrors
+                                ? Icons.cancel
+                                : Icons.radio_button_unchecked),
+                      size: 14,
+                      color: r.ok
+                          ? green
+                          : (_showPasswordErrors ? red : AppColors.textMuted),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      r.label,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: (!r.ok && _showPasswordErrors)
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                        color: r.ok
+                            ? const Color(0xFF166534)
+                            : (_showPasswordErrors ? red : AppColors.textMuted),
+                      ),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+          if (_passwordServerError != null) ...[
+            const SizedBox(height: 10),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.error_outline, size: 14, color: red),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    _passwordServerError!,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: red,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   InputDecoration _buildInputDecoration(
     String hint,
     IconData icon, {
@@ -1757,4 +1882,193 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ),
     );
   }
+}
+
+class _CedulaField extends StatelessWidget {
+  final TextEditingController controller;
+  final String prefix;
+  final ValueChanged<String> onPrefixChanged;
+  final FocusNode? focusNode;
+  final String? Function(String?)? validator;
+  final VoidCallback? onSubmitted;
+  final ValueChanged<String>? onChanged;
+
+  const _CedulaField({
+    super.key,
+    required this.controller,
+    required this.prefix,
+    required this.onPrefixChanged,
+    this.focusNode,
+    this.validator,
+    this.onSubmitted,
+    this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isJ = prefix == 'J-';
+
+    return FormField<String>(
+      validator: (_) => validator?.call(controller.text),
+      builder: (FormFieldState<String> state) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: state.hasError
+                      ? Colors.redAccent
+                      : AppColors.cardBorder,
+                  width: state.hasError ? 1.5 : 1.0,
+                ),
+              ),
+              child: Row(
+                children: [
+                  // Botón desplegable del prefijo anclado a la izquierda
+                  PopupMenuButton<String>(
+                    tooltip: 'Tipo de documento',
+                    initialValue: prefix,
+                    onSelected: (val) {
+                      onPrefixChanged(val);
+                      state.didChange(controller.text);
+                    },
+                    position: PopupMenuPosition.under,
+                    offset: const Offset(114, 10),
+                    color: Colors.white,
+                    surfaceTintColor: Colors.transparent,
+                    elevation: 8,
+                    constraints: const BoxConstraints(
+                      minWidth: 180,
+                      maxWidth: 220,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    itemBuilder: (_) => [
+                      for (final e in _kCedPrefixes.entries)
+                        PopupMenuItem<String>(
+                          value: e.key,
+                          height: 40,
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 32,
+                                child: Text(
+                                  e.key,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.darkNavy,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                e.value,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: AppColors.textMuted,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 14, right: 8),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            prefix,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.darkNavy,
+                            ),
+                          ),
+                          const Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            size: 18,
+                            color: AppColors.textMuted,
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            width: 1,
+                            height: 22,
+                            color: AppColors.cardBorder,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  // Campo de texto de la cédula
+                  Expanded(
+                    child: TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      textInputAction: TextInputAction.done,
+                      keyboardType: isJ
+                          ? TextInputType.text
+                          : TextInputType.number,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(
+                          RegExp(isJ ? r'[0-9-]' : r'[0-9]'),
+                        ),
+                        LengthLimitingTextInputFormatter(12),
+                      ],
+                      onChanged: (val) {
+                        state.didChange(val);
+                        onChanged?.call(val);
+                      },
+                      onSubmitted: (_) => onSubmitted?.call(),
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: AppColors.darkNavy,
+                      ),
+                      decoration: const InputDecoration(
+                        hintText: 'Cédula *',
+                        hintStyle: TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 14,
+                        ),
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 10),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Mensaje de validación de error si aplica
+            if (state.hasError) ...[
+              const SizedBox(height: 6),
+              Padding(
+                padding: const EdgeInsets.only(left: 4),
+                child: Text(
+                  state.errorText!,
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 11),
+                ),
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _PwRule {
+  final String label;
+  final String short;
+  final bool ok;
+  const _PwRule(this.label, this.short, this.ok);
 }

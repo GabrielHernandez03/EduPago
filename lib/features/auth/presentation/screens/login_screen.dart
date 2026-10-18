@@ -116,6 +116,7 @@ class _LoginScreenState extends State<LoginScreen> {
         });
 
         if (!mounted) return;
+        _passwordController.clear();
 
         if (esCuentaAdmin) {
           Navigator.pushReplacement(
@@ -133,31 +134,46 @@ class _LoginScreenState extends State<LoginScreen> {
           );
         }
       } on AuthException catch (e) {
+        if (!mounted) return;
         setState(() {
           _isLoading = false;
         });
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error al iniciar sesión: ${e.message}'),
-              backgroundColor: Colors.redAccent,
-            ),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_loginErrorMessage(e.message)),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
       } catch (e) {
+        debugPrint('login error: $e');
+        if (!mounted) return;
         setState(() {
           _isLoading = false;
         });
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error inesperado: $e'),
-              backgroundColor: Colors.redAccent,
-            ),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Ocurrió un error inesperado. Intenta de nuevo.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
       }
     }
+  }
+
+  /// Mensaje claro sin revelar si el correo existe: el servidor responde lo
+  /// mismo para "correo inexistente" y "contraseña incorrecta".
+  String _loginErrorMessage(String message) {
+    final m = message.toLowerCase();
+    if (m.contains('invalid login credentials')) {
+      return 'Correo o contraseña incorrectos.';
+    }
+    if (m.contains('email not confirmed')) {
+      return 'Debes confirmar tu correo antes de iniciar sesión. Revisa tu bandeja de entrada.';
+    }
+    if (m.contains('rate limit') || m.contains('too many')) {
+      return 'Demasiados intentos. Espera unos minutos antes de volver a intentarlo.';
+    }
+    return 'No pudimos iniciar sesión. Intenta de nuevo.';
   }
 
   void _showForgotPasswordModal() {
@@ -617,6 +633,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               controller: _emailController,
                               focusNode: _emailFocusNode,
                               keyboardType: TextInputType.emailAddress,
+                              autofillHints: const [AutofillHints.email],
                               textInputAction: TextInputAction.next,
                               onFieldSubmitted: (_) {
                                 FocusScope.of(
@@ -684,6 +701,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               controller: _passwordController,
                               focusNode: _passwordFocusNode,
                               obscureText: _obscurePassword,
+                              autofillHints: const [AutofillHints.password],
                               textInputAction: TextInputAction.done,
                               onFieldSubmitted: (_) {
                                 _submitLogin();
@@ -743,8 +761,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                 if (value == null || value.isEmpty) {
                                   return 'Ingresa tu contraseña';
                                 }
-                                if (value.length < 6) {
-                                  return 'La contraseña debe tener al menos 6 caracteres';
+                                if (value.length < 8) {
+                                  return 'La contraseña debe tener al menos 8 caracteres';
                                 }
                                 return null;
                               },

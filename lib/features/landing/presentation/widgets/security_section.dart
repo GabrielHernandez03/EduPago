@@ -10,7 +10,10 @@ class SecuritySection extends StatelessWidget {
 
     return Container(
       color: AppColors.securityBg,
-      padding: EdgeInsets.symmetric(horizontal: isMobile ? 20 : 80, vertical: 80),
+      padding: EdgeInsets.symmetric(
+        horizontal: isMobile ? 20 : 80,
+        vertical: 80,
+      ),
       child: Flex(
         direction: isMobile ? Axis.vertical : Axis.horizontal,
         children: [
@@ -26,7 +29,10 @@ class SecuritySection extends StatelessWidget {
                     height: 280,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white.withOpacity(0.08), width: 40),
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.08),
+                        width: 40,
+                      ),
                     ),
                   ),
                   Container(
@@ -35,7 +41,11 @@ class SecuritySection extends StatelessWidget {
                       color: AppColors.primaryBlue.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(24),
                     ),
-                    child: const Icon(Icons.shield_outlined, color: AppColors.primaryBlue, size: 50),
+                    child: const Icon(
+                      Icons.shield_outlined,
+                      color: AppColors.primaryBlue,
+                      size: 50,
+                    ),
                   ),
                   Positioned(
                     top: 40,
@@ -62,12 +72,20 @@ class SecuritySection extends StatelessWidget {
               children: [
                 const Text(
                   'SEGURIDAD SIN CONCESIONES',
-                  style: TextStyle(color: AppColors.primaryBlue, fontWeight: FontWeight.bold, fontSize: 12),
+                  style: TextStyle(
+                    color: AppColors.primaryBlue,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 const Text(
                   'Tu información está en buenas manos.',
-                  style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white),
+                  style: TextStyle(
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 const Text(
@@ -75,9 +93,18 @@ class SecuritySection extends StatelessWidget {
                   style: TextStyle(color: Colors.white70, fontSize: 15),
                 ),
                 const SizedBox(height: 30),
-                _buildCheckItem('Sesiones protegidas', 'Tokens seguros JWT y HttpOnly'),
-                _buildCheckItem('Accesos por roles', 'Cada usuario ve únicamente lo que necesita'),
-                _buildCheckItem('Trazabilidad completa', 'Registro auditable de cada operación'),
+                _buildCheckItem(
+                  'Sesiones protegidas',
+                  'Tokens seguros JWT y HttpOnly',
+                ),
+                _buildCheckItem(
+                  'Accesos por roles',
+                  'Cada usuario ve únicamente lo que necesita',
+                ),
+                _buildCheckItem(
+                  'Trazabilidad completa',
+                  'Registro auditable de cada operación',
+                ),
               ],
             ),
           ),
@@ -98,7 +125,14 @@ class SecuritySection extends StatelessWidget {
         children: [
           Icon(icon, size: 14, color: AppColors.darkNavy),
           const SizedBox(width: 6),
-          Text(text, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
+          Text(
+            text,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: AppColors.darkNavy,
+            ),
+          ),
         ],
       ),
     );
@@ -116,15 +150,29 @@ class SecuritySection extends StatelessWidget {
               color: Colors.white10,
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.check, color: AppColors.successGreen, size: 16),
+            child: const Icon(
+              Icons.check,
+              color: AppColors.successGreen,
+              size: 16,
+            ),
           ),
           const SizedBox(width: 14),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                ),
+              ),
               const SizedBox(height: 2),
-              Text(subtitle, style: const TextStyle(color: Colors.white60, fontSize: 13)),
+              Text(
+                subtitle,
+                style: const TextStyle(color: Colors.white60, fontSize: 13),
+              ),
             ],
           ),
         ],

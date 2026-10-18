@@ -11,6 +11,7 @@ import 'package:universal_html/html.dart' as html;
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../main.dart';
+import 'manual_student_dialog.dart';
 
 // ---------------------------------------------------------------------------
 // Columnas obligatorias del Excel
@@ -358,300 +359,24 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
   }
 
   // ── Agregar manualmente ───────────────────────────────────────────────────
-  void _showManualAddDialog() {
-    final cedEstController = TextEditingController();
-    final nomEstController = TextEditingController();
-    final apEstController = TextEditingController();
-    final fechaNacController = TextEditingController();
-    final gradoController = TextEditingController();
-
-    final cedRepController = TextEditingController();
-    final nomRepController = TextEditingController();
-    final apRepController = TextEditingController();
-    final telRepController = TextEditingController();
-    final emailRepController = TextEditingController();
-    String parentesco = 'madre';
-    bool esFinanciero = true;
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              title: const Text('Agregar Estudiante Manualmente'),
-              content: SizedBox(
-                width: 500,
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        'Datos del Estudiante',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primaryBlue,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: cedEstController,
-                        decoration: const InputDecoration(
-                          labelText: 'Cédula Estudiante * (ej. V-30123456)',
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: nomEstController,
-                        decoration: const InputDecoration(
-                          labelText: 'Nombres Estudiante *',
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: apEstController,
-                        decoration: const InputDecoration(
-                          labelText: 'Apellidos Estudiante *',
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: fechaNacController,
-                        decoration: const InputDecoration(
-                          labelText:
-                              'Fecha de Nacimiento (YYYY-MM-DD, opcional)',
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: gradoController,
-                        decoration: const InputDecoration(
-                          labelText: 'Grado y Sección (opcional)',
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      const Text(
-                        'Representante Principal (Opcional)',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primaryBlue,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: cedRepController,
-                        decoration: const InputDecoration(
-                          labelText: 'Cédula Representante',
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: nomRepController,
-                        decoration: const InputDecoration(
-                          labelText: 'Nombres Representante',
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: apRepController,
-                        decoration: const InputDecoration(
-                          labelText: 'Apellidos Representante',
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: telRepController,
-                        decoration: const InputDecoration(
-                          labelText: 'Teléfono',
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: emailRepController,
-                        decoration: const InputDecoration(labelText: 'Email'),
-                      ),
-                      const SizedBox(height: 8),
-                      DropdownButtonFormField<String>(
-                        value: parentesco,
-                        decoration: const InputDecoration(
-                          labelText: 'Parentesco',
-                        ),
-                        items:
-                            [
-                                  'madre',
-                                  'padre',
-                                  'tutor',
-                                  'tutora',
-                                  'abuelo',
-                                  'abuela',
-                                  'tío',
-                                  'tía',
-                                  'familiar',
-                                  'otro',
-                                ]
-                                .map(
-                                  (p) => DropdownMenuItem(
-                                    value: p,
-                                    child: Text(p.toUpperCase()),
-                                  ),
-                                )
-                                .toList(),
-                        onChanged: (val) {
-                          if (val != null) {
-                            setDialogState(() => parentesco = val);
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 8),
-                      SwitchListTile(
-                        title: const Text('¿Es responsable financiero?'),
-                        value: esFinanciero,
-                        onChanged: (val) =>
-                            setDialogState(() => esFinanciero = val),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancelar'),
-                ),
-                ElevatedButton(
-                  style: _primaryStyle(),
-                  onPressed: () async {
-                    final cedEst = cedEstController.text.trim();
-                    final nomEst = nomEstController.text.trim();
-                    final apEst = apEstController.text.trim();
-
-                    if (cedEst.isEmpty || nomEst.isEmpty || apEst.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Cédula, nombres y apellidos del estudiante son obligatorios.',
-                          ),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                      return;
-                    }
-
-                    final Map<String, dynamic> rowData = {
-                      'cedula_estudiante': cedEst,
-                      'nombres_estudiante': nomEst,
-                      'apellidos_estudiante': apEst,
-                      'fecha_nacimiento': fechaNacController.text.trim().isEmpty
-                          ? null
-                          : fechaNacController.text.trim(),
-                      'grado_seccion': gradoController.text.trim().isEmpty
-                          ? null
-                          : gradoController.text.trim(),
-                      'representantes': [],
-                    };
-
-                    final cedRep = cedRepController.text.trim();
-                    final nomRep = nomRepController.text.trim();
-                    final apRep = apRepController.text.trim();
-
-                    if (cedRep.isNotEmpty ||
-                        nomRep.isNotEmpty ||
-                        apRep.isNotEmpty) {
-                      if (cedRep.isEmpty || nomRep.isEmpty || apRep.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Si incluye representante, cédula, nombres y apellidos son obligatorios.',
-                            ),
-                            backgroundColor: Colors.red,
-                          ),
-                        );
-                        return;
-                      }
-                      (rowData['representantes'] as List).add({
-                        'cedula': cedRep,
-                        'nombres': nomRep,
-                        'apellidos': apRep,
-                        'telefono': telRepController.text.trim().isEmpty
-                            ? null
-                            : telRepController.text.trim(),
-                        'email': emailRepController.text.trim().isEmpty
-                            ? null
-                            : emailRepController.text.trim(),
-                        'parentesco': parentesco,
-                        'es_financiero': esFinanciero,
-                      });
-                    }
-
-                    Navigator.pop(context);
-
-                    setState(() {
-                      _step = _Step.importing;
-                    });
-
-                    try {
-                      final response = await supabase.functions.invoke(
-                        'import-students',
-                        body: {
-                          'colegio_id': widget.colegioId,
-                          'rows': [rowData],
-                        },
-                      );
-
-                      if (!mounted) return;
-                      final data = response.data as Map<String, dynamic>?;
-                      final exitosos =
-                          (data?['exitosos'] as num?)?.toInt() ?? 0;
-                      final errores =
-                          (data?['errores'] as List?)
-                              ?.map((e) => Map<String, dynamic>.from(e as Map))
-                              .toList() ??
-                          [];
-
-                      if (exitosos > 0) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Estudiante registrado correctamente.',
-                            ),
-                            backgroundColor: Color(0xFF059669),
-                          ),
-                        );
-                        widget.onImported();
-                      } else {
-                        setState(() => _step = _Step.idle);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              'Error al registrar: ${errores.isNotEmpty ? errores.first['motivo'] : 'Desconocido'}',
-                            ),
-                            backgroundColor: Colors.red,
-                          ),
-                        );
-                      }
-                    } catch (e) {
-                      if (!mounted) return;
-                      setState(() => _step = _Step.idle);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Error de conexión: $e'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                    }
-                  },
-                  child: const Text('Guardar Estudiante'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+  Future<void> _showManualAddDialog() async {
+    final saved = await showManualStudentDialog(
+      context,
+      colegioId: widget.colegioId,
     );
+    if (!mounted || saved == null || saved <= 0) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          saved == 1
+              ? 'Estudiante registrado correctamente.'
+              : '$saved estudiantes registrados correctamente.',
+        ),
+        backgroundColor: const Color(0xFF059669),
+      ),
+    );
+    widget.onImported();
   }
 
   // ── Selección de archivo ──────────────────────────────────────────────────
@@ -1181,7 +906,6 @@ class _Loader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    print("Loader rendered"); // Placeholder
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 24),
       child: Column(

@@ -27,7 +27,6 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
-  # Agrégalo exactamente aquí (respetando los espacios de indentación):
   assets:
     - assets/images/
     - assets/Plantilla de Insercion.xlsx
