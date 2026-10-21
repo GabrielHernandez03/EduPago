@@ -35,12 +35,12 @@ class _ForgotPasswordDialogState extends State<ForgotPasswordDialog> {
       final email = _emailController.text.trim();
       debugPrint('Enviando solicitud de recuperación a: $email');
 
-      // Llamada real a la API de Supabase
+      // Llamada real a la API de Supabase con URL de redirección dinámica para web y producción
       await Supabase.instance.client.auth.resetPasswordForEmail(
         email,
         redirectTo: kIsWeb
-            ? '${Uri.base.origin}/#/'
-            : 'http://localhost:58662/',
+            ? '${Uri.base.origin}/#/reset-password'
+            : 'https://edupago-2026.vercel.app/#/reset-password',
       );
 
       debugPrint('Solicitud enviada a Supabase con éxito');
@@ -85,9 +85,7 @@ class _ForgotPasswordDialogState extends State<ForgotPasswordDialog> {
     return Dialog(
       backgroundColor: Colors.white,
       surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       child: Container(
         width: 420,
@@ -331,10 +329,7 @@ class _ForgotPasswordDialogState extends State<ForgotPasswordDialog> {
             ),
             child: const Text(
               'Entendido',
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
             ),
           ),
         ),

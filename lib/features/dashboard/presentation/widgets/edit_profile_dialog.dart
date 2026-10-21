@@ -186,13 +186,6 @@ class _EditProfileDialogState extends State<EditProfileDialog> {
                             ),
                           ),
                           SizedBox(height: 2),
-                          Text(
-                            'Solo puedes editar tus datos de contacto.',
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              color: AppColors.textMuted,
-                            ),
-                          ),
                         ],
                       ),
                     ),
