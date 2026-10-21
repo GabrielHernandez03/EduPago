@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/session/idle_session_store.dart';
 import '../../../../main.dart';
 import '../widgets/forgot_password_dialog.dart';
 import 'register_screen.dart';
@@ -111,11 +112,16 @@ class _LoginScreenState extends State<LoginScreen> {
           return;
         }
 
+        // Auditoría: todas las validaciones pasaron, el inicio de sesión es
+        // exitoso -> se guarda fecha, hora e IP antes de entrar al panel.
+        await _registrarInicioSesion();
+        await IdleSessionStore.touch(); // reinicia el reloj de inactividad
+
+        if (!mounted) return;
         setState(() {
           _isLoading = false;
         });
 
-        if (!mounted) return;
         _passwordController.clear();
 
         if (esCuentaAdmin) {
@@ -157,6 +163,20 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         );
       }
+    }
+  }
+
+  /// Registro de auditoría del inicio de sesión (fecha, hora e IP).
+  ///
+  /// La IP NO se envía desde la app: la función SQL `registrar_inicio_sesion`
+  /// la lee de las cabeceras de la petición en el servidor, así no se puede
+  /// falsear desde el cliente. Si el registro falla no se bloquea el acceso,
+  /// pero el error queda en consola.
+  Future<void> _registrarInicioSesion() async {
+    try {
+      await supabase.rpc('registrar_inicio_sesion');
+    } catch (e) {
+      debugPrint('auditoría de sesión no registrada: $e');
     }
   }
 

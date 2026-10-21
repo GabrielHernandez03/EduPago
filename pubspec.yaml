@@ -16,6 +16,7 @@ dependencies:
   file_picker: ^8.0.0
   carousel_slider_plus: ^7.1.2
   universal_html: ^2.2.4
+  shared_preferences: ^2.5.6
 
 dev_dependencies:
   flutter_test:

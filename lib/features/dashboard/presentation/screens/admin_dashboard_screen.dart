@@ -1,9 +1,13 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/session/idle_session_store.dart';
 import '../../../../main.dart';
 import '../../../landing/presentation/screens/home_screen.dart';
 import '../widgets/students_import_card.dart';
@@ -158,10 +162,197 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   List<_PagoRow> _recent = [];
 
+  // ---------------------------------------------------------------------
+  // Cierre automático por inactividad
+  // ---------------------------------------------------------------------
+  /// Tiempo máximo sin actividad antes de cerrar la sesión administrativa.
+  /// Cambia este valor para configurar el límite.
+  static const Duration _idleTimeout = Duration(minutes: 15);
+
+  /// Aviso con cuenta regresiva antes de cerrar la sesión.
+  static const Duration _idleWarning = Duration(seconds: 60);
+
+  Timer? _idleTicker;
+  DateTime _lastActivity = DateTime.now();
+  bool _idleWarningOpen = false;
+  bool _loggingOut = false;
+  bool _checking = false;
+  DateTime _persistedActivity = DateTime.fromMillisecondsSinceEpoch(0);
+  StreamSubscription<AuthState>? _authSub;
+  final ValueNotifier<int> _idleSecondsLeft = ValueNotifier<int>(0);
+
   @override
   void initState() {
     super.initState();
+    // Si la sesión se destruye por fuera (otra pestaña, token revocado o
+    // refresco fallido), se vuelve al inicio en vez de quedar en el panel.
+    _authSub = supabase.auth.onAuthStateChange.listen((data) {
+      if (data.event == AuthChangeEvent.signedOut && !_loggingOut) {
+        _forceLogout('Tu sesión ya no es válida. Inicia sesión nuevamente.');
+      }
+    });
+    _bootSession();
+  }
+
+  /// Valida la sesión antes de mostrar el panel:
+  ///  - sin sesión (acceso directo sin credenciales) -> fuera;
+  ///  - sesión restaurada tras más tiempo del permitido sin actividad
+  ///    (pestaña/navegador cerrado) -> se destruye y se pide iniciar sesión.
+  Future<void> _bootSession() async {
+    // Espera al primer frame: no se puede usar context/Navigator en initState.
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+    if (supabase.auth.currentSession == null) {
+      await _forceLogout('Debes iniciar sesión para continuar.');
+      return;
+    }
+    final last = await IdleSessionStore.last();
+    if (!mounted) return;
+    if (last != null && DateTime.now().difference(last) >= _idleTimeout) {
+      await _logoutByInactivity();
+      return;
+    }
+    _startIdleWatch();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    _stopIdleWatch();
+    _idleSecondsLeft.dispose();
+    super.dispose();
+  }
+
+  /// Escucha clics/toques/scroll (en cualquier ruta o diálogo) y teclado, y
+  /// revisa cada segundo cuánto tiempo lleva el usuario inactivo. Se compara
+  /// contra la hora real, así que si el equipo se suspende o la pestaña queda
+  /// en segundo plano, al volver se cierra la sesión de inmediato.
+  void _startIdleWatch() {
+    _lastActivity = DateTime.now();
+    _persistedActivity = _lastActivity;
+    IdleSessionStore.touch(_lastActivity);
+    GestureBinding.instance.pointerRouter.addGlobalRoute(_onPointerActivity);
+    HardwareKeyboard.instance.addHandler(_onKeyActivity);
+    _idleTicker = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _checkIdle(),
+    );
+  }
+
+  void _stopIdleWatch() {
+    _idleTicker?.cancel();
+    _idleTicker = null;
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(_onPointerActivity);
+    HardwareKeyboard.instance.removeHandler(_onKeyActivity);
+  }
+
+  void _onPointerActivity(PointerEvent event) => _markActivity();
+
+  bool _onKeyActivity(KeyEvent event) {
+    _markActivity();
+    return false; // no consume la tecla
+  }
+
+  void _markActivity() {
+    // Con el aviso abierto solo cuenta pulsar "Seguir conectado".
+    if (_idleWarningOpen) return;
+    _lastActivity = DateTime.now();
+  }
+
+  Future<void> _checkIdle() async {
+    if (!mounted || _loggingOut || _checking) return;
+    _checking = true;
+    try {
+      var idle = DateTime.now().difference(_lastActivity);
+
+      // Cerca del límite, comprobar si otra pestaña registró actividad más
+      // reciente (así una pestaña inactiva no cierra la sesión de otra activa).
+      if (idle >= _idleTimeout - _idleWarning) {
+        final stored = await IdleSessionStore.last();
+        if (stored != null && stored.isAfter(_lastActivity)) {
+          _lastActivity = stored;
+          idle = DateTime.now().difference(_lastActivity);
+        }
+      }
+      if (!mounted || _loggingOut) return;
+
+      if (idle >= _idleTimeout) {
+        await _logoutByInactivity();
+        return;
+      }
+
+      // Guarda la actividad (como mucho cada 10 s) para detectar la
+      // inactividad aunque se cierre la pestaña.
+      if (_lastActivity.difference(_persistedActivity) >=
+          const Duration(seconds: 10)) {
+        _persistedActivity = _lastActivity;
+        IdleSessionStore.touch(_lastActivity);
+      }
+
+      final left = _idleTimeout - idle;
+      if (left <= _idleWarning) {
+        _idleSecondsLeft.value = (left.inMilliseconds / 1000).ceil();
+        if (!_idleWarningOpen) _showIdleWarning();
+      }
+    } finally {
+      _checking = false;
+    }
+  }
+
+  void _showIdleWarning() {
+    _idleWarningOpen = true;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.timer_outlined, color: Color(0xFFD97706)),
+            SizedBox(width: 10),
+            Expanded(child: Text('Sesión por expirar')),
+          ],
+        ),
+        content: ValueListenableBuilder<int>(
+          valueListenable: _idleSecondsLeft,
+          builder: (_, seconds, __) => Text(
+            'Por seguridad, tu sesión se cerrará por inactividad en '
+            '$seconds s.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: _logoutByInactivity,
+            child: const Text('Cerrar sesión'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              _lastActivity = DateTime.now();
+              _idleWarningOpen = false;
+              Navigator.of(ctx).pop();
+            },
+            child: const Text('Seguir conectado'),
+          ),
+        ],
+      ),
+    ).then((_) => _idleWarningOpen = false);
+  }
+
+  Future<void> _logoutByInactivity() =>
+      _forceLogout('Tu sesión se cerró por inactividad.');
+
+  /// Destruye la sesión, vuelve al inicio y avisa del motivo.
+  Future<void> _forceLogout(String message) async {
+    if (_loggingOut) return;
+    // El messenger vive en MaterialApp: sigue disponible tras cambiar de ruta.
+    final messenger = ScaffoldMessenger.of(context);
+    await _logout();
+    messenger.showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.redAccent),
+    );
   }
 
   // ---------------------------------------------------------------------
@@ -263,7 +454,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   Future<void> _logout() async {
-    await supabase.auth.signOut();
+    if (_loggingOut) return;
+    _loggingOut = true;
+    _stopIdleWatch();
+    await IdleSessionStore.clear();
+    try {
+      await supabase.auth.signOut();
+    } catch (_) {
+      // Sin red o sesión ya inexistente: igual se sale del panel.
+    }
     if (!mounted) return;
     Navigator.pushAndRemoveUntil(
       context,

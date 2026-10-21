@@ -49,7 +49,8 @@ const _kTblEstudiantes = 'estudiantes';
 const _kColCedulaEstudiante = 'cedula';
 const _kTblRepresentantes = 'representantes';
 const _kColCedulaRep = 'cedula';
-const _kSelectRep = 'id, nombres, apellidos, telefono_whatsapp, email';
+const _kSelectRep =
+    'id, nombres, apellidos, telefono_whatsapp, email, direccion';
 
 /// Prefijos de documento: valor → descripción.
 const _kCedPrefixes = {
@@ -81,6 +82,7 @@ class _RepDraft {
   final String apellidos;
   final String? telefono;
   final String? email;
+  final String? direccion;
   final String parentesco;
   final bool esFinanciero;
 
@@ -93,6 +95,7 @@ class _RepDraft {
     required this.apellidos,
     this.telefono,
     this.email,
+    this.direccion,
     required this.parentesco,
     required this.esFinanciero,
     this.existente = false,
@@ -106,6 +109,7 @@ class _RepDraft {
     'apellidos': apellidos,
     'telefono': telefono,
     'email': email,
+    'direccion': direccion,
     'parentesco': parentesco,
     'es_financiero': esFinanciero,
   };
@@ -1947,6 +1951,16 @@ class _RepTile extends StatelessWidget {
                       color: AppColors.textMuted,
                     ),
                   ),
+                if (rep.direccion != null)
+                  Text(
+                    rep.direccion!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
               ],
             ),
           ),
@@ -2162,6 +2176,7 @@ class _RepFormDialogState extends State<_RepFormDialog> {
   final _ap = TextEditingController();
   final _tel = TextEditingController();
   final _email = TextEditingController();
+  final _dir = TextEditingController();
   final _cedFocus = FocusNode();
 
   String _prefix = 'V-';
@@ -2191,6 +2206,7 @@ class _RepFormDialogState extends State<_RepFormDialog> {
       _ap.text = r.apellidos;
       _tel.text = r.telefono ?? '';
       _email.text = r.email ?? '';
+      _dir.text = r.direccion ?? '';
       _parentesco = r.parentesco;
     }
     _cedFocus.addListener(() {
@@ -2209,7 +2225,7 @@ class _RepFormDialogState extends State<_RepFormDialog> {
   @override
   void dispose() {
     _timer?.cancel();
-    for (final c in [_ced, _nom, _ap, _tel, _email]) {
+    for (final c in [_ced, _nom, _ap, _tel, _email, _dir]) {
       c.dispose();
     }
     _cedFocus.dispose();
@@ -2294,12 +2310,13 @@ class _RepFormDialogState extends State<_RepFormDialog> {
     _ap.text = v('apellidos');
     _tel.text = v('telefono_whatsapp');
     _email.text = v('email');
+    _dir.text = v('direccion');
     setState(() => _locked = true);
   }
 
   void _unlock() {
     if (!_locked) return;
-    for (final c in [_nom, _ap, _tel, _email]) {
+    for (final c in [_nom, _ap, _tel, _email, _dir]) {
       c.clear();
     }
     setState(() => _locked = false);
@@ -2327,6 +2344,7 @@ class _RepFormDialogState extends State<_RepFormDialog> {
         apellidos: _ap.text.trim(),
         telefono: _nullIfEmpty(_tel.text),
         email: _nullIfEmpty(_email.text),
+        direccion: _nullIfEmpty(_dir.text),
         parentesco: _parentesco,
         esFinanciero: _financiero,
       ),
@@ -2584,13 +2602,30 @@ class _RepFormDialogState extends State<_RepFormDialog> {
             controller: _email,
             readOnly: _locked,
             keyboardType: TextInputType.emailAddress,
-            textInputAction: TextInputAction.done,
+            textInputAction: TextInputAction.next,
             decoration: _dec(
               'Correo electrónico',
               icon: Icons.mail_outline_rounded,
               locked: _locked,
             ),
             validator: _validateEmail,
+          ),
+          const SizedBox(height: 14),
+          TextFormField(
+            controller: _dir,
+            readOnly: _locked,
+            minLines: 1,
+            maxLines: 3,
+            keyboardType: TextInputType.streetAddress,
+            textCapitalization: TextCapitalization.sentences,
+            textInputAction: TextInputAction.done,
+            inputFormatters: [LengthLimitingTextInputFormatter(300)],
+            decoration: _dec(
+              'Dirección',
+              hint: 'Urbanización, calle, casa/edificio, ciudad',
+              icon: Icons.location_on_outlined,
+              locked: _locked,
+            ),
           ),
           const SizedBox(height: 18),
           const Text(

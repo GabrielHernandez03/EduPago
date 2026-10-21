@@ -38,6 +38,7 @@ const _kRepFields = [
   'apellidos',
   'telefono',
   'email',
+  'direccion',
   'parentesco',
   'es_financiero',
 ];
@@ -201,6 +202,9 @@ class StudentExcelParser {
               ? repVals['telefono']
               : null,
           'email': repVals['email']!.isNotEmpty ? repVals['email'] : null,
+          'direccion': repVals['direccion']!.isNotEmpty
+              ? repVals['direccion']
+              : null,
           'parentesco': repVals['parentesco']!.isNotEmpty
               ? repVals['parentesco']
               : null,
