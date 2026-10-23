@@ -41,24 +41,25 @@ class _EmailConfirmedScreenState extends State<EmailConfirmedScreen> {
   Future<void> _confirm() async {
     final hash = widget.tokenHash;
     var ok = false;
+    final auth = Supabase.instance.client.auth;
 
-    if (hash != null && hash.isNotEmpty) {
-      final auth = Supabase.instance.client.auth;
+    // 1. Si Supabase ya procesó automáticamente el token al cargar la web,
+    // el usuario ya estará autenticado y currentUser no será null.
+    if (auth.currentUser != null) {
+      ok = true;
+    } else if (hash != null && hash.isNotEmpty) {
+      // 2. Si no se procesó automáticamente, intentamos verificarlo manualmente.
       try {
         await auth.verifyOTP(tokenHash: hash, type: OtpType.email);
         ok = true;
       } catch (_) {
-        // Si Supabase ya procesó el token automáticamente al cargar la web,
-        // validamos si ya existe una sesión activa para considerarlo exitoso.
-        if (auth.currentSession != null) {
-          ok = true;
-        } else {
-          ok = false;
-        }
+        ok = false;
       }
+    }
 
-      // El correo ya quedó confirmado. No se deja sesión abierta: el
-      // usuario entra desde el inicio de sesión con sus credenciales.
+    // Si la confirmación fue exitosa, cerramos sesión de forma limpia
+    // para obligar al usuario a entrar con sus credenciales desde el login.
+    if (ok) {
       try {
         await auth.signOut();
       } catch (_) {}
