@@ -4,7 +4,18 @@ import '../../../../core/theme/app_colors.dart';
 import 'login_screen.dart';
 
 class ResetPasswordScreen extends StatefulWidget {
-  const ResetPasswordScreen({super.key});
+  /// `token_hash` que trae el enlace del correo de recuperación.
+  /// Si es null se asume que ya existe una sesión de recuperación activa.
+  final String? tokenHash;
+
+  const ResetPasswordScreen({super.key, this.tokenHash});
+
+  /// Devuelve el `token_hash` si la URL actual viene del enlace del correo
+  /// (…/?token_hash=XXXX&type=recovery); si no, null.
+  static String? tokenHashFromUrl() {
+    final q = Uri.base.queryParameters;
+    return q['type'] == 'recovery' ? q['token_hash'] : null;
+  }
 
   @override
   State<ResetPasswordScreen> createState() => _ResetPasswordScreenState();
@@ -18,6 +29,138 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   bool _isLoading = false;
+  bool _verifying = true;
+  bool _linkInvalid = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _prepareSession();
+  }
+
+  /// Canjea el token del correo por una sesión de recuperación.
+  /// Si el enlace no sirve (vencido, ya usado o falso) se muestra un aviso
+  /// en lugar del formulario.
+  Future<void> _prepareSession() async {
+    final auth = Supabase.instance.client.auth;
+    var valid = false;
+
+    if (widget.tokenHash != null) {
+      try {
+        await auth.verifyOTP(
+          tokenHash: widget.tokenHash,
+          type: OtpType.recovery,
+        );
+        valid = true;
+      } on AuthException {
+        valid = false;
+      } catch (_) {
+        valid = false;
+      }
+    } else {
+      valid = auth.currentSession != null;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _verifying = false;
+      _linkInvalid = !valid;
+    });
+  }
+
+  void _goToLogin() {
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (context) => const LoginScreen()),
+      (route) => false,
+    );
+  }
+
+  Widget _buildStatusScreen() {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 440),
+            child: _verifying
+                ? const Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(color: AppColors.primaryBlue),
+                      SizedBox(height: 16),
+                      Text(
+                        'Validando tu enlace...',
+                        style: TextStyle(color: AppColors.textMuted),
+                      ),
+                    ],
+                  )
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.redAccent.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: const Icon(
+                          Icons.link_off,
+                          color: Colors.redAccent,
+                          size: 32,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        'Enlace no válido',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.darkNavy,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Este enlace de recuperación venció o ya fue utilizado. '
+                        'Solicita uno nuevo desde "¿Olvidaste tu contraseña?".',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: AppColors.textMuted,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: ElevatedButton(
+                          onPressed: _goToLogin,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primaryBlue,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            elevation: 0,
+                          ),
+                          child: const Text(
+                            'Ir al inicio de sesión',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   void dispose() {
@@ -88,6 +231,8 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_verifying || _linkInvalid) return _buildStatusScreen();
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: Center(

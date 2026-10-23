@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -29,8 +30,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String _selectedPrefix = 'V-';
 
   // Regex de validación reutilizables
+  // Correo: acepta cualquier formato real (RFC 5322 práctico): letras, números
+  // y símbolos habituales (. _ % + - ...) antes de la @, y dominios con uno o
+  // varios subdominios (gmail.com, correo.unimet.edu.ve, mail.empresa.com.ve).
   static final RegExp _emailRegex = RegExp(
-    r'^[\w\.\-]+@[\w\-]+\.[a-zA-Z]{2,}$',
+    r"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*"
+    r"@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}$",
   );
   static final RegExp _onlyDigitsRegex = RegExp(r'^\d+$');
   static final RegExp _phoneRegex = RegExp(r'^\d{10}$');
@@ -187,6 +192,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final authResponse = await supabase.auth.signUp(
         email: email,
         password: password,
+        // Llega a la plantilla del correo como {{ .RedirectTo }}: el enlace
+        // abre la app aquí y se muestra la pantalla "Correo confirmado".
+        // Debe estar en Authentication > URL Configuration > Redirect URLs.
+        emailRedirectTo: kIsWeb ? '${Uri.base.origin}/' : null,
         data: {
           'nombre_completo':
               '${_nombresController.text.trim()} ${_apellidosController.text.trim()}',
@@ -1400,7 +1409,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 validator: (val) {
                   final v = val?.trim() ?? '';
                   if (v.isEmpty) return 'Ingresa tu correo';
-                  if (!_emailRegex.hasMatch(v)) return 'Correo no válido';
+                  if (v.length > 254 || !_emailRegex.hasMatch(v)) {
+                    return 'Correo no válido';
+                  }
                   return null;
                 },
               ),

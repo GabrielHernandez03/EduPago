@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/theme/app_colors.dart';
+import 'features/auth/presentation/screens/email_confirmed_screen.dart';
 import 'features/auth/presentation/screens/reset_password_screen.dart';
 import 'features/landing/presentation/screens/home_screen.dart';
 
@@ -34,6 +35,13 @@ class _MyAppState extends State<MyApp> {
   final _navigatorKey = GlobalKey<NavigatorState>();
   late final StreamSubscription<AuthState> _authSubscription;
 
+  // Enlaces de los correos de Supabase: la app abre en
+  //   /?token_hash=XXXX&type=recovery  -> restablecer contraseña
+  //   /?token_hash=XXXX&type=email     -> correo confirmado
+  // Se leen una sola vez al arrancar y deciden la pantalla inicial.
+  final String? _recoveryToken = ResetPasswordScreen.tokenHashFromUrl();
+  final String? _confirmToken = EmailConfirmedScreen.tokenHashFromUrl();
+
   @override
   void initState() {
     super.initState();
@@ -41,7 +49,10 @@ class _MyAppState extends State<MyApp> {
     // 1. Escuchar eventos futuros de autenticación
     _authSubscription = supabase.auth.onAuthStateChange.listen((data) {
       final event = data.event;
-      if (event == AuthChangeEvent.passwordRecovery) {
+      // Con enlace token_hash la pantalla de reset ya es la inicial y valida
+      // el token por su cuenta; este evento solo cubre enlaces antiguos
+      // (los que usaban {{ .ConfirmationURL }}).
+      if (event == AuthChangeEvent.passwordRecovery && _recoveryToken == null) {
         _navigateToResetPassword();
       }
     });
@@ -53,6 +64,9 @@ class _MyAppState extends State<MyApp> {
   }
 
   void _checkIfRecoveryUrl() {
+    // Si ya se abrió con un enlace token_hash no hay nada más que comprobar.
+    if (_recoveryToken != null || _confirmToken != null) return;
+
     if (kIsWeb) {
       final uri = Uri.base;
       // Verifica si la URL en el navegador incluye los parámetros de recuperación de Supabase
@@ -91,7 +105,11 @@ class _MyAppState extends State<MyApp> {
         colorScheme: ColorScheme.fromSeed(seedColor: AppColors.primaryBlue),
         textTheme: GoogleFonts.lexendTextTheme(ThemeData.light().textTheme),
       ),
-      home: const HomeScreen(),
+      home: _recoveryToken != null
+          ? ResetPasswordScreen(tokenHash: _recoveryToken)
+          : _confirmToken != null
+          ? EmailConfirmedScreen(tokenHash: _confirmToken)
+          : const HomeScreen(),
     );
   }
 }

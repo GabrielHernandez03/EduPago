@@ -25,9 +25,9 @@ class ContactSection extends StatelessWidget {
       avatarAsset: 'assets/images/gabriel_hernandez.webp',
     ),
     _ContactPerson(
-      nombre: 'Gabriel Moreta',
+      nombre: 'Gabriela Moreta',
       telefono: '0412-8214834',
-      avatarAsset: 'assets/images/gabriel_moreta.webp',
+      avatarAsset: 'assets/images/gabriela_moreta.webp',
     ),
     _ContactPerson(
       nombre: 'Samuel Fernandes',
