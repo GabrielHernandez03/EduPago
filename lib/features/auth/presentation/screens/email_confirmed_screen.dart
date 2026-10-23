@@ -1,10 +1,9 @@
+// lib/features/auth/presentation/screens/email_confirmed_screen.dart
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/theme/app_colors.dart';
 import 'login_screen.dart';
-
-// Ubicación sugerida: junto a login_screen.dart
-// (lib/features/auth/presentation/screens/email_confirmed_screen.dart)
 
 enum _ConfirmState { verifying, success, failure }
 
@@ -48,16 +47,21 @@ class _EmailConfirmedScreenState extends State<EmailConfirmedScreen> {
       try {
         await auth.verifyOTP(tokenHash: hash, type: OtpType.email);
         ok = true;
-        // El correo ya quedó confirmado. No se deja sesión abierta: el
-        // usuario entra desde el inicio de sesión con sus credenciales.
-        try {
-          await auth.signOut();
-        } catch (_) {}
-      } on AuthException {
-        ok = false;
       } catch (_) {
-        ok = false;
+        // Si Supabase ya procesó el token automáticamente al cargar la web,
+        // validamos si ya existe una sesión activa para considerarlo exitoso.
+        if (auth.currentSession != null) {
+          ok = true;
+        } else {
+          ok = false;
+        }
       }
+
+      // El correo ya quedó confirmado. No se deja sesión abierta: el
+      // usuario entra desde el inicio de sesión con sus credenciales.
+      try {
+        await auth.signOut();
+      } catch (_) {}
     }
 
     if (!mounted) return;

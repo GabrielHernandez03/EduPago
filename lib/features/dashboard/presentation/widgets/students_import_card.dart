@@ -440,6 +440,8 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
 
       if (!mounted) return;
 
+      debugPrint('Respuesta de la función: ${response.data}');
+
       final data = response.data as Map<String, dynamic>?;
       if (data == null) {
         setState(() {
@@ -485,11 +487,11 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
 
       widget.onImported();
     } catch (e) {
-      debugPrint('Error al invocar import-students: $e');
+      debugPrint('Error detallado al invocar import-students: $e');
       if (!mounted) return;
       setState(() {
         _step = _Step.ready;
-        _fatal = 'Error de conexión: $e';
+        _fatal = 'Error detallado al invocar la función: $e';
       });
     }
   }
