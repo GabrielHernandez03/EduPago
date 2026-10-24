@@ -1,19 +1,16 @@
 import 'dart:async';
 import 'dart:math' as math;
-
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../../core/services/bcv_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/session/idle_session_store.dart';
 import '../../../../main.dart';
 import '../../../landing/presentation/screens/home_screen.dart';
 import '../widgets/students_import_card.dart';
-
-// Ubicación sugerida:
-// lib/features/dashboard/presentation/screens/admin_dashboard_screen.dart
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -22,9 +19,9 @@ class AdminDashboardScreen extends StatefulWidget {
   State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
 }
 
-// ---------------------------------------------------------------------
+//
 // Modelos de apoyo
-// ---------------------------------------------------------------------
+//
 class _MonthTotal {
   final String label;
   final double value;
@@ -34,7 +31,7 @@ class _MonthTotal {
 class _PendingItem {
   final String studentId;
   final double saldo;
-  final int daysOverdue; // <= 0 significa vigente (aún no vence)
+  final int daysOverdue; // <=0 significa vigente (aún no vence)
   const _PendingItem(this.studentId, this.saldo, this.daysOverdue);
 }
 
@@ -46,6 +43,7 @@ class _PagoRow {
   final String currency;
   final String status; // pendiente | aprobado | rechazado
   final DateTime? date;
+
   const _PagoRow({
     required this.representative,
     required this.student,
@@ -66,6 +64,7 @@ class _NavDef {
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
+  final BcvService _bcvService = BcvService();
 
   static const _navItems = <_NavDef>[
     _NavDef(Icons.home_outlined, Icons.home, 'Resumen'),
@@ -93,6 +92,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     'Nov',
     'Dic',
   ];
+
   static const _monthsLong = [
     'enero',
     'febrero',
@@ -107,6 +107,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     'noviembre',
     'diciembre',
   ];
+
   static const _weekdays = [
     'lunes',
     'martes',
@@ -116,10 +117,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     'sábado',
     'domingo',
   ];
+
   static const _agingLabels = [
     'Todas',
     'Vigentes',
-    '1–30 días',
+    '1-30 días',
     'Más de 30 días',
   ];
 
@@ -162,14 +164,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   List<_PagoRow> _recent = [];
 
-  // ---------------------------------------------------------------------
+  //
   // Cierre automático por inactividad
-  // ---------------------------------------------------------------------
-  /// Tiempo máximo sin actividad antes de cerrar la sesión administrativa.
-  /// Cambia este valor para configurar el límite.
+  //
   static const Duration _idleTimeout = Duration(minutes: 15);
-
-  /// Aviso con cuenta regresiva antes de cerrar la sesión.
   static const Duration _idleWarning = Duration(seconds: 60);
 
   Timer? _idleTicker;
@@ -184,8 +182,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   @override
   void initState() {
     super.initState();
-    // Si la sesión se destruye por fuera (otra pestaña, token revocado o
-    // refresco fallido), se vuelve al inicio en vez de quedar en el panel.
     _authSub = supabase.auth.onAuthStateChange.listen((data) {
       if (data.event == AuthChangeEvent.signedOut && !_loggingOut) {
         _forceLogout('Tu sesión ya no es válida. Inicia sesión nuevamente.');
@@ -194,24 +190,23 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     _bootSession();
   }
 
-  /// Valida la sesión antes de mostrar el panel:
-  ///  - sin sesión (acceso directo sin credenciales) -> fuera;
-  ///  - sesión restaurada tras más tiempo del permitido sin actividad
-  ///    (pestaña/navegador cerrado) -> se destruye y se pide iniciar sesión.
   Future<void> _bootSession() async {
-    // Espera al primer frame: no se puede usar context/Navigator en initState.
     await Future<void>.delayed(Duration.zero);
     if (!mounted) return;
+
     if (supabase.auth.currentSession == null) {
       await _forceLogout('Debes iniciar sesión para continuar.');
       return;
     }
+
     final last = await IdleSessionStore.last();
     if (!mounted) return;
+
     if (last != null && DateTime.now().difference(last) >= _idleTimeout) {
       await _logoutByInactivity();
       return;
     }
+
     _startIdleWatch();
     _load();
   }
@@ -224,10 +219,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     super.dispose();
   }
 
-  /// Escucha clics/toques/scroll (en cualquier ruta o diálogo) y teclado, y
-  /// revisa cada segundo cuánto tiempo lleva el usuario inactivo. Se compara
-  /// contra la hora real, así que si el equipo se suspende o la pestaña queda
-  /// en segundo plano, al volver se cierra la sesión de inmediato.
   void _startIdleWatch() {
     _lastActivity = DateTime.now();
     _persistedActivity = _lastActivity;
@@ -251,11 +242,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   bool _onKeyActivity(KeyEvent event) {
     _markActivity();
-    return false; // no consume la tecla
+    return false;
   }
 
   void _markActivity() {
-    // Con el aviso abierto solo cuenta pulsar "Seguir conectado".
     if (_idleWarningOpen) return;
     _lastActivity = DateTime.now();
   }
@@ -266,8 +256,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     try {
       var idle = DateTime.now().difference(_lastActivity);
 
-      // Cerca del límite, comprobar si otra pestaña registró actividad más
-      // reciente (así una pestaña inactiva no cierra la sesión de otra activa).
       if (idle >= _idleTimeout - _idleWarning) {
         final stored = await IdleSessionStore.last();
         if (stored != null && stored.isAfter(_lastActivity)) {
@@ -275,6 +263,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           idle = DateTime.now().difference(_lastActivity);
         }
       }
+
       if (!mounted || _loggingOut) return;
 
       if (idle >= _idleTimeout) {
@@ -282,8 +271,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         return;
       }
 
-      // Guarda la actividad (como mucho cada 10 s) para detectar la
-      // inactividad aunque se cierre la pestaña.
       if (_lastActivity.difference(_persistedActivity) >=
           const Duration(seconds: 10)) {
         _persistedActivity = _lastActivity;
@@ -319,8 +306,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         content: ValueListenableBuilder<int>(
           valueListenable: _idleSecondsLeft,
           builder: (_, seconds, __) => Text(
-            'Por seguridad, tu sesión se cerrará por inactividad en '
-            '$seconds s.',
+            'Por seguridad, tu sesión se cerrará por inactividad en $seconds s.',
           ),
         ),
         actions: [
@@ -344,10 +330,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Future<void> _logoutByInactivity() =>
       _forceLogout('Tu sesión se cerró por inactividad.');
 
-  /// Destruye la sesión, vuelve al inicio y avisa del motivo.
   Future<void> _forceLogout(String message) async {
     if (_loggingOut) return;
-    // El messenger vive en MaterialApp: sigue disponible tras cambiar de ruta.
     final messenger = ScaffoldMessenger.of(context);
     await _logout();
     messenger.showSnackBar(
@@ -355,9 +339,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------
+  //
   // Utilidades
-  // ---------------------------------------------------------------------
+  //
   double _num(dynamic v) {
     if (v is num) return v.toDouble();
     return double.tryParse('$v') ?? 0;
@@ -394,8 +378,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final exp = math.pow(10, (math.log(v) / math.ln10).floor()).toDouble();
     final f = v / exp;
     final nice = f <= 1
-        ? 1
-        : (f <= 2 ? 2 : (f <= 2.5 ? 2.5 : (f <= 5 ? 5 : 10)));
+        ? 1.0
+        : (f <= 2 ? 2.0 : (f <= 2.5 ? 2.5 : (f <= 5 ? 5.0 : 10.0)));
     return nice * exp;
   }
 
@@ -409,7 +393,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   String _when(DateTime? d) {
-    if (d == null) return '—';
+    if (d == null) return '-';
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final day = DateTime(d.year, d.month, d.day);
@@ -460,9 +444,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     await IdleSessionStore.clear();
     try {
       await supabase.auth.signOut();
-    } catch (_) {
-      // Sin red o sesión ya inexistente: igual se sale del panel.
-    }
+    } catch (_) {}
+
     if (!mounted) return;
     Navigator.pushAndRemoveUntil(
       context,
@@ -471,15 +454,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------
+  //
   // Carga de datos
   //
-  // Flujo:
-  //   1. Usuario autenticado (Supabase Auth)  -> si no hay, cerrar sesión.
-  //   2. Perfil (tabla perfiles) -> colegio_id. Sin colegio -> aviso.
-  //   3. ¿Existen estudiantes en ese colegio? No -> onboarding con Excel.
-  //   4. Sí -> dashboard normal (cada tabla se carga de forma independiente).
-  // ---------------------------------------------------------------------
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -489,7 +466,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     });
 
     try {
-      // 1. Usuario autenticado
       final user = supabase.auth.currentUser;
       if (user == null) {
         await _logout();
@@ -500,8 +476,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       final today = DateTime(now.year, now.month, now.day);
       final start12 = DateTime(now.year, now.month - 11, 1);
 
-      // 2. Perfil del administrador (obligatorio: de aquí sale el colegio).
-      //    Sin try/catch a propósito: si falla, se muestra el error real.
+      // 1. Perfil del administrador
       final perfil = await supabase
           .from('perfiles')
           .select('nombre_completo, colegio_id')
@@ -524,9 +499,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         return;
       }
 
-      // 3. ¿Existe al menos un estudiante en este colegio?
-      //    Sin try/catch a propósito: si la consulta falla NO debemos
-      //    mostrar el onboarding por error.
+      // 2. ¿Existe al menos un estudiante en este colegio?
       final exists = await supabase
           .from('estudiantes')
           .select('id')
@@ -545,9 +518,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         return;
       }
 
-      // 4. Dashboard normal ---------------------------------------------
-
-      // Estudiantes activos del colegio
+      // 3. Estudiantes activos del colegio
       List<Map<String, dynamic>> students = [];
       try {
         final resEst = await supabase
@@ -560,7 +531,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         debugPrint('Error en estudiantes: $e');
       }
 
-      // Saldo Cuotas
+      // 4. Saldo Cuotas
       List<Map<String, dynamic>> saldoRows = [];
       try {
         final resSaldo = await supabase
@@ -571,7 +542,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         debugPrint('Error en v_saldo_cuotas: $e');
       }
 
-      // Cuotas
+      // 5. Cuotas
       List<Map<String, dynamic>> cuotaRows = [];
       try {
         final resCuotas = await supabase
@@ -582,7 +553,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         debugPrint('Error en cuotas: $e');
       }
 
-      // Pagos Aprobados
+      // 6. Pagos Aprobados
       List<Map<String, dynamic>> paidRows = [];
       try {
         final resPaid = await supabase
@@ -595,7 +566,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         debugPrint('Error en pagos aprobados: $e');
       }
 
-      // Pagos Pendientes
+      // 7. Pagos Pendientes
       List<Map<String, dynamic>> pendingRows = [];
       try {
         final resPending = await supabase
@@ -607,18 +578,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         debugPrint('Error en pagos pendientes: $e');
       }
 
-      // Tasas de Cambio
-      List<Map<String, dynamic>> tasaRows = [];
+      // 8. Tasa BCV Oficial obtenida mediante el BcvService en vivo
+      double? tasa;
+      String tasaSubtitle = '';
       try {
-        final resTasa = await supabase
-            .from('tasas_cambio')
-            .select('usd_ves, fecha, creado_at')
-            .lte('fecha', _isoDate(today))
-            .order('fecha', ascending: false)
-            .limit(1);
-        tasaRows = List<Map<String, dynamic>>.from(resTasa);
+        final bcvData = await _bcvService.getLatestBcvRate();
+        tasa = bcvData.rate;
+        tasaSubtitle = bcvData.dateFormatted;
       } catch (e) {
-        debugPrint('Error en tasas_cambio: $e');
+        debugPrint('Error al obtener Tasa BCV en el panel de admin: $e');
       }
 
       // Vencimiento de cada cuota
@@ -631,6 +599,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       final status = <String, int>{
         for (final s in students) s['id'].toString(): 0,
       };
+
       final pending = <_PendingItem>[];
       var billed = 0.0;
 
@@ -638,11 +607,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         final monto = _num(row['monto_usd']);
         final saldo = _num(row['saldo_usd']);
         billed += monto;
+
         if (saldo <= 0.01) continue;
 
         final studentId = row['estudiante_id'].toString();
         final due = venc[row['cuota_id'].toString()];
         final overdue = due == null ? 0 : today.difference(due).inDays;
+
         pending.add(_PendingItem(studentId, saldo, overdue));
 
         if (status.containsKey(studentId)) {
@@ -663,6 +634,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         if (key.isEmpty) continue;
         totals[key] = (totals[key] ?? 0) + _num(p['monto_usd_equivalente']);
       }
+
       final monthly = <_MonthTotal>[];
       for (var i = 11; i >= 0; i--) {
         final d = DateTime(now.year, now.month - i, 1);
@@ -676,25 +648,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       for (final p in pendingRows) {
         final d = DateTime.tryParse('${p['creado_at']}')?.toLocal();
         if (d != null && now.difference(d).inMinutes < 60) lastHour++;
-      }
-
-      // Tasa BCV
-      double? tasa;
-      var tasaSubtitle = '';
-      if (tasaRows.isNotEmpty) {
-        tasa = _num(tasaRows.first['usd_ves']);
-        final fecha = '${tasaRows.first['fecha']}';
-        final created = DateTime.tryParse(
-          '${tasaRows.first['creado_at']}',
-        )?.toLocal();
-        if (fecha == _isoDate(today) && created != null) {
-          tasaSubtitle = 'Sincronizado hoy ${_hm(created)}';
-        } else {
-          final d = DateTime.tryParse(fecha);
-          tasaSubtitle = d == null
-              ? 'Sin sincronizar hoy'
-              : 'Última tasa: ${d.day}/${d.month}/${d.year}';
-        }
       }
 
       if (!mounted) return;
@@ -738,6 +691,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           .select('nombre')
           .eq('id', colegioId)
           .maybeSingle();
+
       if (row != null && mounted) {
         setState(() => _schoolName = (row['nombre'] ?? '').toString());
       }
@@ -750,8 +704,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       rows = await supabase
           .from('pagos')
           .select(
-            'id, monto, moneda, estado, creado_at, representantes(nombres, apellidos), '
-            'pago_aplicaciones(cuotas(periodo, estudiantes(nombres, apellidos), conceptos_cobro(nombre)))',
+            'id, monto, moneda, estado, creado_at, representantes (nombres, apellidos), '
+            'pago_aplicaciones (cuotas (periodo, estudiantes (nombres, apellidos), conceptos_cobro(nombre)))',
           )
           .order('creado_at', ascending: false)
           .limit(6);
@@ -760,7 +714,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         rows = await supabase
             .from('pagos')
             .select(
-              'id, monto, moneda, estado, creado_at, representantes(nombres, apellidos)',
+              'id, monto, moneda, estado, creado_at, representantes (nombres, apellidos)',
             )
             .order('creado_at', ascending: false)
             .limit(6);
@@ -773,6 +727,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         .whereType<Map>()
         .map((m) => _toPagoRow(Map<String, dynamic>.from(m)))
         .toList();
+
     if (mounted) setState(() => _recent = list);
   }
 
@@ -782,20 +737,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         ? 'Representante'
         : '${rep['nombres'] ?? ''} ${rep['apellidos'] ?? ''}'.trim();
 
-    var student = '—';
-    var concept = '—';
+    var student = '-';
+    var concept = '-';
+
     final aps = m['pago_aplicaciones'];
     if (aps is List && aps.isNotEmpty && aps.first is Map) {
       final cuota = _asMap((aps.first as Map)['cuotas']);
       final est = _asMap(cuota?['estudiantes']);
       final con = _asMap(cuota?['conceptos_cobro']);
       final periodo = cuota?['periodo'];
+
       if (est != null) {
         student = '${est['nombres'] ?? ''} ${est['apellidos'] ?? ''}'.trim();
       }
+
       if (con != null) {
-        concept =
-            '${con['nombre'] ?? ''}${periodo != null ? ' · $periodo' : ''}';
+        concept = '${con['nombre'] ?? ''}${periodo != null ? ' $periodo' : ''}';
         if (aps.length > 1) concept += ' +${aps.length - 1}';
       }
     }
@@ -811,9 +768,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------
+  //
   // Estructura principal
-  // ---------------------------------------------------------------------
+  //
   @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width > 900;
@@ -922,7 +879,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       );
     }
 
-    // El perfil no tiene colegio asignado
     if (_noSchool) {
       return Center(
         child: Padding(
@@ -963,7 +919,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       );
     }
 
-    // El colegio no tiene estudiantes: ofrecer importación desde Excel
     if (_needsStudents && _colegioId != null) {
       return StudentsImportCard(colegioId: _colegioId!, onImported: _load);
     }
@@ -1033,9 +988,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------
+  //
   // Barra lateral
-  // ---------------------------------------------------------------------
+  //
   Widget _buildSidebar({required bool expanded}) {
     return Container(
       width: expanded ? 250 : 76,
@@ -1137,8 +1092,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     color: Colors.white,
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
@@ -1261,8 +1216,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   color: Colors.white,
                   fontSize: 12,
                   fontWeight: FontWeight.bold,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                overflow: TextOverflow.ellipsis,
               ),
               const Text(
                 'Administración',
@@ -1302,9 +1257,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------
+  //
   // Encabezado superior
-  // ---------------------------------------------------------------------
+  //
   Widget _buildTopHeader(bool isDesktop) {
     final w = MediaQuery.of(context).size.width;
     final showTasa = w > 760;
@@ -1345,8 +1300,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       style: TextStyle(
                         color: AppColors.textMuted,
                         fontSize: 13,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ],
@@ -1414,8 +1369,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
                             color: AppColors.darkNavy,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       const Row(
@@ -1500,9 +1455,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------
+  //
   // Saludo y acciones rápidas
-  // ---------------------------------------------------------------------
+  //
   Widget _buildGreeting() {
     final now = DateTime.now();
     final date =
@@ -1762,9 +1717,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------
+  //
   // Tarjetas de indicadores (KPI)
-  // ---------------------------------------------------------------------
+  //
   Widget _kpiCard({
     required IconData icon,
     required Color iconBg,
@@ -1883,7 +1838,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     }
 
     final bs = _tasa != null
-        ? 'Bs. ${_money(cur * _tasa!)} · Tasa BCV oficial'
+        ? 'Bs. ${_money(cur * _tasa!)} • Tasa BCV oficial'
         : 'Sin tasa BCV registrada';
 
     return _kpiCard(
@@ -1917,7 +1872,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final items = _filteredPending;
     final amount = items.fold<double>(0, (a, p) => a + p.saldo);
     final accounts = items.map((p) => p.studentId).toSet().length;
-
     final overdueAmount = _pending
         .where((p) => p.daysOverdue > 0)
         .fold<double>(0, (a, p) => a + p.saldo);
@@ -1964,7 +1918,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       label: 'Cuentas por cobrar',
       value: _bigValue('\$${_money(amount)}', unit: 'USD'),
       sub: Text(
-        '${_pct(morosidad)}% de morosidad · $accounts ${accounts == 1 ? 'cuenta' : 'cuentas'}',
+        '${_pct(morosidad)}% de morosidad • $accounts ${accounts == 1 ? 'cuenta' : 'cuentas'}',
         style: const TextStyle(fontSize: 11, color: _red),
       ),
       topRight: filter,
@@ -2081,7 +2035,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ),
             const SizedBox(height: 10),
             Text(
-              '$_solventes ${_solventes == 1 ? 'solvente' : 'solventes'} · $conSaldo con saldo',
+              '$_solventes ${_solventes == 1 ? 'solvente' : 'solventes'} • $conSaldo con saldo',
               style: const TextStyle(fontSize: 11, color: _green),
             ),
           ],
@@ -2090,9 +2044,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------
   // Gráficos
-  // ---------------------------------------------------------------------
   Widget _buildChartsRow() {
     return LayoutBuilder(
       builder: (context, c) {
@@ -2293,7 +2245,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   Widget _bar(int index, double value, double maxV, bool selected) {
     final f = maxV > 0 ? (value / maxV).clamp(0.0, 1.0).toDouble() : 0.0;
-
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () => setState(() => _selectedBar = index),
@@ -2301,6 +2252,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         builder: (context, c) {
           final h = math.max(c.maxHeight * f, value > 0 ? 3.0 : 0.0);
           final w = (c.maxWidth * 0.42).clamp(14.0, 36.0).toDouble();
+
           return Stack(
             clipBehavior: Clip.none,
             alignment: Alignment.bottomCenter,
@@ -2481,9 +2433,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------
+  //
   // Pagos recientes
-  // ---------------------------------------------------------------------
+  //
   Widget _buildRecentPayments() {
     const headerStyle = TextStyle(
       fontSize: 10,
@@ -2493,24 +2445,24 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
 
     Widget header() => Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      decoration: const BoxDecoration(
-        color: Color(0xFFF8FAFC),
-        border: Border.symmetric(
-          horizontal: BorderSide(color: AppColors.cardBorder),
-        ),
-      ),
-      child: const Row(
-        children: [
-          Expanded(flex: 3, child: Text('REPRESENTANTE', style: headerStyle)),
-          Expanded(flex: 3, child: Text('ESTUDIANTE', style: headerStyle)),
-          Expanded(flex: 3, child: Text('CONCEPTO', style: headerStyle)),
-          Expanded(flex: 2, child: Text('MONTO', style: headerStyle)),
-          Expanded(flex: 2, child: Text('ESTADO', style: headerStyle)),
-          Expanded(flex: 2, child: Text('FECHA', style: headerStyle)),
-        ],
-      ),
-    );
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          decoration: const BoxDecoration(
+            color: Color(0xFFF8FAFC),
+            border: Border.symmetric(
+              horizontal: BorderSide(color: AppColors.cardBorder),
+            ),
+          ),
+          child: const Row(
+            children: [
+              Expanded(flex: 3, child: Text('REPRESENTANTE', style: headerStyle)),
+              Expanded(flex: 3, child: Text('ESTUDIANTE', style: headerStyle)),
+              Expanded(flex: 3, child: Text('CONCEPTO', style: headerStyle)),
+              Expanded(flex: 2, child: Text('MONTO', style: headerStyle)),
+              Expanded(flex: 2, child: Text('ESTADO', style: headerStyle)),
+              Expanded(flex: 2, child: Text('FECHA', style: headerStyle)),
+            ],
+          ),
+        );
 
     return _card(
       padding: EdgeInsets.zero,
@@ -2757,9 +2709,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------
+  //
   // Componentes de layout reutilizables
-  // ---------------------------------------------------------------------
+  //
   Widget _card({
     required Widget child,
     EdgeInsets padding = const EdgeInsets.all(20),
@@ -2775,7 +2727,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  /// Cuadrícula de celdas con la misma altura por fila.
   Widget _grid({
     required List<Widget> items,
     required int wideCols,
@@ -2786,16 +2737,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       builder: (context, c) {
         final cols = c.maxWidth >= 800 ? wideCols : narrowCols;
         final rows = <Widget>[];
+
         for (var i = 0; i < items.length; i += cols) {
           final slice = items.sublist(i, math.min(i + cols, items.length));
           final cells = <Widget>[];
+
           for (var j = 0; j < cols; j++) {
             if (j > 0) cells.add(SizedBox(width: gap));
             cells.add(
               Expanded(child: j < slice.length ? slice[j] : const SizedBox()),
             );
           }
+
           if (rows.isNotEmpty) rows.add(SizedBox(height: gap));
+
           rows.add(
             IntrinsicHeight(
               child: Row(
@@ -2805,15 +2760,16 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ),
           );
         }
+
         return Column(children: rows);
       },
     );
   }
 }
 
-// ---------------------------------------------------------------------
+//
 // Gráfico de anillo (sin dependencias externas)
-// ---------------------------------------------------------------------
+//
 class _DonutPainter extends CustomPainter {
   final List<double> values;
   final List<Color> colors;
@@ -2823,8 +2779,7 @@ class _DonutPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final rect =
-        Offset(stroke / 2, stroke / 2) &
+    final rect = Offset(stroke / 2, stroke / 2) &
         Size(size.width - stroke, size.height - stroke);
     final total = values.fold<double>(0, (a, b) => a + b);
 
@@ -2849,6 +2804,7 @@ class _DonutPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = stroke
         ..color = colors[i];
+
       canvas.drawArc(
         rect,
         start + gap / 2,

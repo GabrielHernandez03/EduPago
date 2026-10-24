@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../../core/services/bcv_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../main.dart';
 import '../../../landing/presentation/screens/home_screen.dart';
+import '../../data/account_status_service.dart';
 import '../widgets/edit_profile_dialog.dart';
 import '../widgets/report_payment_dialog.dart';
 
@@ -17,6 +19,11 @@ class RepresentativeDashboardScreen extends StatefulWidget {
 class _RepresentativeDashboardScreenState
     extends State<RepresentativeDashboardScreen> {
   final User? currentUser = supabase.auth.currentUser;
+  
+  // Servicios para Tasa BCV y Estado de Cuenta
+  final BcvService _bcvService = BcvService();
+  final AccountStatusService _accountStatusService = AccountStatusService();
+
   bool _isLoading = false;
   bool _isLoadingProfile = true;
 
@@ -28,32 +35,35 @@ class _RepresentativeDashboardScreenState
   String _phone = '';
   String _address = '';
   String _familyName = '';
-  String _initials = '..';
+  String _initials = '';
 
   // Lista dinámica de estudiantes asociados en Supabase
   List<Map<String, dynamic>> _students = [];
-  int _selectedStudentIndex = 0;
+  int _selectedStudentIndex = 0; // -1 representa vista consolidada familiar
   int _selectedNavIndex = 0;
 
-  final String tasaBcv = '64,25';
-  final double montoUsd = 45.00;
-  final double equivalenteVes = 2891.25;
+  // Variables financieras dinámicas (HU7)
+  double _montoUsd = 0.0;
+  double _equivalenteVes = 0.0;
+  String _tasaBcvStr = '0,00';
+  String _tasaFechaLabel = 'Sincronizando Tasa BCV...';
 
   @override
   void initState() {
     super.initState();
-    _fetchUserProfileAndStudents();
+    fetchUserProfileAndStudents();
   }
 
   // --- CONSULTA EN VIVO DEL PERFIL DEL REPRESENTANTE ---
-  Future<void> _fetchUserProfileAndStudents() async {
+  Future<void> fetchUserProfileAndStudents() async {
     setState(() => _isLoadingProfile = true);
     try {
       final user = supabase.auth.currentUser;
       if (user != null) {
         final userEmail = user.email ?? '';
         final userCedula = user.userMetadata?['cedula']?.toString() ?? '';
-        final userFullName = user.userMetadata?['nombre_completo']?.toString() ?? '';
+        final userFullName =
+            user.userMetadata?['nombre_completo']?.toString() ?? '';
 
         Map<String, dynamic>? data;
 
@@ -91,22 +101,25 @@ class _RepresentativeDashboardScreenState
           final nombres = data['nombres']?.toString() ?? '';
           final apellidos = data['apellidos']?.toString() ?? '';
           final computedName = '$nombres $apellidos'.trim();
-
+          
           final fetchedName = computedName.isNotEmpty
               ? computedName
               : (userFullName.isNotEmpty ? userFullName : userEmail.split('@')[0]);
 
-          final fetchedCedula = (data['cedula'] != null && data['cedula'].toString().isNotEmpty)
+          final fetchedCedula = (data['cedula'] != null &&
+                  data['cedula'].toString().isNotEmpty)
               ? data['cedula'].toString()
               : (userCedula.isNotEmpty ? userCedula : 'Sin cédula');
 
-          final fetchedEmail = (data['email'] != null && data['email'].toString().isNotEmpty)
+          final fetchedEmail = (data['email'] != null &&
+                  data['email'].toString().isNotEmpty)
               ? data['email'].toString()
               : userEmail;
 
           final fetchedPhone = data['telefono_whatsapp']?.toString() ?? '';
           final fetchedAddress = data['direccion']?.toString() ?? '';
-          final fetchedFamily = (data['familia'] != null && data['familia'].toString().isNotEmpty)
+          final fetchedFamily = (data['familia'] != null &&
+                  data['familia'].toString().isNotEmpty)
               ? data['familia'].toString()
               : 'Familia ${_getLastName(fetchedName)}';
 
@@ -118,12 +131,12 @@ class _RepresentativeDashboardScreenState
           _familyName = fetchedFamily;
           _initials = _getInitials(fetchedName);
 
-          // 2. Cargar los estudiantes asociados a este representante
+          // 2. Cargar estudiantes vinculados
           if (_repDbId.isNotEmpty) {
-            await _fetchAssociatedStudents(_repDbId);
+            await fetchAssociatedStudents(_repDbId);
           }
         } else {
-          // Fallback para usuario autenticado que aún no tiene perfil guardado en representantes
+          // Fallback para usuario sin perfil creado aún
           final fallbackName = userFullName.isNotEmpty
               ? userFullName
               : (userEmail.isNotEmpty ? userEmail.split('@')[0] : 'Usuario');
@@ -144,10 +157,9 @@ class _RepresentativeDashboardScreenState
     }
   }
 
-  // --- CONSULTAR ÚNICAMENTE LOS ESTUDIANTES VINCULADOS A ESTE REPRESENTANTE ---
-  Future<void> _fetchAssociatedStudents(String representanteId) async {
+  // --- CONSULTAR ESTUDIANTES VINCULADOS ---
+  Future<void> fetchAssociatedStudents(String representanteId) async {
     try {
-      // 1. Obtener las relaciones desde representante_estudiante
       final relResponse = await supabase
           .from('representante_estudiante')
           .select('estudiante_id')
@@ -160,13 +172,13 @@ class _RepresentativeDashboardScreenState
           .toList();
 
       if (studentIds.isNotEmpty) {
-        // 2. Traer la información detallada de esos estudiantes específicos
         final studentsResponse = await supabase
             .from('estudiantes')
             .select()
             .filter('id', 'in', studentIds);
 
-        final loadedStudents = List<Map<String, dynamic>>.from(studentsResponse);
+        final loadedStudents =
+            List<Map<String, dynamic>>.from(studentsResponse);
 
         if (mounted) {
           setState(() {
@@ -175,6 +187,8 @@ class _RepresentativeDashboardScreenState
               _selectedStudentIndex = 0;
             }
           });
+          // Recalcular finanzas con la Tasa BCV y saldos reales (HU7)
+          await _updateFinancialSummary();
         }
         return;
       }
@@ -186,6 +200,37 @@ class _RepresentativeDashboardScreenState
       setState(() {
         _students = [];
         _selectedStudentIndex = 0;
+      });
+      await _updateFinancialSummary();
+    }
+  }
+
+  // --- CÁLCULO DINÁMICO DE SALDOS Y TASA BCV (HU7) ---
+  Future<void> _updateFinancialSummary() async {
+    // 1. Obtener la tasa oficial o el valor de caché (Opción A)
+    final bcvData = await _bcvService.getLatestBcvRate();
+
+    // 2. Determinar cuáles estudiantes consultar (Individual o Consolidado)
+    List<String> targetStudentIds = [];
+    if (_selectedStudentIndex == -1) {
+      // Consolidado Familiar
+      targetStudentIds = _students.map((s) => s['id'].toString()).toList();
+    } else if (_students.isNotEmpty &&
+        _selectedStudentIndex < _students.length) {
+      // Estudiante Seleccionado
+      targetStudentIds = [_students[_selectedStudentIndex]['id'].toString()];
+    }
+
+    // 3. Consultar saldo adeudado en USD
+    final double pendingUsd =
+        await _accountStatusService.getPendingBalanceUsd(targetStudentIds);
+
+    if (mounted) {
+      setState(() {
+        _montoUsd = pendingUsd;
+        _equivalenteVes = pendingUsd * bcvData.rate;
+        _tasaBcvStr = bcvData.rate.toStringAsFixed(2).replaceAll('.', ',');
+        _tasaFechaLabel = bcvData.dateFormatted;
       });
     }
   }
@@ -234,15 +279,18 @@ class _RepresentativeDashboardScreenState
           phone: _phone,
           address: _address,
           email: _email,
-          onSaveSuccess: () => _fetchUserProfileAndStudents(),
+          onSaveSuccess: () => fetchUserProfileAndStudents(),
         );
       },
     );
   }
 
   void _showReportPaymentModal(BuildContext context) {
-    final activeStudentName = _students.isNotEmpty && _selectedStudentIndex < _students.length
-        ? '${_students[_selectedStudentIndex]['nombres'] ?? ''} ${_students[_selectedStudentIndex]['apellidos'] ?? ''}'.trim()
+    final activeStudentName = _students.isNotEmpty &&
+            _selectedStudentIndex >= 0 &&
+            _selectedStudentIndex < _students.length
+        ? '${_students[_selectedStudentIndex]['nombres'] ?? ''} ${_students[_selectedStudentIndex]['apellidos'] ?? ''}'
+            .trim()
         : 'Estudiante';
 
     showDialog(
@@ -281,7 +329,8 @@ class _RepresentativeDashboardScreenState
                           ),
                           child: Center(
                             child: Container(
-                              constraints: const BoxConstraints(maxWidth: 1000),
+                              constraints:
+                                  const BoxConstraints(maxWidth: 1000),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
@@ -361,8 +410,8 @@ class _RepresentativeDashboardScreenState
                           color: Colors.white,
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),
@@ -386,7 +435,6 @@ class _RepresentativeDashboardScreenState
             ),
           ),
           const SizedBox(height: 12),
-
           _buildNavItem(0, Icons.home_outlined, Icons.home, 'Mi resumen'),
           _buildNavItem(1, Icons.account_balance_wallet_outlined,
               Icons.account_balance_wallet, 'Pagos'),
@@ -394,9 +442,7 @@ class _RepresentativeDashboardScreenState
               2, Icons.verified_outlined, Icons.verified, 'Solvencias'),
           _buildNavItem(
               3, Icons.description_outlined, Icons.description, 'Documentos'),
-
           const Spacer(),
-
           InkWell(
             onTap: () {},
             borderRadius: BorderRadius.circular(10),
@@ -420,17 +466,19 @@ class _RepresentativeDashboardScreenState
           const SizedBox(height: 12),
           const Divider(color: Colors.white12, height: 1),
           const SizedBox(height: 12),
-
           Row(
             children: [
               CircleAvatar(
                 radius: 16,
                 backgroundColor: AppColors.primaryBlue,
-                child: Text(_initials,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold)),
+                child: Text(
+                  _initials,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -440,13 +488,16 @@ class _RepresentativeDashboardScreenState
                     Text(
                       _fullName,
                       style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold),
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
                       overflow: TextOverflow.ellipsis,
                     ),
-                    const Text('Representante',
-                        style: TextStyle(color: Colors.white38, fontSize: 11)),
+                    const Text(
+                      'Representante',
+                      style: TextStyle(color: Colors.white38, fontSize: 11),
+                    ),
                   ],
                 ),
               ),
@@ -484,9 +535,10 @@ class _RepresentativeDashboardScreenState
               Text(
                 title,
                 style: TextStyle(
-                  color: isSelected ? Colors.white : Colors.white70,
                   fontSize: 13,
-                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  color: isSelected ? Colors.white : Colors.white70,
+                  fontWeight:
+                      isSelected ? FontWeight.bold : FontWeight.normal,
                 ),
               ),
             ],
@@ -519,8 +571,10 @@ class _RepresentativeDashboardScreenState
                 children: [
                   Icon(Icons.search, color: AppColors.textMuted, size: 18),
                   SizedBox(width: 8),
-                  Text('Buscar pago, documento o referencia...',
-                      style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                  Text(
+                    'Buscar pago, documento o referencia...',
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+                  ),
                 ],
               ),
             ),
@@ -536,11 +590,14 @@ class _RepresentativeDashboardScreenState
                 Icon(Icons.calendar_today_outlined,
                     size: 14, color: AppColors.darkNavy),
                 SizedBox(width: 8),
-                Text('Período 2024–2025',
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.darkNavy)),
+                Text(
+                  'Período 2024-2025',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.darkNavy,
+                  ),
+                ),
               ],
             ),
           ),
@@ -563,7 +620,9 @@ class _RepresentativeDashboardScreenState
                   width: 7,
                   height: 7,
                   decoration: const BoxDecoration(
-                      color: Colors.redAccent, shape: BoxShape.circle),
+                    color: Colors.redAccent,
+                    shape: BoxShape.circle,
+                  ),
                 ),
               ),
             ],
@@ -572,11 +631,14 @@ class _RepresentativeDashboardScreenState
           CircleAvatar(
             radius: 16,
             backgroundColor: const Color(0xFFDBEAFE),
-            child: Text(_initials,
-                style: const TextStyle(
-                    color: AppColors.primaryBlue,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold)),
+            child: Text(
+              _initials,
+              style: const TextStyle(
+                color: AppColors.primaryBlue,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
         ],
       ),
@@ -636,12 +698,12 @@ class _RepresentativeDashboardScreenState
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '$_cedula · $_familyName${_email.isNotEmpty ? ' · $_email' : ''}',
+                  '$_cedula • $_familyName${_email.isNotEmpty ? ' • $_email' : ''}',
                   style: const TextStyle(
                     fontSize: 12,
                     color: AppColors.textMuted,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
@@ -666,7 +728,7 @@ class _RepresentativeDashboardScreenState
     );
   }
 
-  // --- RENDEREIZADO DINÁMICO DE "MIS ESTUDIANTES" ---
+  // --- RENDERIZADO DINÁMICO Y FILTRADO CONSOLIDADO/INDIVIDUAL (HU7) ---
   Widget _buildStudentsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -674,17 +736,21 @@ class _RepresentativeDashboardScreenState
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text('Mis estudiantes',
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.darkNavy)),
-            Text('${_students.length} vinculados',
-                style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+            const Text(
+              'Mis estudiantes',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: AppColors.darkNavy,
+              ),
+            ),
+            Text(
+              '${_students.length} vinculados',
+              style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+            ),
           ],
         ),
         const SizedBox(height: 10),
-
         if (_students.isEmpty)
           Container(
             width: double.infinity,
@@ -706,25 +772,45 @@ class _RepresentativeDashboardScreenState
             ),
           )
         else
-          Row(
-            children: List.generate(_students.length, (index) {
-              final student = _students[index];
-              final String studentNombres = student['nombres'] ?? 'Estudiante';
-              final String studentApellidos = student['apellidos'] ?? '';
-              final String fullStudentName = '$studentNombres $studentApellidos'.trim();
-              final String gradeSection = student['grado_seccion'] ?? 'Grado no especificado';
-              final String initials = _getInitials(fullStudentName);
-
-              return Expanded(
-                child: Padding(
-                  padding: EdgeInsets.only(
-                    right: index < _students.length - 1 ? 12.0 : 0.0,
-                  ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                // Pestaña Consolidado Familiar (Toda la familia)
+                Padding(
+                  padding: const EdgeInsets.only(right: 12.0),
                   child: _buildStudentTabCard(
-                      index, initials, fullStudentName, gradeSection),
+                    -1,
+                    'FAM',
+                    'Consolidado Fam.',
+                    'Todos los alumnos',
+                  ),
                 ),
-              );
-            }),
+                // Pestañas individuales de estudiantes
+                ...List.generate(_students.length, (index) {
+                  final student = _students[index];
+                  final String studentNombres = student['nombres'] ?? 'Estudiante';
+                  final String studentApellidos = student['apellidos'] ?? '';
+                  final String fullStudentName =
+                      '$studentNombres $studentApellidos'.trim();
+                  final String gradeSection =
+                      student['grado_seccion'] ?? 'Grado no especificado';
+                  final String initials = _getInitials(fullStudentName);
+
+                  return Padding(
+                    padding: EdgeInsets.only(
+                      right: index < _students.length - 1 ? 12.0 : 0.0,
+                    ),
+                    child: _buildStudentTabCard(
+                      index,
+                      initials,
+                      fullStudentName,
+                      gradeSection,
+                    ),
+                  );
+                }),
+              ],
+            ),
           ),
       ],
     );
@@ -734,7 +820,10 @@ class _RepresentativeDashboardScreenState
       int index, String initials, String name, String grade) {
     final bool isSelected = _selectedStudentIndex == index;
     return InkWell(
-      onTap: () => setState(() => _selectedStudentIndex = index),
+      onTap: () {
+        setState(() => _selectedStudentIndex = index);
+        _updateFinancialSummary(); // Recalcular dinámicamente saldos al cambiar opción
+      },
       borderRadius: BorderRadius.circular(12),
       child: Container(
         padding: const EdgeInsets.all(14),
@@ -742,10 +831,12 @@ class _RepresentativeDashboardScreenState
           color: isSelected ? const Color(0xFFEFF6FF) : Colors.white,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-              color: isSelected ? AppColors.primaryBlue : AppColors.cardBorder,
-              width: isSelected ? 1.5 : 1),
+            color: isSelected ? AppColors.primaryBlue : AppColors.cardBorder,
+            width: isSelected ? 1.5 : 1,
+          ),
         ),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
               width: 36,
@@ -757,35 +848,45 @@ class _RepresentativeDashboardScreenState
                 shape: BoxShape.circle,
               ),
               child: Center(
-                child: Text(initials,
-                    style: TextStyle(
-                        color: isSelected
-                            ? AppColors.primaryBlue
-                            : AppColors.textMuted,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold)),
+                child: Text(
+                  initials,
+                  style: TextStyle(
+                    color: isSelected
+                        ? AppColors.primaryBlue
+                        : AppColors.textMuted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
             ),
             const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(name,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
-                          color: AppColors.darkNavy),
-                      overflow: TextOverflow.ellipsis),
-                  Text(grade,
-                      style: const TextStyle(
-                          fontSize: 11, color: AppColors.textMuted),
-                      overflow: TextOverflow.ellipsis),
-                ],
-              ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    color: AppColors.darkNavy,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  grade,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textMuted,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
-            if (isSelected)
+            if (isSelected) ...[
+              const SizedBox(width: 10),
               const Icon(Icons.check, color: AppColors.primaryBlue, size: 18),
+            ],
           ],
         ),
       ),
@@ -793,49 +894,68 @@ class _RepresentativeDashboardScreenState
   }
 
   Widget _buildAcademicStatusBanner() {
+    final bool isSolvente = _montoUsd == 0;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF0FDF4),
+        color: isSolvente ? const Color(0xFFF0FDF4) : const Color(0xFFFFFBEB),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFBBF7D0)),
+        border: Border.all(
+          color: isSolvente ? const Color(0xFFBBF7D0) : const Color(0xFFFDE68A),
+        ),
       ),
       child: Row(
         children: [
           Container(
             padding: const EdgeInsets.all(4),
-            decoration: const BoxDecoration(
-                color: Color(0xFF16A34A), shape: BoxShape.circle),
-            child: const Icon(Icons.check, color: Colors.white, size: 14),
+            decoration: BoxDecoration(
+              color: isSolvente ? const Color(0xFF16A34A) : const Color(0xFFD97706),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              isSolvente ? Icons.check : Icons.priority_high,
+              color: Colors.white,
+              size: 14,
+            ),
           ),
           const SizedBox(width: 12),
-          const Column(
+          Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('ESTATUS ACADÉMICO',
-                  style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF15803D),
-                      letterSpacing: 0.5)),
-              Text('SOLVENTE',
-                  style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFF166534))),
+              Text(
+                'ESTATUS ACADÉMICO',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: isSolvente ? const Color(0xFF15803D) : const Color(0xFFB45309),
+                  letterSpacing: 0.5,
+                ),
+              ),
+              Text(
+                isSolvente ? 'SOLVENTE' : 'PENDIENTE DE PAGO',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  color: isSolvente ? const Color(0xFF166534) : const Color(0xFF92400E),
+                ),
+              ),
             ],
           ),
           const Spacer(),
-          const Text('Sin pagos vencidos',
-              style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF16A34A))),
+          Text(
+            isSolvente ? 'Sin pagos vencidos' : 'Saldo pendiente por regularizar',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: isSolvente ? const Color(0xFF16A34A) : const Color(0xFFD97706),
+            ),
+          ),
         ],
       ),
     );
   }
 
+  // --- TARJETA DE SALDOS DINÁMICOS EN MULTIMONEDA (HU7) ---
   Widget _buildNextPaymentCard() {
     return Container(
       padding: const EdgeInsets.all(24),
@@ -853,11 +973,14 @@ class _RepresentativeDashboardScreenState
                   Icon(Icons.account_balance_wallet_outlined,
                       color: Colors.white, size: 20),
                   SizedBox(width: 8),
-                  Text('Próxima mensualidad',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15)),
+                  Text(
+                    'Estado de cuenta / Saldo pendiente',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
                 ],
               ),
               Container(
@@ -867,72 +990,94 @@ class _RepresentativeDashboardScreenState
                   color: Colors.white.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: const Text('MARZO 2025',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold)),
+                child: const Text(
+                  'PERÍODO ACTUAL',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
             ],
           ),
           const SizedBox(height: 20),
-
           Row(
             children: [
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('SALDO EN USD',
-                        style: TextStyle(
-                            color: Colors.white60,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold)),
+                    const Text(
+                      'SALDO EN USD',
+                      style: TextStyle(
+                        color: Colors.white60,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     const SizedBox(height: 4),
-                    Text('\$${montoUsd.toStringAsFixed(2).replaceAll('.', ',')}',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 32,
-                            fontWeight: FontWeight.w800)),
-                    const Text('USD',
-                        style: TextStyle(color: Colors.white60, fontSize: 11)),
+                    Text(
+                      '\$${_montoUsd.toStringAsFixed(2).replaceAll('.', ',')}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 32,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const Text(
+                      'USD',
+                      style: TextStyle(color: Colors.white60, fontSize: 11),
+                    ),
                   ],
                 ),
               ),
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.1),
-                    shape: BoxShape.circle),
-                child: const Text('=',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold)),
+                  color: Colors.white.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Text(
+                  '≈',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    const Text('EQUIVALENTE EN VES',
-                        style: TextStyle(
-                            color: Colors.white60,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold)),
+                    const Text(
+                      'EQUIVALENTE EN VES',
+                      style: TextStyle(
+                        color: Colors.white60,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     const SizedBox(height: 4),
                     Text(
-                        'Bs. ${equivalenteVes.toStringAsFixed(2).replaceAll('.', ',')}',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 28,
-                            fontWeight: FontWeight.w800)),
+                      'Bs. ${_equivalenteVes.toStringAsFixed(2).replaceAll('.', ',')}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 28,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Text(
+                      'A la Tasa BCV Oficial',
+                      style: const TextStyle(color: Colors.white60, fontSize: 11),
+                    ),
                   ],
                 ),
               ),
             ],
           ),
           const SizedBox(height: 20),
-
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
@@ -942,26 +1087,37 @@ class _RepresentativeDashboardScreenState
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Row(
+                Row(
                   children: [
-                    Icon(Icons.check_circle_outline,
+                    const Icon(Icons.check_circle_outline,
                         color: Color(0xFF34D399), size: 14),
-                    SizedBox(width: 6),
-                    Text('Tasa BCV oficial',
-                        style: TextStyle(
-                            color: Color(0xFF34D399),
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold)),
-                    SizedBox(width: 10),
-                    Text('Actualizada el 18/03/2025 - 08:00 AM',
-                        style: TextStyle(color: Colors.white54, fontSize: 10)),
+                    const SizedBox(width: 6),
+                    const Text(
+                      'Tasa BCV oficial:',
+                      style: TextStyle(
+                        color: Color(0xFF34D399),
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _tasaFechaLabel,
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 10,
+                      ),
+                    ),
                   ],
                 ),
-                Text('1 USD = $tasaBcv VES',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold)),
+                Text(
+                  '1 USD = $_tasaBcvStr VES',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ],
             ),
           ),
@@ -982,16 +1138,21 @@ class _RepresentativeDashboardScreenState
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 16),
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10)),
+                borderRadius: BorderRadius.circular(10),
+              ),
               elevation: 0,
             ),
             icon: const Icon(Icons.upload, size: 18),
             label: const Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text('Reportar pago multimoneda',
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 14)),
+                Text(
+                  'Reportar pago multimoneda',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
                 SizedBox(width: 8),
                 Icon(Icons.arrow_forward, size: 16),
               ],
@@ -1008,11 +1169,14 @@ class _RepresentativeDashboardScreenState
               side: const BorderSide(color: AppColors.cardBorder),
               padding: const EdgeInsets.symmetric(vertical: 16),
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10)),
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
             icon: const Icon(Icons.qr_code, size: 18),
-            label: const Text('Generar pase digital (Código QR)',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            label: const Text(
+              'Generar pase digital (Código QR)',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
           ),
         ),
       ],
@@ -1020,9 +1184,12 @@ class _RepresentativeDashboardScreenState
   }
 
   Widget _buildRecentActivitySection() {
-    final activeStudentFirstName = _students.isNotEmpty && _selectedStudentIndex < _students.length
-        ? (_students[_selectedStudentIndex]['nombres']?.toString().split(' ')[0] ?? 'estudiante')
-        : 'estudiante';
+    final activeStudentFirstName = _students.isNotEmpty &&
+            _selectedStudentIndex >= 0 &&
+            _selectedStudentIndex < _students.length
+        ? (_students[_selectedStudentIndex]['nombres']?.toString().split(' ')[0] ??
+            'estudiante')
+        : 'la familia';
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -1040,36 +1207,64 @@ class _RepresentativeDashboardScreenState
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Actividad reciente',
-                      style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.darkNavy)),
+                  const Text(
+                    'Actividad reciente',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.darkNavy,
+                    ),
+                  ),
                   const SizedBox(height: 2),
-                  Text('Pagos y documentos de $activeStudentFirstName',
-                      style:
-                          const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                  Text(
+                    'Pagos y documentos de $activeStudentFirstName',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
                 ],
               ),
               TextButton(
                 onPressed: () {},
-                child: const Text('Ver todo',
-                    style: TextStyle(
-                        color: AppColors.primaryBlue,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold)),
+                child: const Text(
+                  'Ver todo',
+                  style: TextStyle(
+                    color: AppColors.primaryBlue,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
             ],
           ),
           const SizedBox(height: 16),
-          _buildActivityItem(Icons.check, const Color(0xFFDCFCE7),
-              const Color(0xFF166534), 'Mensualidad · Febrero', '\$45,00 · Verificado', '28 feb'),
+          _buildActivityItem(
+            Icons.check,
+            const Color(0xFFDCFCE7),
+            const Color(0xFF166534),
+            'Mensualidad Febrero',
+            '\$45,00 • Verificado',
+            '28 feb',
+          ),
           const Divider(height: 20, color: AppColors.cardBorder),
-          _buildActivityItem(Icons.description_outlined, const Color(0xFFDCFCE7),
-              const Color(0xFF166534), 'Solvencia emitida', 'Documento PDF', '28 feb'),
+          _buildActivityItem(
+            Icons.description_outlined,
+            const Color(0xFFDCFCE7),
+            const Color(0xFF166534),
+            'Solvencia emitida',
+            'Documento PDF',
+            '28 feb',
+          ),
           const Divider(height: 20, color: AppColors.cardBorder),
-          _buildActivityItem(Icons.access_time, const Color(0xFFFEF3C7),
-              const Color(0xFFB45309), 'Actividad cultural', '\$12,00 · En revisión', '17 mar'),
+          _buildActivityItem(
+            Icons.access_time,
+            const Color(0xFFFEF3C7),
+            const Color(0xFFB45309),
+            'Actividad cultural',
+            '\$12,00 • En revisión',
+            '17 mar',
+          ),
         ],
       ),
     );
@@ -1089,19 +1284,28 @@ class _RepresentativeDashboardScreenState
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                      color: AppColors.darkNavy)),
-              Text(subtitle,
-                  style: const TextStyle(
-                      fontSize: 11, color: AppColors.textMuted)),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                  color: AppColors.darkNavy,
+                ),
+              ),
+              Text(
+                subtitle,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textMuted,
+                ),
+              ),
             ],
           ),
         ),
-        Text(date,
-            style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+        Text(
+          date,
+          style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+        ),
         const SizedBox(width: 8),
         const Icon(Icons.chevron_right, color: AppColors.textMuted, size: 18),
       ],
@@ -1109,9 +1313,12 @@ class _RepresentativeDashboardScreenState
   }
 
   Widget _buildDigitalDocumentsSection() {
-    final activeStudentFirstName = _students.isNotEmpty && _selectedStudentIndex < _students.length
-        ? (_students[_selectedStudentIndex]['nombres']?.toString().split(' ')[0] ?? 'estudiante')
-        : 'estudiante';
+    final activeStudentFirstName = _students.isNotEmpty &&
+            _selectedStudentIndex >= 0 &&
+            _selectedStudentIndex < _students.length
+        ? (_students[_selectedStudentIndex]['nombres']?.toString().split(' ')[0] ??
+            'estudiante')
+        : 'la familia';
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -1128,8 +1335,9 @@ class _RepresentativeDashboardScreenState
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                    color: const Color(0xFFEFF6FF),
-                    borderRadius: BorderRadius.circular(10)),
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(10),
+                ),
                 child: const Icon(Icons.description_outlined,
                     color: AppColors.primaryBlue, size: 20),
               ),
@@ -1137,21 +1345,31 @@ class _RepresentativeDashboardScreenState
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('PORTAL ACADÉMICO',
-                      style: TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primaryBlue,
-                          letterSpacing: 0.5)),
-                  const Text('Trámites Digitales y Documentación Académica',
-                      style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.darkNavy)),
+                  const Text(
+                    'PORTAL ACADÉMICO',
+                    style: TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primaryBlue,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const Text(
+                    'Trámites Digitales y Documentación Académica',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.darkNavy,
+                    ),
+                  ),
                   const SizedBox(height: 2),
-                  Text('Documentos asociados a $activeStudentFirstName',
-                      style:
-                          const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                  Text(
+                    'Documentos asociados a $activeStudentFirstName',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -1165,7 +1383,7 @@ class _RepresentativeDashboardScreenState
                   badgeColor: const Color(0xFFFEE2E2),
                   badgeTextColor: const Color(0xFFDC2626),
                   title: 'Plan de Evaluación y Horarios',
-                  subtitle: 'Programación académica · Lapso II',
+                  subtitle: 'Programación académica Lapso II',
                   statusTagText: 'Disponible',
                   statusTagBg: const Color(0xFFDCFCE7),
                   statusTagTextColor: const Color(0xFF166534),
@@ -1177,11 +1395,11 @@ class _RepresentativeDashboardScreenState
               const SizedBox(width: 12),
               Expanded(
                 child: _buildDocCard(
-                  badgeText: '🔒',
+                  badgeText: 'PDF',
                   badgeColor: const Color(0xFFF1F5F9),
                   badgeTextColor: AppColors.textMuted,
-                  title: 'Boletín Digital de Calificaciones PDF',
-                  subtitle: 'Resultados académicos · Lapso II',
+                  title: 'Boletín Digital de Calificaciones',
+                  subtitle: 'Resultados académicos Lapso II',
                   statusTagText: 'Tratamiento administrativo pendiente',
                   statusTagBg: const Color(0xFFFEF3C7),
                   statusTagTextColor: const Color(0xFFB45309),
@@ -1193,10 +1411,10 @@ class _RepresentativeDashboardScreenState
               const SizedBox(width: 12),
               Expanded(
                 child: _buildDocCard(
-                  badgeText: '🔒',
+                  badgeText: 'PDF',
                   badgeColor: const Color(0xFFF1F5F9),
                   badgeTextColor: AppColors.textMuted,
-                  title: 'Planilla de Reinscripción y Reserva de Cupo',
+                  title: 'Planilla de Reinscripción y Reserva',
                   subtitle: 'Período escolar 2025-2026',
                   statusTagText: 'Requiere solvencia activa',
                   statusTagBg: const Color(0xFFFEE2E2),
@@ -1239,37 +1457,49 @@ class _RepresentativeDashboardScreenState
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-                color: badgeColor, borderRadius: BorderRadius.circular(6)),
-            child: Text(badgeText,
-                style: TextStyle(
-                    color: badgeTextColor,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold)),
+              color: badgeColor,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              badgeText,
+              style: TextStyle(
+                color: badgeTextColor,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
           const SizedBox(height: 12),
           Text(
             title,
             style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 13,
-                color: AppColors.darkNavy),
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+              color: AppColors.darkNavy,
+            ),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 4),
-          Text(subtitle,
-              style:
-                  const TextStyle(fontSize: 10, color: AppColors.textMuted)),
+          Text(
+            subtitle,
+            style: const TextStyle(fontSize: 10, color: AppColors.textMuted),
+          ),
           const SizedBox(height: 16),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-                color: statusTagBg, borderRadius: BorderRadius.circular(12)),
-            child: Text(statusTagText,
-                style: TextStyle(
-                    color: statusTagTextColor,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold)),
+              color: statusTagBg,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              statusTagText,
+              style: TextStyle(
+                color: statusTagTextColor,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
           const SizedBox(height: 16),
           SizedBox(
@@ -1280,14 +1510,20 @@ class _RepresentativeDashboardScreenState
                 foregroundColor: AppColors.darkNavy,
                 disabledForegroundColor: AppColors.textMuted,
                 side: BorderSide(
-                    color: isLocked ? Colors.transparent : AppColors.cardBorder),
+                  color: isLocked ? Colors.transparent : AppColors.cardBorder,
+                ),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
               icon: Icon(buttonIcon, size: 14),
-              label: Text(buttonText,
-                  style: const TextStyle(
-                      fontSize: 11, fontWeight: FontWeight.bold)),
+              label: Text(
+                buttonText,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
           ),
         ],
@@ -1305,8 +1541,8 @@ class _RepresentativeDashboardScreenState
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: const Color(0xFFBFDBFE)),
           ),
-          child: Row(
-            children: const [
+          child: const Row(
+            children: [
               Icon(Icons.shield_outlined,
                   color: AppColors.primaryBlue, size: 18),
               SizedBox(width: 10),
@@ -1314,15 +1550,21 @@ class _RepresentativeDashboardScreenState
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Protección integral del estudiante',
-                        style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.primaryBlue)),
                     Text(
-                        'El acceso a clases, evaluaciones y actividades académicas está garantizado conforme a la LOPNNA.',
-                        style: TextStyle(
-                            fontSize: 10, color: AppColors.darkNavy)),
+                      'Protección integral del estudiante',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primaryBlue,
+                      ),
+                    ),
+                    Text(
+                      'El acceso a clases, evaluaciones y actividades académicas está garantizado conforme a la LOPNNA.',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: AppColors.darkNavy,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -1336,8 +1578,9 @@ class _RepresentativeDashboardScreenState
             Icon(Icons.shield_outlined, size: 13, color: AppColors.textMuted),
             SizedBox(width: 6),
             Text(
-                'Tus pagos están protegidos y serán verificados por la institución.',
-                style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
+              'Tus pagos están protegidos y serán verificados por la institución.',
+              style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+            ),
           ],
         ),
       ],
