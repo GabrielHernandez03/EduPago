@@ -1,3 +1,4 @@
+import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 
@@ -13,6 +14,12 @@ class CustomNavbar extends StatelessWidget {
   /// Opcional: si se omite, ningún link se marca como activo.
   final String? activeLink;
 
+  /// true cuando la página ya se desplazó: la sombra del navbar se intensifica.
+  final bool isScrolled;
+
+  /// Progreso de lectura de la página (0.0 - 1.0) para la barra inferior.
+  final double scrollProgress;
+
   const CustomNavbar({
     super.key,
     required this.onInicioPressed,
@@ -22,6 +29,8 @@ class CustomNavbar extends StatelessWidget {
     required this.onLoginPressed,
     required this.onRegisterPressed,
     this.activeLink,
+    this.isScrolled = false,
+    this.scrollProgress = 0.0,
   });
 
   List<_NavItem> get _navItems => [
@@ -35,70 +44,99 @@ class CustomNavbar extends StatelessWidget {
   Widget build(BuildContext context) {
     final bool isDesktop = MediaQuery.of(context).size.width > 800;
 
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: const Border(
-          bottom: BorderSide(color: Color(0xFFE2E8F0), width: 1.0),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.03),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1280),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              // Logo e Identidad EduPago (con hover que agranda logo + texto)
-              _LogoBrand(onTap: onInicioPressed),
-
-              // Menú Navegación Fijo (desktop) con iconos + hover + estado activo
-              if (isDesktop)
-                Row(
-                  children: _navItems
-                      .map(
-                        (item) => _NavLink(
-                          title: item.title,
-                          icon: item.icon,
-                          onTap: item.onTap,
-                          isActive: activeLink == item.title,
-                        ),
-                      )
-                      .toList(),
-                ),
-
-              // Botones de Acción (desktop) / Menú hamburguesa (mobile)
-              if (isDesktop)
-                Row(
-                  children: [
-                    _HoverTextButton(
-                      icon: Icons.login_rounded,
-                      label: 'Iniciar sesión',
-                      onTap: onLoginPressed,
-                    ),
-                    const SizedBox(width: 12),
-                    _GlowingRegisterButton(onTap: onRegisterPressed),
-                  ],
-                )
-              else
-                _MobileMenu(
-                  navItems: _navItems,
-                  activeLink: activeLink,
-                  onLoginPressed: onLoginPressed,
-                  onRegisterPressed: onRegisterPressed,
-                ),
+    return Stack(
+      children: [
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: const Border(
+              bottom: BorderSide(color: Color(0xFFE2E8F0), width: 1.0),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(isScrolled ? 0.08 : 0.03),
+                blurRadius: isScrolled ? 18 : 6,
+                offset: Offset(0, isScrolled ? 6 : 2),
+              ),
             ],
           ),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1280),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // Logo e Identidad EduPago (con hover que agranda logo + texto)
+                  _LogoBrand(onTap: onInicioPressed),
+
+                  // Menú Navegación Fijo (desktop) con iconos + hover + estado activo
+                  if (isDesktop)
+                    Row(
+                      children: _navItems
+                          .map(
+                            (item) => _NavLink(
+                              title: item.title,
+                              icon: item.icon,
+                              onTap: item.onTap,
+                              isActive: activeLink == item.title,
+                            ),
+                          )
+                          .toList(),
+                    ),
+
+                  // Botones de Acción (desktop) / Menú hamburguesa (mobile)
+                  if (isDesktop)
+                    Row(
+                      children: [
+                        _HoverTextButton(
+                          icon: Icons.login_rounded,
+                          label: 'Iniciar sesión',
+                          onTap: onLoginPressed,
+                        ),
+                        const SizedBox(width: 12),
+                        _GlowingRegisterButton(onTap: onRegisterPressed),
+                      ],
+                    )
+                  else
+                    _MobileMenu(
+                      navItems: _navItems,
+                      activeLink: activeLink,
+                      onLoginPressed: onLoginPressed,
+                      onRegisterPressed: onRegisterPressed,
+                    ),
+                ],
+              ),
+            ),
+          ),
         ),
-      ),
+        // Barra de progreso de lectura
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: 3,
+          child: IgnorePointer(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FractionallySizedBox(
+                widthFactor: scrollProgress.clamp(0.0, 1.0).toDouble(),
+                child: const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [AppColors.primaryBlue, Color(0xFF60A5FA)],
+                    ),
+                  ),
+                  child: SizedBox.expand(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -123,95 +161,72 @@ class _LogoBrand extends StatefulWidget {
 }
 
 class _LogoBrandState extends State<_LogoBrand> {
-  bool _isHovered = false;
-
-  void _setHovered(bool value) {
-    if (_isHovered == value) return;
-    setState(() => _isHovered = value);
-  }
-
   @override
   Widget build(BuildContext context) {
-    // Curva con leve rebote: crece "de más" y se asienta, se siente vivo
-    // en vez de un escalado lineal plano.
-    const curve = Curves.easeOutBack;
-    const duration = Duration(milliseconds: 320);
-
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: (_) => _setHovered(true),
-      onExit: (_) => _setHovered(false),
       child: GestureDetector(
         onTap: widget.onTap,
-        child: AnimatedScale(
-          scale: _isHovered ? 1.02 : 1.0,
-          duration: duration,
-          curve: curve,
-          alignment: Alignment.centerLeft,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Logo con leve giro al hacer hover (sin glow/degradado).
-              SizedBox(
-                width: 54,
-                height: 54,
-                child: AnimatedRotation(
-                  turns: _isHovered ? -0.02 : 0.0,
-                  duration: duration,
-                  curve: curve,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Positioned(
-                        top: 6,
-                        child: Opacity(
-                          opacity: 0.10,
-                          child: Image.asset(
-                            'assets/images/logo_edupago.png',
-                            width: 46,
-                            height: 46,
-                            color: Colors.black,
-                            fit: BoxFit.contain,
-                          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Logo con sombra suave (sin efectos de hover).
+            SizedBox(
+              width: 54,
+              height: 54,
+              child: Stack(
+                alignment: Alignment.center,
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned(
+                    top: 8,
+                    child: ImageFiltered(
+                      imageFilter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+                      child: Opacity(
+                        opacity: 0.28,
+                        child: Image.asset(
+                          'assets/images/logo_edupago.png',
+                          width: 48,
+                          height: 48,
+                          color: Colors.black,
+                          fit: BoxFit.contain,
                         ),
                       ),
-                      Image.asset(
-                        'assets/images/logo_edupago.png',
-                        width: 62,
-                        height: 62,
-                        fit: BoxFit.contain,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              // El AnimatedScale del Row ya agranda el texto junto al logo
-              // de forma fluida (como un solo bloque), sin saltos de tamaño.
-              RichText(
-                text: TextSpan(
-                  style: TextStyle(
-                    fontFamily: Theme.of(
-                      context,
-                    ).textTheme.bodyMedium?.fontFamily,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: -0.5,
-                  ),
-                  children: [
-                    TextSpan(
-                      text: 'Edu',
-                      style: TextStyle(color: AppColors.darkNavy),
                     ),
-                    TextSpan(
-                      text: 'Pago',
-                      style: TextStyle(color: AppColors.primaryBlue),
-                    ),
-                  ],
-                ),
+                  ),
+                  Image.asset(
+                    'assets/images/logo_edupago.png',
+                    width: 62,
+                    height: 62,
+                    fit: BoxFit.contain,
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+            const SizedBox(width: 10),
+            RichText(
+              text: TextSpan(
+                style: TextStyle(
+                  fontFamily: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.fontFamily,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -0.5,
+                ),
+                children: [
+                  TextSpan(
+                    text: 'Edu',
+                    style: TextStyle(color: AppColors.darkNavy),
+                  ),
+                  TextSpan(
+                    text: 'Pago',
+                    style: TextStyle(color: AppColors.primaryBlue),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -255,25 +270,44 @@ class _NavLinkState extends State<_NavLink> {
         child: GestureDetector(
           onTap: widget.onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOutCubic,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: highlighted
-                  ? AppColors.primaryBlue.withOpacity(0.08)
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
+            transform: Matrix4.translationValues(0, _isHovered ? -2.5 : 0, 0),
+            child: Stack(
+              clipBehavior: Clip.none,
               children: [
-                Icon(widget.icon, size: 16, color: fgColor),
-                const SizedBox(width: 6),
-                Text(
-                  widget.title,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: highlighted ? FontWeight.w700 : FontWeight.w500,
-                    color: fgColor,
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(widget.icon, size: 16, color: fgColor),
+                    const SizedBox(width: 6),
+                    Text(
+                      widget.title,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: fgColor,
+                      ),
+                    ),
+                  ],
+                ),
+                // Subrayado que crece desde el centro (hover / link activo)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: -6,
+                  child: Center(
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeOutCubic,
+                      width: widget.isActive ? 26 : 0,
+                      height: 2.5,
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryBlue,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -306,6 +340,10 @@ class _HoverTextButtonState extends State<_HoverTextButton> {
 
   @override
   Widget build(BuildContext context) {
+    final Color fgColor = _isHovered
+        ? AppColors.primaryBlue
+        : AppColors.darkNavy;
+
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _isHovered = true),
@@ -313,24 +351,43 @@ class _HoverTextButtonState extends State<_HoverTextButton> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOutCubic,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: _isHovered
-                ? AppColors.darkNavy.withOpacity(0.06)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
+          transform: Matrix4.translationValues(0, _isHovered ? -2.5 : 0, 0),
+          child: Stack(
+            clipBehavior: Clip.none,
             children: [
-              Icon(widget.icon, size: 16, color: AppColors.darkNavy),
-              const SizedBox(width: 6),
-              Text(
-                widget.label,
-                style: TextStyle(
-                  color: AppColors.darkNavy,
-                  fontWeight: FontWeight.w600,
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(widget.icon, size: 16, color: fgColor),
+                  const SizedBox(width: 6),
+                  Text(
+                    widget.label,
+                    style: TextStyle(
+                      color: fgColor,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              // Mismo subrayado animado que los links del menú
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: -6,
+                child: Center(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    curve: Curves.easeOutCubic,
+                    width: _isHovered ? 26 : 0,
+                    height: 2.5,
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryBlue,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -353,34 +410,109 @@ class _GlowingRegisterButton extends StatefulWidget {
 
 class _GlowingRegisterButtonState extends State<_GlowingRegisterButton> {
   bool _isHovered = false;
+  bool _isPressed = false;
 
   @override
   Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(10);
+
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        decoration: BoxDecoration(borderRadius: BorderRadius.circular(10)),
-        transform: Matrix4.identity()..scale(_isHovered ? 1.03 : 1.0),
-        transformAlignment: Alignment.center,
-        child: ElevatedButton.icon(
-          onPressed: widget.onTap,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.primaryBlue,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
+      onExit: (_) => setState(() {
+        _isHovered = false;
+        _isPressed = false;
+      }),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        onTapDown: (_) => setState(() => _isPressed = true),
+        onTapUp: (_) => setState(() => _isPressed = false),
+        onTapCancel: () => setState(() => _isPressed = false),
+        child: AnimatedScale(
+          scale: _isPressed ? 0.97 : 1.0,
+          duration: const Duration(milliseconds: 120),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOutCubic,
+            transform: Matrix4.translationValues(0, _isHovered ? -3 : 0, 0),
+            decoration: BoxDecoration(
+              borderRadius: radius,
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: _isHovered
+                    ? const [Color(0xFF3B82F6), Color(0xFF1D4ED8)]
+                    : [AppColors.primaryBlue, AppColors.primaryBlue],
+              ),
             ),
-            elevation: 0,
+            child: ClipRRect(
+              borderRadius: radius,
+              child: Stack(
+                children: [
+                  // Brillo que cruza el botón al pasar el mouse
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: TweenAnimationBuilder<double>(
+                        tween: Tween<double>(begin: 0, end: _isHovered ? 1 : 0),
+                        duration: const Duration(milliseconds: 700),
+                        curve: Curves.easeInOut,
+                        builder: (context, t, _) {
+                          return FractionallySizedBox(
+                            alignment: Alignment.centerLeft,
+                            widthFactor: 0.35,
+                            child: FractionalTranslation(
+                              translation: Offset(-1 + 4 * t, 0),
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      Colors.white.withOpacity(0),
+                                      Colors.white.withOpacity(0.28),
+                                      Colors.white.withOpacity(0),
+                                    ],
+                                  ),
+                                ),
+                                child: const SizedBox.expand(),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 16,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Crear cuenta',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        AnimatedSlide(
+                          offset: Offset(_isHovered ? 0.4 : 0, 0),
+                          duration: const Duration(milliseconds: 250),
+                          curve: Curves.easeOutCubic,
+                          child: const Icon(
+                            Icons.arrow_forward,
+                            size: 16,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
-          label: const Text(
-            'Crear cuenta',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          icon: const Icon(Icons.arrow_forward, size: 16),
         ),
       ),
     );

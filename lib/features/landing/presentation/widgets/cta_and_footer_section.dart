@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/widgets/motion.dart';
 
 class CtaAndFooterSection extends StatelessWidget {
   final VoidCallback onRegisterPressed;
@@ -17,17 +18,13 @@ class CtaAndFooterSection extends StatelessWidget {
       width: double.infinity,
       child: Column(
         children: [
-          // Sección superior con el gradiente de fondo (ubicada por encima del footer)
           Container(
             width: double.infinity,
             decoration: const BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [
-                  Color(0xFFF8FAFC), // Color superior del gradiente
-                  Color(0xFFE2E8F0), // Color inferior del gradiente
-                ],
+                colors: [Color(0xFFF8FAFC), Color(0xFFE2E8F0)],
               ),
             ),
             padding: const EdgeInsets.fromLTRB(40, 12, 40, 60),
@@ -36,49 +33,67 @@ class CtaAndFooterSection extends StatelessWidget {
                 constraints: const BoxConstraints(maxWidth: 1200),
                 child: Column(
                   children: [
-                    const _SectionHeading(
-                      eyebrow: 'ELIGE TU CAMINO',
-                      title: 'Una plataforma, dos formas de empezar.',
-                      subtitle:
-                          'Ya seas representante o institución, el siguiente paso toma menos de un minuto.',
+                    const RevealOnScroll(
+                      child: _SectionHeading(
+                        eyebrow: 'ELIGE TU CAMINO',
+                        title: 'Una plataforma, dos formas de empezar.',
+                        subtitle:
+                            'Ya seas representante o institución, el siguiente paso toma menos de un minuto.',
+                      ),
                     ),
                     const SizedBox(height: 40),
                     LayoutBuilder(
                       builder: (context, constraints) {
                         final bool isNarrow = constraints.maxWidth < 760;
 
-                        final representanteCard = _CtaCard(
-                          eyebrow: 'PARA REPRESENTANTES',
-                          icon: Icons.how_to_reg_rounded,
-                          title: '¿Ya te dieron permiso\npara crear tu cuenta?',
-                          description:
-                              'Si el colegio ya te registró como representante, activa tu acceso y gestiona los pagos de tus hijos en minutos.',
-                          buttonLabel: 'Crear mi cuenta',
-                          buttonIcon: Icons.arrow_forward,
-                          onPressed: onRegisterPressed,
-                          backgroundColor: AppColors.primaryBlue,
-                          foregroundColor: Colors.white,
-                          eyebrowColor: Colors.white70,
-                          descriptionColor: Colors.white70,
-                          buttonBackgroundColor: Colors.white,
-                          buttonForegroundColor: AppColors.primaryBlue,
+                        // En escritorio entran desde los lados; en móvil, desde abajo.
+                        final representanteCard = RevealOnScroll(
+                          delay: const Duration(milliseconds: 120),
+                          offset: isNarrow
+                              ? const Offset(0, 40)
+                              : const Offset(-50, 0),
+                          child: _CtaCard(
+                            eyebrow: 'PARA REPRESENTANTES',
+                            icon: Icons.how_to_reg_rounded,
+                            title:
+                                '¿Ya te dieron permiso\npara crear tu cuenta?',
+                            description:
+                                'Si el colegio ya te registró como representante, activa tu acceso y gestiona los pagos de tus hijos en minutos.',
+                            buttonLabel: 'Crear mi cuenta',
+                            buttonIcon: Icons.arrow_forward,
+                            onPressed: onRegisterPressed,
+                            backgroundColor: AppColors.primaryBlue,
+                            foregroundColor: Colors.white,
+                            eyebrowColor: Colors.white70,
+                            descriptionColor: Colors.white70,
+                            buttonBackgroundColor: Colors.white,
+                            buttonForegroundColor: AppColors.primaryBlue,
+                            buttonHoverBackgroundColor: const Color(0xFFEFF6FF),
+                          ),
                         );
 
-                        final colegioCard = _CtaCard(
-                          eyebrow: 'PARA INSTITUCIONES',
-                          icon: Icons.school_rounded,
-                          title: '¿Eres un colegio y\nquieres sumarte?',
-                          description:
-                              'Conversemos sobre cómo EduPago puede simplificar la gestión financiera y las cobranzas de tu institución.',
-                          buttonLabel: 'Contáctanos',
-                          buttonIcon: Icons.arrow_forward,
-                          onPressed: onContactPressed,
-                          backgroundColor: AppColors.darkNavy,
-                          foregroundColor: Colors.white,
-                          eyebrowColor: Colors.white60,
-                          descriptionColor: Colors.white60,
-                          buttonBackgroundColor: AppColors.primaryBlue,
-                          buttonForegroundColor: Colors.white,
+                        final colegioCard = RevealOnScroll(
+                          delay: const Duration(milliseconds: 260),
+                          offset: isNarrow
+                              ? const Offset(0, 40)
+                              : const Offset(50, 0),
+                          child: _CtaCard(
+                            eyebrow: 'PARA INSTITUCIONES',
+                            icon: Icons.school_rounded,
+                            title: '¿Eres un colegio y\nquieres sumarte?',
+                            description:
+                                'Conversemos sobre cómo EduPago puede simplificar la gestión financiera y las cobranzas de tu institución.',
+                            buttonLabel: 'Contáctanos',
+                            buttonIcon: Icons.arrow_forward,
+                            onPressed: onContactPressed,
+                            backgroundColor: AppColors.darkNavy,
+                            foregroundColor: Colors.white,
+                            eyebrowColor: Colors.white60,
+                            descriptionColor: Colors.white60,
+                            buttonBackgroundColor: AppColors.primaryBlue,
+                            buttonForegroundColor: Colors.white,
+                            buttonHoverBackgroundColor: const Color(0xFF3B82F6),
+                          ),
                         );
 
                         if (isNarrow) {
@@ -109,7 +124,7 @@ class CtaAndFooterSection extends StatelessWidget {
             ),
           ),
 
-          // Footer Oscuro (ubicado debajo del gradiente)
+          // Footer
           Container(
             width: double.infinity,
             color: AppColors.darkNavy,
@@ -117,60 +132,54 @@ class CtaAndFooterSection extends StatelessWidget {
             child: Center(
               child: Container(
                 constraints: const BoxConstraints(maxWidth: 1200),
-                child: Wrap(
-                  alignment: WrapAlignment.spaceBetween,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 20,
-                  runSpacing: 20,
-                  children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Image.asset(
-                            'assets/images/logo_edupago.png',
-                            width: 32,
-                            height: 32,
-                            fit: BoxFit.contain,
+                child: RevealOnScroll(
+                  offset: const Offset(0, 16),
+                  child: Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 20,
+                    runSpacing: 20,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.asset(
+                              'assets/images/logo_edupago.png',
+                              width: 32,
+                              height: 32,
+                              fit: BoxFit.contain,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 10),
-                        const Text(
-                          'EduPago',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 18,
-                            letterSpacing: -0.5,
+                          const SizedBox(width: 10),
+                          const Text(
+                            'EduPago',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 18,
+                              letterSpacing: -0.5,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const Text(
-                      '© 2026 EduPago. Tecnología para una educación que avanza.',
-                      style: TextStyle(color: Colors.white60, fontSize: 12),
-                    ),
-                    const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Privacidad',
-                          style: TextStyle(color: Colors.white60, fontSize: 12),
-                        ),
-                        SizedBox(width: 16),
-                        Text(
-                          'Términos',
-                          style: TextStyle(color: Colors.white60, fontSize: 12),
-                        ),
-                        SizedBox(width: 16),
-                        Text(
-                          'Ayuda',
-                          style: TextStyle(color: Colors.white60, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ],
+                        ],
+                      ),
+                      const Text(
+                        '© 2026 EduPago. Tecnología para una educación que avanza.',
+                        style: TextStyle(color: Colors.white60, fontSize: 12),
+                      ),
+                      const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _FooterLink('Privacidad'),
+                          SizedBox(width: 16),
+                          _FooterLink('Términos'),
+                          SizedBox(width: 16),
+                          _FooterLink('Ayuda'),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -181,8 +190,35 @@ class CtaAndFooterSection extends StatelessWidget {
   }
 }
 
-/// Encabezado de sección: eyebrow + título + subtítulo, centrado,
-/// siguiendo el mismo patrón visual usado en otras secciones de la landing.
+/// Link del footer: se ilumina y se subraya al pasar el mouse.
+class _FooterLink extends StatelessWidget {
+  final String text;
+
+  const _FooterLink(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return HoverBuilder(
+      cursor: SystemMouseCursors.click,
+      builder: (context, hovered) {
+        return AnimatedDefaultTextStyle(
+          duration: const Duration(milliseconds: 180),
+          style: TextStyle(
+            color: hovered ? Colors.white : Colors.white60,
+            fontSize: 12,
+            decoration: hovered
+                ? TextDecoration.underline
+                : TextDecoration.none,
+            decorationColor: AppColors.primaryBlue,
+            decorationThickness: 2,
+          ),
+          child: Text(text),
+        );
+      },
+    );
+  }
+}
+
 class _SectionHeading extends StatelessWidget {
   final String eyebrow;
   final String title;
@@ -234,7 +270,6 @@ class _SectionHeading extends StatelessWidget {
   }
 }
 
-/// Tarjeta reutilizable para cada audiencia del CTA (representante / colegio).
 class _CtaCard extends StatelessWidget {
   final String eyebrow;
   final IconData icon;
@@ -249,6 +284,7 @@ class _CtaCard extends StatelessWidget {
   final Color descriptionColor;
   final Color buttonBackgroundColor;
   final Color buttonForegroundColor;
+  final Color buttonHoverBackgroundColor;
 
   const _CtaCard({
     required this.eyebrow,
@@ -264,76 +300,107 @@ class _CtaCard extends StatelessWidget {
     required this.descriptionColor,
     required this.buttonBackgroundColor,
     required this.buttonForegroundColor,
+    required this.buttonHoverBackgroundColor,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: foregroundColor, size: 20),
-          ),
-          const SizedBox(height: 18),
-          Text(
-            eyebrow,
-            style: TextStyle(
-              color: eyebrowColor,
-              fontWeight: FontWeight.bold,
-              fontSize: 12,
-              letterSpacing: 0.5,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            title,
-            style: TextStyle(
-              color: foregroundColor,
-              fontSize: 24,
-              height: 1.25,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            description,
-            style: TextStyle(color: descriptionColor, height: 1.4),
-          ),
-          const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: onPressed,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: buttonBackgroundColor,
-                foregroundColor: buttonForegroundColor,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+    return HoverCard(
+      color: backgroundColor,
+      borderColor: Colors.transparent,
+      radius: 24,
+      padding: EdgeInsets.zero,
+      lift: 8,
+      clip: true,
+      shadowColor: backgroundColor,
+      restShadowOpacity: 0.10,
+      hoverShadowOpacity: 0.40,
+      builder: (context, hovered) {
+        return Stack(
+          children: [
+            // Círculo decorativo que crece al hacer hover
+            Positioned(
+              right: -40,
+              top: -40,
+              child: AnimatedScale(
+                scale: hovered ? 1.4 : 1.0,
+                duration: const Duration(milliseconds: 600),
+                curve: Curves.easeOutCubic,
+                child: Container(
+                  width: 160,
+                  height: 160,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withOpacity(0.06),
+                  ),
                 ),
-                elevation: 0,
               ),
-              label: Text(
-                buttonLabel,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              icon: Icon(buttonIcon, size: 16),
             ),
-          ),
-        ],
-      ),
+            Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 260),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(hovered ? 0.22 : 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: AnimatedRotation(
+                      turns: hovered ? 0.03 : 0,
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeOutBack,
+                      child: Icon(icon, color: foregroundColor, size: 20),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    eyebrow,
+                    style: TextStyle(
+                      color: eyebrowColor,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    title,
+                    style: TextStyle(
+                      color: foregroundColor,
+                      fontSize: 24,
+                      height: 1.25,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    description,
+                    style: TextStyle(color: descriptionColor, height: 1.4),
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: AnimatedButton(
+                      label: buttonLabel,
+                      icon: buttonIcon,
+                      onPressed: onPressed,
+                      expand: true,
+                      background: buttonBackgroundColor,
+                      hoverBackground: buttonHoverBackgroundColor,
+                      foreground: buttonForegroundColor,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
