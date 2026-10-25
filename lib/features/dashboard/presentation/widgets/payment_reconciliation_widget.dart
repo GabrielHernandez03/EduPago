@@ -76,23 +76,68 @@ class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidge
   Future<void> _approvePayment(String pagoId) async {
     final user = _supabase.auth.currentUser;
     try {
+      // 1. Consultar el pago para obtener representante y monto
+      final pago = await _supabase
+          .from('pagos')
+          .select('representante_id, monto_usd_equivalente')
+          .eq('id', pagoId)
+          .single();
+
+      final String repId = pago['representante_id'].toString();
+      final double montoAprobado = (pago['monto_usd_equivalente'] as num?)?.toDouble() ?? 0.0;
+
+      // 2. Cambiar estado del pago a 'aprobado'
       await _supabase.from('pagos').update({
         'estado': 'aprobado',
         'revisado_por': user?.id,
         'revisado_at': DateTime.now().toIso8601String(),
       }).eq('id', pagoId);
 
+      // 3. Buscar estudiantes del representante para saldar su cuota
+      final repEstud = await _supabase
+          .from('representante_estudiante')
+          .select('estudiante_id')
+          .eq('representante_id', repId);
+
+      final List<String> estIds = (repEstud as List)
+          .map((e) => e['estudiante_id'].toString())
+          .toList();
+
+      if (estIds.isNotEmpty) {
+        final cuotasPendientes = await _supabase
+            .from('cuotas')
+            .select('id, monto_usd')
+            .inFilter('estudiante_id', estIds)
+            .eq('estado', 'pendiente')
+            .order('fecha_vencimiento', ascending: true);
+
+        double saldoPorAplicar = montoAprobado;
+
+        for (final cuota in cuotasPendientes) {
+          final double montoCuota = (cuota['monto_usd'] as num).toDouble();
+          if (saldoPorAplicar >= montoCuota) {
+            await _supabase
+                .from('cuotas')
+                .update({'estado': 'pagado'})
+                .eq('id', cuota['id']);
+            saldoPorAplicar -= montoCuota;
+          }
+          if (saldoPorAplicar <= 0) break;
+        }
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Pago aprobado y conciliado exitosamente.'),
+            content: Text('Pago aprobado y cuota conciliada exitosamente.'),
             backgroundColor: Color(0xFF059669),
           ),
         );
         _fetchPayments();
-        widget.onPaymentProcessed?.call(); // <-- Notifica al Dashboard principal
+        widget.onPaymentProcessed?.call(); // Recarga las métricas del Dashboard
       }
     } catch (e) {
+      debugPrint('Error al aprobar el pago: $e');
       _showErrorSnackBar('Error al aprobar el pago: $e');
     }
   }

@@ -12,6 +12,7 @@ import '../../../../main.dart';
 import '../../../landing/presentation/screens/home_screen.dart';
 import '../widgets/students_import_card.dart';
 import '../widgets/payment_reconciliation_widget.dart';
+import '../widgets/generate_billing_dialog.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -1592,7 +1593,17 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             border: const Color(0xFF0F172A),
             titleColor: Colors.white,
             subColor: Colors.white60,
-            onTap: () => _soon('La facturación masiva'),
+            onTap: () {
+              if (_colegioId != null) {
+                showDialog(
+                  context: context,
+                  builder: (context) => GenerateBillingDialog(
+                    colegioId: _colegioId!,
+                    onBillingGenerated: _load,
+                  ),
+                );
+              }
+            },
           ),
           _quickTile(
             leading: const Icon(
