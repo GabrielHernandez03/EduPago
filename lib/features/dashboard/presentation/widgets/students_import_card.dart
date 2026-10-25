@@ -1,29 +1,24 @@
 // lib/features/dashboard/presentation/widgets/students_import_card.dart
-
 import 'dart:typed_data';
-
 import 'package:excel/excel.dart' hide Border;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:universal_html/html.dart' as html;
-
 import '../../../../core/theme/app_colors.dart';
 import '../../../../main.dart';
 import 'manual_student_dialog.dart';
 
-// ---------------------------------------------------------------------------
 // Columnas obligatorias del Excel
-// ---------------------------------------------------------------------------
-const _kRequiredCols = [
+const kRequiredCols = [
   'cedula_estudiante',
   'nombres_estudiante',
   'apellidos_estudiante',
 ];
 
 // Columnas fijas del estudiante (sin representantes)
-const _kStudentCols = [
+const kStudentCols = [
   'cedula_estudiante',
   'nombres_estudiante',
   'apellidos_estudiante',
@@ -32,7 +27,7 @@ const _kStudentCols = [
 ];
 
 // Campos de cada representante (se buscan como repN_campo)
-const _kRepFields = [
+const kRepFields = [
   'cedula',
   'nombres',
   'apellidos',
@@ -43,44 +38,46 @@ const _kRepFields = [
   'es_financiero',
 ];
 
-// ---------------------------------------------------------------------------
 // Resultado del parser
-// ---------------------------------------------------------------------------
 class StudentImportResult {
   final List<Map<String, dynamic>> rows;
   final List<String> errors;
   final int repCount; // total de representantes detectados en todas las filas
-  const StudentImportResult(this.rows, this.errors, {this.repCount = 0});
+
+  const StudentImportResult(
+    this.rows,
+    this.errors, {
+    this.repCount = 0,
+  });
 }
 
-// ---------------------------------------------------------------------------
-// Parser de Excel — lógica pura, sin Flutter
-// ---------------------------------------------------------------------------
+// Parser de Excel lógica pura, sin Flutter
 class StudentExcelParser {
   static StudentImportResult parse(List<int> bytes) {
-    // ── Decodificar ─────────────────────────────────────────────────────────
+    // Decodificar
     final Excel excel;
     try {
       final uint8 = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
       excel = Excel.decodeBytes(uint8);
     } catch (e) {
-      return StudentImportResult([], [
-        'No se pudo leer el archivo. Asegúrate de que sea un .xlsx válido. ($e)',
-      ]);
+      return StudentImportResult(
+        [],
+        ['No se pudo leer el archivo. Asegúrate de que sea un .xlsx válido. ($e)'],
+      );
     }
 
     if (excel.tables.isEmpty) {
-      return StudentImportResult([], ['El archivo no tiene hojas.']);
+      return const StudentImportResult([], ['El archivo no tiene hojas.']);
     }
 
     final sheet = excel.tables.values.first;
     if (sheet.rows.length < 2) {
-      return StudentImportResult([], [
+      return const StudentImportResult([], [
         'El archivo no contiene filas de datos debajo del encabezado.',
       ]);
     }
 
-    // ── Mapa encabezado → índice ─────────────────────────────────────────
+    // Mapa encabezado -> índice
     final idx = <String, int>{};
     final headerRow = sheet.rows.first;
     for (var i = 0; i < headerRow.length; i++) {
@@ -89,16 +86,15 @@ class StudentExcelParser {
     }
 
     // Verificar columnas obligatorias
-    final missing = _kRequiredCols.where((c) => !idx.containsKey(c)).toList();
+    final missing = kRequiredCols.where((c) => !idx.containsKey(c)).toList();
     if (missing.isNotEmpty) {
       return StudentImportResult([], [
-        'Faltan columnas obligatorias: ${missing.join(', ')}.',
-        'Comprueba que el encabezado use exactamente estos nombres '
-            '(minúsculas, sin tildes, con guión bajo).',
+        'Faltan columnas obligatorias: ${missing.join(', ')}.\n'
+            'Comprueba que el encabezado use exactamente estos nombres (minúsculas, sin tildes, con guión bajo).',
       ]);
     }
 
-    // Detectar cuántos bloques de representantes hay en el encabezado (rep1…repN)
+    // Detectar cuántos bloques de representantes hay en el encabezado (rep1...repN)
     int maxRepCols = 0;
     for (var n = 1; n <= 20; n++) {
       if (idx.containsKey('rep${n}_cedula') ||
@@ -107,14 +103,14 @@ class StudentExcelParser {
       }
     }
 
-    // ── Helpers de lectura ───────────────────────────────────────────────
+    // Helpers de lectura
     String cell(List<Data?> row, String col) {
       final i = idx[col];
       if (i == null || i >= row.length) return '';
       return _text(row[i]?.value).trim();
     }
 
-    // ── Procesar filas ────────────────────────────────────────────────────
+    // Procesar filas
     final rows = <Map<String, dynamic>>[];
     final errors = <String>[];
     final seenCed = <String>{};
@@ -125,7 +121,7 @@ class StudentExcelParser {
       final fila = r + 1; // número visible en Excel
 
       // Valores fijos del estudiante
-      final vals = {for (final c in _kStudentCols) c: cell(row, c)};
+      final vals = {for (final c in kStudentCols) c: cell(row, c)};
 
       // Saltar filas completamente vacías
       if (vals.values.every((v) => v.isEmpty)) continue;
@@ -136,8 +132,7 @@ class StudentExcelParser {
 
       if (cedEst.isEmpty || nombres.isEmpty || apellidos.isEmpty) {
         errors.add(
-          'Fila $fila: cedula_estudiante, nombres_estudiante '
-          'y apellidos_estudiante son obligatorios.',
+          'Fila $fila: cedula_estudiante, nombres_estudiante y apellidos_estudiante son obligatorios.',
         );
         continue;
       }
@@ -153,43 +148,40 @@ class StudentExcelParser {
       String? fechaNac;
       final fechaRaw = vals['fecha_nacimiento']!;
       if (fechaRaw.isNotEmpty) {
-        final d = _parseDate(fechaRaw);
+        final d = parseDate(fechaRaw);
         if (d == null) {
           errors.add(
-            'Fila $fila: fecha_nacimiento "$fechaRaw" no es válida. '
-            'Usa dd/mm/aaaa o aaaa-mm-dd.',
+            'Fila $fila: fecha_nacimiento "$fechaRaw" no es válida. Usa dd/mm/aaaa o aaaa-mm-dd.',
           );
           continue;
         }
-        fechaNac = _iso(d);
+        fechaNac = iso(d);
       }
 
-      // ── Representantes: leer rep1_*, rep2_*, … repN_* ─────────────────
+      // Representantes: leer rep1_*, rep2_*, ... repN_*
       final representantes = <Map<String, dynamic>>[];
-
       for (var n = 1; n <= maxRepCols; n++) {
         final repVals = {
-          for (final f in _kRepFields) f: cell(row, 'rep${n}_$f'),
+          for (final f in kRepFields) f: cell(row, 'rep${n}_$f'),
         };
 
         final hasSomeData = repVals.values.any((v) => v.isNotEmpty);
         if (!hasSomeData) continue;
 
-        // Ignorar marcadores explícitos de celda vacía como "(vacío)"
         final cedRep = repVals['cedula']!;
         final nomRep = repVals['nombres']!;
         final apRep = repVals['apellidos']!;
 
-        if (cedRep.toLowerCase() == '(vacío)' ||
-            nomRep.toLowerCase() == '(vacío)' ||
-            apRep.toLowerCase() == '(vacío)') {
+        // Ignorar marcadores explícitos de celda vacía como "(vacio)"
+        if (cedRep.toLowerCase() == '(vacio)' ||
+            nomRep.toLowerCase() == '(vacio)' ||
+            apRep.toLowerCase() == '(vacio)') {
           continue;
         }
 
         if (cedRep.isEmpty || nomRep.isEmpty || apRep.isEmpty) {
           errors.add(
-            'Fila $fila (rep$n): si incluyes un representante, '
-            'cedula, nombres y apellidos son obligatorios.',
+            'Fila $fila (rep$n): si incluyes un representante, cedula, nombres y apellidos son obligatorios.',
           );
           continue;
         }
@@ -198,16 +190,10 @@ class StudentExcelParser {
           'cedula': cedRep,
           'nombres': nomRep,
           'apellidos': apRep,
-          'telefono': repVals['telefono']!.isNotEmpty
-              ? repVals['telefono']
-              : null,
+          'telefono': repVals['telefono']!.isNotEmpty ? repVals['telefono'] : null,
           'email': repVals['email']!.isNotEmpty ? repVals['email'] : null,
-          'direccion': repVals['direccion']!.isNotEmpty
-              ? repVals['direccion']
-              : null,
-          'parentesco': repVals['parentesco']!.isNotEmpty
-              ? repVals['parentesco']
-              : null,
+          'direccion': repVals['direccion']!.isNotEmpty ? repVals['direccion'] : null,
+          'parentesco': repVals['parentesco']!.isNotEmpty ? repVals['parentesco'] : null,
           'es_financiero': repVals['es_financiero'],
         });
       }
@@ -219,9 +205,7 @@ class StudentExcelParser {
         'nombres_estudiante': nombres,
         'apellidos_estudiante': apellidos,
         'fecha_nacimiento': fechaNac,
-        'grado_seccion': vals['grado_seccion']!.isNotEmpty
-            ? vals['grado_seccion']
-            : null,
+        'grado_seccion': vals['grado_seccion']!.isNotEmpty ? vals['grado_seccion'] : null,
         'representantes': representantes,
       });
     }
@@ -233,15 +217,12 @@ class StudentExcelParser {
     return StudentImportResult(rows, errors, repCount: totalRepresentatives);
   }
 
-  // ── Utilidades ────────────────────────────────────────────────────────────
-
+  // Utilidades
   static String _norm(String s) =>
       s.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '_');
 
-  static String _iso(DateTime d) =>
-      '${d.year.toString().padLeft(4, '0')}-'
-      '${d.month.toString().padLeft(2, '0')}-'
-      '${d.day.toString().padLeft(2, '0')}';
+  static String iso(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
   static String _text(CellValue? v) {
     if (v == null) return '';
@@ -252,36 +233,39 @@ class StudentExcelParser {
         final d = v.value;
         return d == d.roundToDouble() ? d.toInt().toString() : d.toString();
       case DateCellValue():
-        return _iso(DateTime(v.year, v.month, v.day));
+        return iso(DateTime(v.year, v.month, v.day));
       case DateTimeCellValue():
-        return _iso(DateTime(v.year, v.month, v.day));
+        return iso(DateTime(v.year, v.month, v.day));
       default:
         return v.toString();
     }
   }
 
-  static DateTime? _parseDate(String s) {
+  static DateTime? parseDate(String s) {
     final serial = double.tryParse(s);
     if (serial != null) {
       if (serial < 1000 || serial > 80000) return null;
       return DateTime(1899, 12, 30).add(Duration(days: serial.floor()));
     }
-    final iso = RegExp(r'^(\d{4})-(\d{1,2})-(\d{1,2})').firstMatch(s);
-    if (iso != null) {
+
+    final isoMatch = RegExp(r'^(\d{4})-(\d{1,2})-(\d{1,2})').firstMatch(s);
+    if (isoMatch != null) {
       return _safeDate(
-        int.parse(iso.group(1)!),
-        int.parse(iso.group(2)!),
-        int.parse(iso.group(3)!),
+        int.parse(isoMatch.group(1)!),
+        int.parse(isoMatch.group(2)!),
+        int.parse(isoMatch.group(3)!),
       );
     }
-    final latin = RegExp(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$').firstMatch(s);
-    if (latin != null) {
+
+    final latinMatch = RegExp(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$').firstMatch(s);
+    if (latinMatch != null) {
       return _safeDate(
-        int.parse(latin.group(3)!),
-        int.parse(latin.group(2)!),
-        int.parse(latin.group(1)!),
+        int.parse(latinMatch.group(3)!),
+        int.parse(latinMatch.group(2)!),
+        int.parse(latinMatch.group(1)!),
       );
     }
+
     return null;
   }
 
@@ -293,9 +277,7 @@ class StudentExcelParser {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Widget
-// ---------------------------------------------------------------------------
 enum _Step { idle, reading, ready, importing }
 
 class StudentsImportCard extends StatefulWidget {
@@ -309,18 +291,18 @@ class StudentsImportCard extends StatefulWidget {
   });
 
   @override
-  State<StudentsImportCard> createState() => _StudentsImportCardState();
+  State<StudentsImportCard> createState() => StudentsImportCardState();
 }
 
-class _StudentsImportCardState extends State<StudentsImportCard> {
+class StudentsImportCardState extends State<StudentsImportCard> {
   _Step _step = _Step.idle;
   String? _fileName;
-  StudentImportResult? _result;
-  String? _fatal;
-  List<Map<String, dynamic>> _serverErrors = [];
+  StudentImportResult? result;
+  String? fatal;
+  List<Map<String, dynamic>> serverErrors = [];
 
-  // ── Descargar plantilla (Compatible con Web y Escritorio/Móvil) ────────────
-  Future<void> _downloadTemplate() async {
+  // Descargar plantilla (Compatible con Web y Escritorio/Móvil con FilePicker 13+)
+  Future<void> downloadTemplate() async {
     try {
       final byteData = await rootBundle.load(
         'assets/Plantilla de Insercion.xlsx',
@@ -335,7 +317,7 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
           ..click();
         html.Url.revokeObjectUrl(url);
       } else {
-        await FilePicker.platform.saveFile(
+        await FilePicker.saveFile(
           dialogTitle: 'Guardar plantilla de ejemplo',
           fileName: 'Plantilla de Insercion.xlsx',
           bytes: fileBytes,
@@ -362,12 +344,13 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
     }
   }
 
-  // ── Agregar manualmente ───────────────────────────────────────────────────
-  Future<void> _showManualAddDialog() async {
+  // Agregar manualmente
+  Future<void> showManualAddDialog() async {
     final saved = await showManualStudentDialog(
       context,
       colegioId: widget.colegioId,
     );
+
     if (!mounted || saved == null || saved <= 0) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -380,81 +363,72 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
         backgroundColor: const Color(0xFF059669),
       ),
     );
+
     widget.onImported();
   }
 
-  // ── Selección de archivo ──────────────────────────────────────────────────
+  // Selección de archivo Excel (Compatible con FilePicker 13+)
   Future<void> _pick() async {
-    final picked = await FilePicker.platform.pickFiles(
+    final files = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['xlsx'],
-      withData: true,
     );
-    if (picked == null || picked.files.isEmpty) return;
 
-    final file = picked.files.first;
-    final bytes = file.bytes;
-    if (bytes == null) {
-      setState(() {
-        _fatal = 'No se pudo leer el archivo seleccionado.';
-      });
-      return;
-    }
+    if (files.isEmpty) return;
+
+    final file = files.first;
+    final bytes = await file.readAsBytes();
 
     setState(() {
-      _fatal = null;
-      _result = null;
-      _serverErrors = [];
+      fatal = null;
+      result = null;
+      serverErrors = [];
       _step = _Step.reading;
       _fileName = file.name;
     });
 
     await Future<void>.delayed(const Duration(milliseconds: 60));
-    final result = StudentExcelParser.parse(bytes);
+    final parsedResult = StudentExcelParser.parse(bytes);
 
     if (!mounted) return;
+
     setState(() {
-      _result = result;
+      result = parsedResult;
       _step = _Step.ready;
     });
   }
 
-  // ── Importación ───────────────────────────────────────────────────────────
-  Future<void> _import() async {
-    final result = _result;
-    if (result == null || result.rows.isEmpty || result.errors.isNotEmpty) {
-      return;
-    }
+  // Importación
+  Future<void> import() async {
+    final r = result;
+    if (r == null || r.rows.isEmpty || r.errors.isNotEmpty) return;
 
     setState(() {
       _step = _Step.importing;
-      _fatal = null;
-      _serverErrors = [];
+      fatal = null;
+      serverErrors = [];
     });
 
     try {
       final response = await supabase.functions.invoke(
         'import-students',
-        body: {'colegio_id': widget.colegioId, 'rows': result.rows},
+        body: {'colegio_id': widget.colegioId, 'rows': r.rows},
       );
 
       if (!mounted) return;
-
       debugPrint('Respuesta de la función: ${response.data}');
 
       final data = response.data as Map<String, dynamic>?;
       if (data == null) {
         setState(() {
           _step = _Step.ready;
-          _fatal =
-              'La función no devolvió respuesta. Revisa los logs de Supabase.';
+          fatal = 'La función no devolvió respuesta. Revisa los logs de Supabase.';
         });
         return;
       }
 
       final exitosos = (data['exitosos'] as num?)?.toInt() ?? 0;
-      final errores =
-          (data['errores'] as List?)
+      final errores = (data['errores'] as List?)
               ?.map((e) => Map<String, dynamic>.from(e as Map))
               .toList() ??
           [];
@@ -462,13 +436,13 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
       if (exitosos == 0 && errores.isNotEmpty) {
         setState(() {
           _step = _Step.ready;
-          _serverErrors = errores;
-          _fatal = 'No se importó ningún estudiante. Revisa los errores.';
+          serverErrors = errores;
+          fatal = 'No se importó ningún estudiante. Revisa los errores.';
         });
         return;
       }
 
-      setState(() => _serverErrors = errores);
+      setState(() => serverErrors = errores);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -476,7 +450,7 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
             content: Text(
               errores.isEmpty
                   ? '$exitosos estudiantes importados correctamente.'
-                  : '$exitosos importados · ${errores.length} con errores.',
+                  : '$exitosos importados, ${errores.length} con errores.',
             ),
             backgroundColor: errores.isEmpty
                 ? const Color(0xFF059669)
@@ -491,20 +465,20 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
       if (!mounted) return;
       setState(() {
         _step = _Step.ready;
-        _fatal = 'Error detallado al invocar la función: $e';
+        fatal = 'Error detallado al invocar la función: $e';
       });
     }
   }
 
-  void _reset() => setState(() {
-    _step = _Step.idle;
-    _result = null;
-    _fileName = null;
-    _fatal = null;
-    _serverErrors = [];
-  });
+  void reset() => setState(() {
+        _step = _Step.idle;
+        result = null;
+        _fileName = null;
+        fatal = null;
+        serverErrors = [];
+      });
 
-  // ── UI ────────────────────────────────────────────────────────────────────
+  // UI
   @override
   Widget build(BuildContext context) {
     return Center(
@@ -517,19 +491,19 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFFF1F5F9), width: 1.5),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.20),
+                  color: Colors.black.withOpacity(0.05),
                   blurRadius: 24,
                   offset: const Offset(0, 8),
                 ),
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.20),
+                  color: Colors.black.withOpacity(0.02),
                   blurRadius: 4,
                   offset: const Offset(0, 1),
                 ),
               ],
-              border: Border.all(color: const Color(0xFFF1F5F9), width: 1.5),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -601,19 +575,14 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.10),
+            color: Colors.black.withOpacity(0.02),
             blurRadius: 16,
             offset: const Offset(0, 4),
           ),
-          BoxShadow(
-            color: Colors.black.withOpacity(0.10),
-            blurRadius: 4,
-            offset: const Offset(0, 1),
-          ),
         ],
-        border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
       ),
       child: Row(
         children: [
@@ -652,12 +621,15 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
           ),
           const SizedBox(width: 12),
           OutlinedButton.icon(
-            onPressed: _downloadTemplate,
+            onPressed: downloadTemplate,
             style: OutlinedButton.styleFrom(
               backgroundColor: Colors.white,
               foregroundColor: AppColors.darkNavy,
               side: const BorderSide(color: Color(0xFFCBD5E1)),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 10,
+              ),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
               ),
@@ -680,18 +652,15 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
   Widget _buildContent() {
     switch (_step) {
       case _Step.reading:
-        return const _Loader(label: 'Leyendo archivo…');
-
+        return const Loader(label: 'Leyendo archivo...');
       case _Step.importing:
-        return const _Loader(label: 'Procesando estudiantes…');
-
+        return const Loader(label: 'Procesando estudiantes...');
       case _Step.ready:
         return _buildPreview();
-
       case _Step.idle:
         return Column(
           children: [
-            if (_fatal != null) _errorBox([_fatal!]),
+            if (fatal != null) _errorBox([fatal!]),
             Wrap(
               spacing: 12,
               runSpacing: 12,
@@ -704,7 +673,7 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
                   label: const Text('Seleccionar archivo Excel'),
                 ),
                 OutlinedButton.icon(
-                  onPressed: _showManualAddDialog,
+                  onPressed: showManualAddDialog,
                   style: OutlinedButton.styleFrom(
                     backgroundColor: Colors.white,
                     foregroundColor: AppColors.darkNavy,
@@ -735,7 +704,7 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
   }
 
   Widget _buildPreview() {
-    final r = _result!;
+    final r = result!;
     final hasLocalErrors = r.errors.isNotEmpty;
 
     return Column(
@@ -763,45 +732,35 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
           ],
         ),
         const SizedBox(height: 12),
-
         if (!hasLocalErrors)
           _infoBox(
-            '${r.rows.length} estudiantes listos · '
-            '${r.repCount} representante${r.repCount == 1 ? '' : 's'} detectado${r.repCount == 1 ? '' : 's'}.',
+            '${r.rows.length} estudiantes listos. ${r.repCount} representante${r.repCount == 1 ? '' : 's'} detectado${r.repCount == 1 ? '' : 's'}.',
             icon: Icons.check_circle_outline,
             color: const Color(0xFF059669),
             bg: const Color(0xFFF0FDF4),
             border: const Color(0xFFBBF7D0),
           ),
-
         if (hasLocalErrors)
           _errorBox([
-            '${r.errors.length} ${r.errors.length == 1 ? 'problema' : 'problemas'} '
-                'encontrados — corrige el archivo y vuelve a cargarlo:',
+            '${r.errors.length} ${r.errors.length == 1 ? 'problema encontrado' : 'problemas encontrados'}, corrige el archivo y vuelve a cargarlo:',
             ...r.errors.take(12),
-            if (r.errors.length > 12) '… y ${r.errors.length - 12} más.',
+            if (r.errors.length > 12) '... y ${r.errors.length - 12} más.',
           ]),
-
-        if (_serverErrors.isNotEmpty) ...[
+        if (serverErrors.isNotEmpty) ...[
           const SizedBox(height: 8),
           _errorBox([
-            '${_serverErrors.length} fila${_serverErrors.length == 1 ? '' : 's'} '
-                'con errores en el servidor:',
-            ..._serverErrors
-                .take(10)
-                .map(
+            '${serverErrors.length} fila${serverErrors.length == 1 ? '' : 's'} con errores en el servidor:',
+            ...serverErrors.take(10).map(
                   (e) => 'Fila ${e['fila']} (${e['cedula']}): ${e['motivo']}',
                 ),
-            if (_serverErrors.length > 10)
-              '… y ${_serverErrors.length - 10} más.',
+            if (serverErrors.length > 10)
+              '... y ${serverErrors.length - 10} más.',
           ]),
         ],
-
-        if (_fatal != null) ...[
+        if (fatal != null) ...[
           const SizedBox(height: 8),
-          _errorBox([_fatal!]),
+          _errorBox([fatal!]),
         ],
-
         const SizedBox(height: 16),
         Wrap(
           spacing: 10,
@@ -825,7 +784,7 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
             ),
             if (!hasLocalErrors && r.rows.isNotEmpty)
               ElevatedButton.icon(
-                onPressed: _import,
+                onPressed: import,
                 style: _primaryStyle(),
                 icon: const Icon(Icons.cloud_upload_outlined, size: 18),
                 label: Text('Importar ${r.rows.length} estudiantes'),
@@ -889,7 +848,10 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
               padding: const EdgeInsets.symmetric(vertical: 2),
               child: Text(
                 l,
-                style: const TextStyle(fontSize: 11, color: Color(0xFFB91C1C)),
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: Color(0xFFB91C1C),
+                ),
               ),
             ),
         ],
@@ -898,17 +860,19 @@ class _StudentsImportCardState extends State<StudentsImportCard> {
   }
 
   ButtonStyle _primaryStyle() => ElevatedButton.styleFrom(
-    backgroundColor: AppColors.primaryBlue,
-    foregroundColor: Colors.white,
-    elevation: 0,
-    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-  );
+        backgroundColor: AppColors.primaryBlue,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      );
 }
 
-class _Loader extends StatelessWidget {
+class Loader extends StatelessWidget {
   final String label;
-  const _Loader({required this.label});
+  const Loader({super.key, required this.label});
 
   @override
   Widget build(BuildContext context) {

@@ -11,6 +11,7 @@ import '../../../../core/session/idle_session_store.dart';
 import '../../../../main.dart';
 import '../../../landing/presentation/screens/home_screen.dart';
 import '../widgets/students_import_card.dart';
+import '../widgets/payment_reconciliation_widget.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -31,7 +32,7 @@ class _MonthTotal {
 class _PendingItem {
   final String studentId;
   final double saldo;
-  final int daysOverdue; // <=0 significa vigente (aún no vence)
+  final int daysOverdue; // <= 0 significa vigente (aún no vence)
   const _PendingItem(this.studentId, this.saldo, this.daysOverdue);
 }
 
@@ -145,23 +146,18 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   String _schoolName = '';
   double? _tasa;
   String _tasaSubtitle = '';
-
   int _studentsTotal = 0;
   int _solventes = 0;
   int _pendientes = 0;
   int _insolventes = 0;
-
   List<_MonthTotal> _monthly = [];
   int _rangeMonths = 6;
   int? _selectedBar;
-
   List<_PendingItem> _pending = [];
   double _totalBilled = 0;
   int _agingFilter = 0;
-
   int _pendingReceipts = 0;
   int _receiptsLastHour = 0;
-
   List<_PagoRow> _recent = [];
 
   //
@@ -169,7 +165,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   //
   static const Duration _idleTimeout = Duration(minutes: 15);
   static const Duration _idleWarning = Duration(seconds: 60);
-
   Timer? _idleTicker;
   DateTime _lastActivity = DateTime.now();
   bool _idleWarningOpen = false;
@@ -193,20 +188,16 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Future<void> _bootSession() async {
     await Future<void>.delayed(Duration.zero);
     if (!mounted) return;
-
     if (supabase.auth.currentSession == null) {
       await _forceLogout('Debes iniciar sesión para continuar.');
       return;
     }
-
     final last = await IdleSessionStore.last();
     if (!mounted) return;
-
     if (last != null && DateTime.now().difference(last) >= _idleTimeout) {
       await _logoutByInactivity();
       return;
     }
-
     _startIdleWatch();
     _load();
   }
@@ -255,7 +246,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     _checking = true;
     try {
       var idle = DateTime.now().difference(_lastActivity);
-
       if (idle >= _idleTimeout - _idleWarning) {
         final stored = await IdleSessionStore.last();
         if (stored != null && stored.isAfter(_lastActivity)) {
@@ -263,20 +253,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           idle = DateTime.now().difference(_lastActivity);
         }
       }
-
       if (!mounted || _loggingOut) return;
-
       if (idle >= _idleTimeout) {
         await _logoutByInactivity();
         return;
       }
-
-      if (_lastActivity.difference(_persistedActivity) >=
-          const Duration(seconds: 10)) {
+      if (_lastActivity.difference(_persistedActivity) >= const Duration(seconds: 10)) {
         _persistedActivity = _lastActivity;
         IdleSessionStore.touch(_lastActivity);
       }
-
       final left = _idleTimeout - idle;
       if (left <= _idleWarning) {
         _idleSecondsLeft.value = (left.inMilliseconds / 1000).ceil();
@@ -327,8 +312,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     ).then((_) => _idleWarningOpen = false);
   }
 
-  Future<void> _logoutByInactivity() =>
-      _forceLogout('Tu sesión se cerró por inactividad.');
+  Future<void> _logoutByInactivity() => _forceLogout('Tu sesión se cerró por inactividad.');
 
   Future<void> _forceLogout(String message) async {
     if (_loggingOut) return;
@@ -365,10 +349,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   String _compact(double v) {
     if (v >= 1000000) {
-      return '${(v / 1000000).toStringAsFixed(1).replaceAll('.', ',')}M';
+      return '\$${(v / 1000000).toStringAsFixed(1).replaceAll('.', ',')}M';
     }
     if (v >= 1000) {
-      return '${(v / 1000).toStringAsFixed(v >= 10000 ? 0 : 1).replaceAll('.', ',')}k';
+      return '\$${(v / 1000).toStringAsFixed(v >= 10000 ? 0 : 1).replaceAll('.', ',')}k';
     }
     return v.toStringAsFixed(0);
   }
@@ -377,9 +361,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     if (v <= 0) return 100;
     final exp = math.pow(10, (math.log(v) / math.ln10).floor()).toDouble();
     final f = v / exp;
-    final nice = f <= 1
-        ? 1.0
-        : (f <= 2 ? 2.0 : (f <= 2.5 ? 2.5 : (f <= 5 ? 5.0 : 10.0)));
+    final nice = f <= 1 ? 1.0 : (f <= 2 ? 2.0 : (f <= 2.5 ? 2.5 : (f <= 5 ? 5.0 : 10.0)));
     return nice * exp;
   }
 
@@ -445,7 +427,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     try {
       await supabase.auth.signOut();
     } catch (_) {}
-
     if (!mounted) return;
     Navigator.pushAndRemoveUntil(
       context,
@@ -464,14 +445,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       _needsStudents = false;
       _noSchool = false;
     });
-
     try {
       final user = supabase.auth.currentUser;
       if (user == null) {
         await _logout();
         return;
       }
-
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
       final start12 = DateTime(now.year, now.month - 11, 1);
@@ -602,18 +581,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
       final pending = <_PendingItem>[];
       var billed = 0.0;
-
       for (final row in saldoRows) {
         final monto = _num(row['monto_usd']);
         final saldo = _num(row['saldo_usd']);
         billed += monto;
-
         if (saldo <= 0.01) continue;
 
         final studentId = row['estudiante_id'].toString();
         final due = venc[row['cuota_id'].toString()];
         final overdue = due == null ? 0 : today.difference(due).inDays;
-
         pending.add(_PendingItem(studentId, saldo, overdue));
 
         if (status.containsKey(studentId)) {
@@ -739,7 +715,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
     var student = '-';
     var concept = '-';
-
     final aps = m['pago_aplicaciones'];
     if (aps is List && aps.isNotEmpty && aps.first is Map) {
       final cuota = _asMap((aps.first as Map)['cuotas']);
@@ -750,7 +725,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       if (est != null) {
         student = '${est['nombres'] ?? ''} ${est['apellidos'] ?? ''}'.trim();
       }
-
       if (con != null) {
         concept = '${con['nombre'] ?? ''}${periodo != null ? ' $periodo' : ''}';
         if (aps.length > 1) concept += ' +${aps.length - 1}';
@@ -834,7 +808,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   Widget _buildBody() {
     if (_loading) return const Center(child: CircularProgressIndicator());
-
     if (_error != null) {
       return Center(
         child: Padding(
@@ -923,6 +896,27 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       return StudentsImportCard(colegioId: _colegioId!, onImported: _load);
     }
 
+    // --- INTEGRACIÓN HU9: Pestaña "Conciliación" (_navIndex == 3) ---
+    if (_navIndex == 3 && _colegioId != null) {
+      return RefreshIndicator(
+        onRefresh: _load,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+          child: Center(
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 1200),
+              child: PaymentReconciliationWidget(
+                colegioId: _colegioId!,
+                onPaymentProcessed: _load,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Para las demás pestañas aún pendientes (Estudiantes, Pagos, Reportes)
     if (_navIndex != 0) {
       return Center(
         child: Column(
@@ -948,6 +942,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       );
     }
 
+    // Pestaña principal: Resumen (_navIndex == 0)
     return RefreshIndicator(
       onRefresh: _load,
       child: SingleChildScrollView(
@@ -1000,9 +995,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         vertical: 20,
       ),
       child: Column(
-        crossAxisAlignment: expanded
-            ? CrossAxisAlignment.start
-            : CrossAxisAlignment.center,
+        crossAxisAlignment:
+            expanded ? CrossAxisAlignment.start : CrossAxisAlignment.center,
         children: [
           _sidebarInstitution(expanded),
           SizedBox(height: expanded ? 28 : 24),
@@ -1309,7 +1303,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ),
           ),
           const SizedBox(width: 12),
-          if (showTasa) ...[_tasaChip(compactTasa), const SizedBox(width: 12)],
+          if (showTasa) ...[
+            _tasaChip(compactTasa),
+            const SizedBox(width: 12),
+          ],
           Stack(
             children: [
               Container(
@@ -1439,9 +1436,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
               if (!compact)
                 Text(
-                  ok
-                      ? _tasaSubtitle
-                      : 'Los saldos en Bs. no se pueden calcular',
+                  ok ? _tasaSubtitle : 'Los saldos en Bs. no se pueden calcular',
                   style: TextStyle(fontSize: 10, color: accent),
                 ),
             ],
@@ -1455,9 +1450,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  //
   // Saludo y acciones rápidas
-  //
   Widget _buildGreeting() {
     final now = DateTime.now();
     final date =
@@ -1518,7 +1511,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ),
         ),
         ElevatedButton.icon(
-          onPressed: () => _soon('La conciliación de comprobantes'),
+          onPressed: () => setState(() => _navIndex = 3),
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.primaryBlue,
             foregroundColor: Colors.white,
@@ -1717,9 +1710,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  //
   // Tarjetas de indicadores (KPI)
-  //
   Widget _kpiCard({
     required IconData icon,
     required Color iconBg,
@@ -1822,23 +1813,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   Widget _kpiRecaudado() {
     final cur = _monthly.isNotEmpty ? _monthly.last.value : 0.0;
-    final prev = _monthly.length > 1
-        ? _monthly[_monthly.length - 2].value
-        : 0.0;
+    final prev = _monthly.length > 1 ? _monthly[_monthly.length - 2].value : 0.0;
 
     Widget? badge;
     if (prev > 0) {
       final d = (cur - prev) / prev * 100;
       final up = d >= 0;
       badge = _pill(
-        text: '${up ? '↑' : '↓'} ${_pct(d.abs())}%',
+        text: '${up ? '↑' : ''} ${_pct(d.abs())}%',
         bg: up ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
         fg: up ? const Color(0xFF166534) : const Color(0xFFB91C1C),
       );
     }
 
     final bs = _tasa != null
-        ? 'Bs. ${_money(cur * _tasa!)} • Tasa BCV oficial'
+        ? 'Bs. ${_money(cur * _tasa!)} Tasa BCV oficial'
         : 'Sin tasa BCV registrada';
 
     return _kpiCard(
@@ -1875,9 +1864,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final overdueAmount = _pending
         .where((p) => p.daysOverdue > 0)
         .fold<double>(0, (a, p) => a + p.saldo);
-    final morosidad = _totalBilled > 0
-        ? overdueAmount / _totalBilled * 100
-        : 0.0;
+    final morosidad =
+        _totalBilled > 0 ? overdueAmount / _totalBilled * 100 : 0.0;
 
     final filter = PopupMenuButton<int>(
       tooltip: 'Filtrar por antigüedad',
@@ -1933,7 +1921,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       label: 'Comprobantes pendientes',
       value: _bigValue('$_pendingReceipts', unit: 'por conciliar'),
       sub: InkWell(
-        onTap: () => _soon('La conciliación de comprobantes'),
+        onTap: () => setState(() => _navIndex = 3),
         child: Text(
           _receiptsLastHour == 0
               ? 'Ninguno recibido en la última hora →'
@@ -2565,7 +2553,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   Widget _payRow(_PagoRow p) {
     final amount = p.currency == 'USD'
-        ? '\$ ${_money(p.amount)}'
+        ? '\$${_money(p.amount)}'
         : 'Bs. ${_money(p.amount)}';
     const cell = TextStyle(fontSize: 12, color: AppColors.darkNavy);
 
@@ -2750,7 +2738,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           }
 
           if (rows.isNotEmpty) rows.add(SizedBox(height: gap));
-
           rows.add(
             IntrinsicHeight(
               child: Row(
@@ -2795,8 +2782,8 @@ class _DonutPainter extends CustomPainter {
 
     final visible = values.where((v) => v > 0).length;
     final gap = visible > 1 ? 0.04 : 0.0;
-    var start = -math.pi / 2;
 
+    var start = -math.pi / 2;
     for (var i = 0; i < values.length; i++) {
       if (values[i] <= 0) continue;
       final sweep = values[i] / total * math.pi * 2;

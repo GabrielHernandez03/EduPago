@@ -1,4 +1,10 @@
+// lib/features/dashboard/presentation/widgets/report_payment_dialog.dart
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../../core/services/bcv_service.dart';
 import '../../../../core/theme/app_colors.dart';
 
 class ReportPaymentDialog extends StatefulWidget {
@@ -6,13 +12,15 @@ class ReportPaymentDialog extends StatefulWidget {
   final String monthPeriod;
   final double amountUsd;
   final double tasaBcv;
+  final String? studentId;
 
   const ReportPaymentDialog({
     super.key,
-    this.studentName = 'Sofía Méndez',
-    this.monthPeriod = 'Marzo 2025',
-    this.amountUsd = 45.00,
-    this.tasaBcv = 64.25,
+    this.studentName = 'Estudiante',
+    this.monthPeriod = 'Mensualidad',
+    this.amountUsd = 0.0,
+    this.tasaBcv = 886.23,
+    this.studentId,
   });
 
   @override
@@ -20,45 +28,115 @@ class ReportPaymentDialog extends StatefulWidget {
 }
 
 class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
+  final SupabaseClient _supabase = Supabase.instance.client;
+  final BcvService _bcvService = BcvService();
+
   int _currentStep = 1; // 1: Método, 2: Datos, 3: Comprobante
-  bool _isSubmitted = false; // Estado final: ¡Reporte enviado!
+  bool _isSubmitted = false;
+  bool _isSubmitting = false;
+  bool _isCheckingRef = false;
+
+  // Tasa BCV en vivo
+  double _currentTasaBcv = 886.23;
 
   // Paso 1: Método
-  String? _selectedMethod = 'Pago Móvil';
+  String _selectedMethod = 'Pago Móvil';
 
-  // Paso 2: Datos
+  // Paso 2: Datos y Monto
   String? _selectedOriginBank;
-  String _selectedDestinationBank = 'Mercantil · •• 4872';
+  String _selectedDestinationBank = 'Mercantil 4872';
   final TextEditingController _refController = TextEditingController();
-  DateTime _selectedDate = DateTime(2025, 3, 18);
+  final TextEditingController _montoController = TextEditingController();
+  DateTime _selectedDate = DateTime.now();
   bool _isRefValid = false;
+  String? _refErrorMessage;
 
   // Paso 3: Comprobante
   String? _attachedFileName;
-  bool _isSubmitting = false;
+  Uint8List? _attachedFileBytes;
+  String _generatedReportCode = '';
 
-  final List<String> _banks = [
+  final List<String> banks = [
     'Banesco',
     'Mercantil',
     'Provincial',
     'Banco de Venezuela',
     'BNC',
+    'BFC',
+    'Bancaribe',
   ];
 
-  final List<String> _destinationAccounts = [
-    'Mercantil · •• 4872',
-    'Banesco · •• 0194',
+  final List<String> destinationAccounts = [
+    'Mercantil 4872',
+    'Banesco 0194',
+    'BNC 8812',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _currentTasaBcv = widget.tasaBcv > 0 ? widget.tasaBcv : 886.23;
+    _initDataAndRate();
+  }
 
   @override
   void dispose() {
     _refController.dispose();
+    _montoController.dispose();
     super.dispose();
+  }
+
+  /// Carga la tasa BCV real y la deuda pendiente real del estudiante
+  Future<void> _initDataAndRate() async {
+    // 1. Obtener Tasa BCV en vivo de la API
+    try {
+      final bcvData = await _bcvService.getLatestBcvRate();
+      if (mounted && bcvData.rate > 0) {
+        setState(() => _currentTasaBcv = bcvData.rate);
+      }
+    } catch (e) {
+      debugPrint('Error obteniendo tasa BCV en diálogo: $e');
+    }
+
+    // 2. Consultar deuda pendiente real en v_saldo_cuotas
+    double initialUsd = widget.amountUsd;
+    if (widget.studentId != null && widget.studentId!.isNotEmpty) {
+      try {
+        final res = await _supabase
+            .from('v_saldo_cuotas')
+            .select('saldo_usd')
+            .eq('estudiante_id', widget.studentId!)
+            .maybeSingle();
+
+        if (res != null && res['saldo_usd'] != null) {
+          final double saldoReal = (res['saldo_usd'] as num).toDouble();
+          if (saldoReal > 0) initialUsd = saldoReal;
+        }
+      } catch (e) {
+        debugPrint('Error consultando saldo del estudiante: $e');
+      }
+    }
+
+    // Pre-llenar campo de monto editable
+    if (mounted) {
+      _updateMontoField(initialUsd);
+    }
+  }
+
+  void _updateMontoField(double usdAmount) {
+    final bool isBs = _selectedMethod == 'Pago Móvil' || _selectedMethod == 'Transferencia Bancaria';
+    if (isBs) {
+      final double totalVes = usdAmount * _currentTasaBcv;
+      _montoController.text = totalVes.toStringAsFixed(2).replaceAll('.', ',');
+    } else {
+      _montoController.text = usdAmount.toStringAsFixed(2).replaceAll('.', ',');
+    }
   }
 
   void _onRefChanged(String val) {
     setState(() {
       _isRefValid = val.trim().length >= 6;
+      _refErrorMessage = null;
     });
   }
 
@@ -80,28 +158,168 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       },
     );
     if (picked != null && picked != _selectedDate) {
-      setState(() {
-        _selectedDate = picked;
-      });
+      setState(() => _selectedDate = picked);
     }
   }
 
-  void _submitReport() async {
-    setState(() => _isSubmitting = true);
-    await Future.delayed(const Duration(milliseconds: 800));
+  Future<void> _pickComprobanteFile() async {
+    try {
+      final files = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf'],
+      );
 
-    if (mounted) {
-      setState(() {
-        _isSubmitting = false;
-        _isSubmitted = true;
+      if (files.isNotEmpty) {
+        final file = files.first;
+        final bytes = await file.readAsBytes();
+        setState(() {
+          _attachedFileName = file.name;
+          _attachedFileBytes = bytes;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error al seleccionar archivo: $e');
+    }
+  }
+
+  /// Validación anti-fraude: Verifica referencia en Supabase
+  Future<bool> _validateReferenceUniqueness() async {
+    final ref = _refController.text.trim();
+    if (_selectedMethod == 'Efectivo USD') return true;
+
+    setState(() => _isCheckingRef = true);
+    try {
+      final response = await _supabase
+          .from('pagos')
+          .select('id')
+          .eq('referencia', ref)
+          .maybeSingle();
+
+      if (response != null) {
+        setState(() {
+          _refErrorMessage = 'Esta referencia ya fue registrada previamente en el sistema.';
+          _isRefValid = false;
+        });
+        return false;
+      }
+      return true;
+    } catch (e) {
+      debugPrint('Error verificando referencia: $e');
+      return true;
+    } finally {
+      if (mounted) setState(() => _isCheckingRef = false);
+    }
+  }
+
+  /// Registro final del pago obligatorio con subida a Supabase Storage
+  Future<void> _submitReport() async {
+    if (_attachedFileBytes == null || _attachedFileName == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Por favor, adjunta la captura o imagen del comprobante.'),
+          backgroundColor: Colors.orangeAccent,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+
+    try {
+      final user = _supabase.auth.currentUser;
+      String repId = '';
+      String colegioId = '';
+
+      if (user != null) {
+        final rep = await _supabase
+            .from('representantes')
+            .select('id, colegio_id')
+            .eq('perfil_id', user.id)
+            .maybeSingle();
+
+        if (rep != null) {
+          repId = rep['id'].toString();
+          colegioId = rep['colegio_id']?.toString() ?? '';
+        }
+      }
+
+      if (colegioId.isEmpty && widget.studentId != null) {
+        final est = await _supabase
+            .from('estudiantes')
+            .select('colegio_id')
+            .eq('id', widget.studentId!)
+            .maybeSingle();
+        if (est != null && est['colegio_id'] != null) {
+          colegioId = est['colegio_id'].toString();
+        }
+      }
+
+      final bool isBs = _selectedMethod == 'Pago Móvil' || _selectedMethod == 'Transferencia Bancaria';
+      final double montoIngresado = double.tryParse(_montoController.text.replaceAll(',', '.')) ?? 0.0;
+      final double montoUsdEquivalente = isBs ? (montoIngresado / _currentTasaBcv) : montoIngresado;
+
+      // 1. Subida del comprobante a Supabase Storage
+      final String fileExt = _attachedFileName!.split('.').last;
+      final String storagePath = '${DateTime.now().millisecondsSinceEpoch}_${_refController.text.trim()}.$fileExt';
+
+      await _supabase.storage.from('comprobantes').uploadBinary(
+        storagePath,
+        _attachedFileBytes!,
+      );
+
+      final String comprobanteUrl = _supabase.storage.from('comprobantes').getPublicUrl(storagePath);
+
+      String metodoKey = 'pago_movil';
+      if (_selectedMethod == 'Zelle') metodoKey = 'zelle';
+      if (_selectedMethod == 'Transferencia Bancaria') metodoKey = 'transferencia';
+      if (_selectedMethod == 'Efectivo USD') metodoKey = 'efectivo';
+
+      final String refStr = _selectedMethod == 'Efectivo USD'
+          ? 'EFECTIVO_${DateTime.now().millisecondsSinceEpoch}'
+          : _refController.text.trim();
+
+      // 2. Inserción en la tabla 'pagos'
+      await _supabase.from('pagos').insert({
+        'colegio_id': colegioId,
+        'representante_id': repId,
+        'monto': montoIngresado,
+        'moneda': isBs ? 'VES' : 'USD',
+        'tasa_aplicada': isBs ? _currentTasaBcv : null,
+        'monto_usd_equivalente': montoUsdEquivalente,
+        'metodo': metodoKey,
+        'referencia': refStr,
+        'banco_origen': _selectedOriginBank,
+        'fecha_pago': '${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}',
+        'comprobante_path': comprobanteUrl,
+        'estado': 'pendiente',
+        'creado_at': DateTime.now().toIso8601String(),
       });
+
+      final String reportCode = 'EP-${DateTime.now().year}-${refStr.length >= 4 ? refStr.substring(refStr.length - 4) : '0319'}';
+
+      if (mounted) {
+        setState(() {
+          _generatedReportCode = reportCode;
+          _isSubmitting = false;
+          _isSubmitted = true;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error al subir comprobante o registrar pago: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al enviar el reporte: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+        setState(() => _isSubmitting = false);
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final double equivalenteVes = widget.amountUsd * widget.tasaBcv;
-
     return Dialog(
       backgroundColor: Colors.white,
       surfaceTintColor: Colors.transparent,
@@ -117,7 +335,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header superior con título y botón cerrar (X)
+              // Header
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -148,7 +366,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
                             ),
                           ),
                           Text(
-                            'Mensualidad · ${widget.monthPeriod} · ${widget.studentName}',
+                            '${widget.studentName} • ${widget.monthPeriod}',
                             style: const TextStyle(
                               fontSize: 11,
                               color: AppColors.textMuted,
@@ -168,23 +386,18 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
               ),
               const SizedBox(height: 20),
 
-              // Indicador de Pasos (Stepper Header)
               _buildStepperHeader(),
               const SizedBox(height: 24),
 
-              // Contenido según el estado
               if (_isSubmitted)
                 _buildSuccessWidget()
               else ...[
-                if (_currentStep == 1) _buildStep1Widget(equivalenteVes),
-                if (_currentStep == 2) _buildStep2Widget(equivalenteVes),
-                if (_currentStep == 3) _buildStep3Widget(equivalenteVes),
+                if (_currentStep == 1) _buildStep1Widget(),
+                if (_currentStep == 2) _buildStep2Widget(),
+                if (_currentStep == 3) _buildStep3Widget(),
+                const SizedBox(height: 24),
+                _buildBottomActionButtons(),
               ],
-
-              const SizedBox(height: 24),
-
-              // Barra inferior de botones
-              _buildBottomActionButtons(),
             ],
           ),
         ),
@@ -192,7 +405,6 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     );
   }
 
-  // --- STEPPER HEADER ---
   Widget _buildStepperHeader() {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
@@ -267,7 +479,6 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     );
   }
 
-  // --- PANTALLA FINAL: ¡REPORTE ENVIADO! ---
   Widget _buildSuccessWidget() {
     return Center(
       child: Column(
@@ -307,8 +518,8 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
             'Tu pago fue enviado para conciliación. Te notificaremos cuando sea\nverificado.',
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 13,
               color: AppColors.textMuted,
+              fontSize: 13,
               height: 1.4,
             ),
           ),
@@ -319,9 +530,9 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
               color: const Color(0xFFEFF6FF),
               borderRadius: BorderRadius.circular(20),
             ),
-            child: const Text(
-              'Reporte #EP-2025-0319',
-              style: TextStyle(
+            child: Text(
+              'Reporte #$_generatedReportCode',
+              style: const TextStyle(
                 color: AppColors.primaryBlue,
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
@@ -334,8 +545,8 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     );
   }
 
-  // --- PASO 1: SELECCIONAR MÉTODO DE PAGO ---
-  Widget _buildStep1Widget(double equivalenteVes) {
+  // PASO 1: SELECCIONAR MÉTODO
+  Widget _buildStep1Widget() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -349,7 +560,6 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
           style: TextStyle(fontSize: 12, color: AppColors.textMuted),
         ),
         const SizedBox(height: 18),
-
         GridView.count(
           crossAxisCount: 2,
           shrinkWrap: true,
@@ -365,7 +575,6 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
           ],
         ),
         const SizedBox(height: 18),
-
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
@@ -381,11 +590,11 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Tasa BCV oficial: 1 USD = ${widget.tasaBcv.toStringAsFixed(2).replaceAll('.', ',')} VES',
+                    'Tasa BCV oficial: 1 USD = ${_currentTasaBcv.toStringAsFixed(2).replaceAll('.', ',')} VES',
                     style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF166534)),
                   ),
                   const Text(
-                    'Sincronizada hoy, 18/03/2025 a las 08:00 AM',
+                    'Sincronizada automáticamente vía API',
                     style: TextStyle(fontSize: 10, color: Color(0xFF15803D)),
                   ),
                 ],
@@ -400,7 +609,12 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
   Widget _buildMethodCard(String title, String badge, String subtitle, IconData icon) {
     final bool isSelected = _selectedMethod == title;
     return InkWell(
-      onTap: () => setState(() => _selectedMethod = title),
+      onTap: () {
+        setState(() {
+          _selectedMethod = title;
+          _updateMontoField(widget.amountUsd);
+        });
+      },
       borderRadius: BorderRadius.circular(12),
       child: Container(
         padding: const EdgeInsets.all(12),
@@ -455,8 +669,12 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     );
   }
 
-  // --- PASO 2: FORMULARIO DE DATOS ---
-  Widget _buildStep2Widget(double equivalenteVes) {
+  // PASO 2: DATOS Y MONTO EDITABLE
+  Widget _buildStep2Widget() {
+    final bool isBs = _selectedMethod == 'Pago Móvil' || _selectedMethod == 'Transferencia Bancaria';
+    final double rawMonto = double.tryParse(_montoController.text.replaceAll(',', '.')) ?? 0.0;
+    final double equivalenteUsd = isBs ? (rawMonto / _currentTasaBcv) : rawMonto;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -464,7 +682,6 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
         const SizedBox(height: 4),
         const Text('Ingresa los datos tal como aparecen en tu comprobante.', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
         const SizedBox(height: 16),
-
         Row(
           children: [
             Expanded(
@@ -476,15 +693,14 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
                   DropdownButtonFormField<String>(
                     value: _selectedOriginBank,
                     hint: const Text('Seleccionar banco', style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
-                    decoration: _inputDecoration(''),
-                    items: _banks.map((b) => DropdownMenuItem(value: b, child: Text(b, style: const TextStyle(fontSize: 13)))).toList(),
+                    decoration: inputDecoration(''),
+                    items: banks.map((b) => DropdownMenuItem(value: b, child: Text(b, style: const TextStyle(fontSize: 13)))).toList(),
                     onChanged: (val) => setState(() => _selectedOriginBank = val),
                   ),
                 ],
               ),
             ),
             const SizedBox(width: 12),
-
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -493,8 +709,8 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
                   const SizedBox(height: 6),
                   DropdownButtonFormField<String>(
                     value: _selectedDestinationBank,
-                    decoration: _inputDecoration(''),
-                    items: _destinationAccounts.map((c) => DropdownMenuItem(value: c, child: Text(c, style: const TextStyle(fontSize: 13)))).toList(),
+                    decoration: inputDecoration(''),
+                    items: destinationAccounts.map((c) => DropdownMenuItem(value: c, child: Text(c, style: const TextStyle(fontSize: 13)))).toList(),
                     onChanged: (val) => setState(() => _selectedDestinationBank = val!),
                   ),
                 ],
@@ -503,33 +719,35 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
           ],
         ),
         const SizedBox(height: 14),
-
         const Text('Referencia bancaria', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
         const SizedBox(height: 6),
         TextFormField(
           controller: _refController,
           onChanged: _onRefChanged,
           keyboardType: TextInputType.number,
-          style: const TextStyle(fontSize: 13, color: AppColors.darkNavy),
           decoration: InputDecoration(
             hintText: 'Mínimo 6 dígitos',
             hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 13),
             prefixIcon: const Icon(Icons.description_outlined, color: AppColors.textMuted, size: 18),
-            suffixIcon: _isRefValid ? const Icon(Icons.check_circle, color: AppColors.successGreen, size: 20) : null,
+            suffixIcon: _isCheckingRef
+                ? const SizedBox(width: 16, height: 16, child: Padding(padding: EdgeInsets.all(10), child: CircularProgressIndicator(strokeWidth: 2)))
+                : (_isRefValid ? const Icon(Icons.check_circle, color: Color(0xFF16A34A), size: 20) : null),
             filled: true,
             fillColor: Colors.white,
             contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: _isRefValid ? AppColors.successGreen : AppColors.cardBorder)),
-            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: _isRefValid ? AppColors.successGreen : AppColors.cardBorder)),
-            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: _isRefValid ? AppColors.successGreen : AppColors.primaryBlue, width: 1.5)),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: _isRefValid ? const Color(0xFF16A34A) : AppColors.cardBorder)),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: _isRefValid ? const Color(0xFF16A34A) : AppColors.cardBorder)),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: _isRefValid ? const Color(0xFF16A34A) : AppColors.primaryBlue, width: 1.5)),
           ),
         ),
-        if (_isRefValid) ...[
+        if (_refErrorMessage != null) ...[
           const SizedBox(height: 4),
-          const Text('Referencia disponible para conciliación.', style: TextStyle(fontSize: 11, color: AppColors.successGreen, fontWeight: FontWeight.bold)),
+          Text(_refErrorMessage!, style: const TextStyle(fontSize: 11, color: Colors.redAccent, fontWeight: FontWeight.bold)),
+        ] else if (_isRefValid) ...[
+          const SizedBox(height: 4),
+          const Text('Referencia válida y disponible para conciliación.', style: TextStyle(fontSize: 11, color: Color(0xFF16A34A), fontWeight: FontWeight.bold)),
         ],
         const SizedBox(height: 14),
-
         Row(
           children: [
             Expanded(
@@ -554,7 +772,10 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
                             children: [
                               const Icon(Icons.calendar_today_outlined, size: 16, color: AppColors.textMuted),
                               const SizedBox(width: 8),
-                              Text('${_selectedDate.day.toString().padLeft(2, '0')}/${_selectedDate.month.toString().padLeft(2, '0')}/${_selectedDate.year}', style: const TextStyle(fontSize: 13, color: AppColors.darkNavy)),
+                              Text(
+                                '${_selectedDate.day.toString().padLeft(2, '0')}/${_selectedDate.month.toString().padLeft(2, '0')}/${_selectedDate.year}',
+                                style: const TextStyle(fontSize: 13, color: AppColors.darkNavy),
+                              ),
                             ],
                           ),
                           const Icon(Icons.calendar_month_outlined, size: 16, color: AppColors.textMuted),
@@ -566,21 +787,27 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
               ),
             ),
             const SizedBox(width: 12),
-
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Monto pagado (VES)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
+                  Text('Monto pagado (${isBs ? 'VES' : 'USD'})', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
                   const SizedBox(height: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: AppColors.cardBorder),
+                  TextFormField(
+                    controller: _montoController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d+[\.,]?\d{0,2}'))],
+                    onChanged: (_) => setState(() {}),
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.darkNavy),
+                    decoration: InputDecoration(
+                      prefixText: isBs ? 'Bs. ' : '\$ ',
+                      filled: true,
+                      fillColor: Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.cardBorder)),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.cardBorder)),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.primaryBlue, width: 1.5)),
                     ),
-                    child: Text('Bs. ${equivalenteVes.toStringAsFixed(2).replaceAll('.', ',')}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
                   ),
                 ],
               ),
@@ -588,7 +815,6 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
           ],
         ),
         const SizedBox(height: 16),
-
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
@@ -601,9 +827,15 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
               const Text('Equivalente estimado', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
               Row(
                 children: [
-                  Text('\$${widget.amountUsd.toStringAsFixed(2).replaceAll('.', ',')} USD', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.successGreen)),
+                  Text(
+                    '\$${equivalenteUsd.toStringAsFixed(2).replaceAll('.', ',')} USD',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF16A34A)),
+                  ),
                   const SizedBox(width: 8),
-                  Text('Calculado a tasa BCV ${widget.tasaBcv.toStringAsFixed(2).replaceAll('.', ',')} VES/USD', style: const TextStyle(fontSize: 10, color: AppColors.textMuted)),
+                  Text(
+                    'Calculado a tasa BCV ${_currentTasaBcv.toStringAsFixed(2).replaceAll('.', ',')} VES/USD',
+                    style: const TextStyle(fontSize: 10, color: AppColors.textMuted),
+                  ),
                 ],
               ),
             ],
@@ -613,8 +845,11 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     );
   }
 
-  // --- PASO 3: COMPROBANTE ---
-  Widget _buildStep3Widget(double equivalenteVes) {
+  // PASO 3: COMPROBANTE
+  Widget _buildStep3Widget() {
+    final bool isBs = _selectedMethod == 'Pago Móvil' || _selectedMethod == 'Transferencia Bancaria';
+    final double rawMonto = double.tryParse(_montoController.text.replaceAll(',', '.')) ?? 0.0;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -622,54 +857,62 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
         const SizedBox(height: 4),
         const Text('Asegúrate de que la referencia, fecha y monto sean legibles.', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
         const SizedBox(height: 18),
-
         GestureDetector(
-          onTap: () {
-            setState(() {
-              _attachedFileName = 'Comprobante_Pago_Marzo.png';
-            });
-          },
+          onTap: _pickComprobanteFile,
           child: Container(
             width: double.infinity,
             padding: const EdgeInsets.all(28),
             decoration: BoxDecoration(
               color: const Color(0xFFF8FAFC),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFBFDBFE), width: 1.5),
+              border: Border.all(
+                color: _attachedFileBytes != null ? const Color(0xFF16A34A) : const Color(0xFFBFDBFE),
+                width: 1.5,
+              ),
             ),
             child: Column(
               children: [
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFEFF6FF),
+                    color: _attachedFileBytes != null ? const Color(0xFFDCFCE7) : const Color(0xFFEFF6FF),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Icon(Icons.cloud_upload_outlined, color: AppColors.primaryBlue, size: 28),
+                  child: Icon(
+                    _attachedFileBytes != null ? Icons.check_circle_outline : Icons.cloud_upload_outlined,
+                    color: _attachedFileBytes != null ? const Color(0xFF16A34A) : AppColors.primaryBlue,
+                    size: 28,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 Text(
                   _attachedFileName ?? 'Adjuntar captura o comprobante',
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.primaryBlue),
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: _attachedFileBytes != null ? const Color(0xFF16A34A) : AppColors.primaryBlue,
+                  ),
                 ),
                 const SizedBox(height: 4),
                 RichText(
-                  text: const TextSpan(
-                    style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+                  text: TextSpan(
+                    style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
                     children: [
-                      TextSpan(text: 'Arrastra el archivo aquí o '),
-                      TextSpan(text: 'selecciónalo', style: TextStyle(color: AppColors.primaryBlue, fontWeight: FontWeight.bold)),
+                      TextSpan(text: _attachedFileBytes != null ? 'Haz clic para ' : 'Haz clic aquí para '),
+                      TextSpan(
+                        text: _attachedFileBytes != null ? 'cambiar archivo' : 'seleccionar archivo',
+                        style: const TextStyle(color: AppColors.primaryBlue, fontWeight: FontWeight.bold),
+                      ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 4),
-                const Text('JPG, PNG o PDF · Máximo 5 MB', style: TextStyle(fontSize: 10, color: AppColors.textMuted)),
+                const Text('JPG, PNG o PDF • Máximo 5 MB', style: TextStyle(fontSize: 10, color: AppColors.textMuted)),
               ],
             ),
           ),
         ),
         const SizedBox(height: 20),
-
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -678,9 +921,9 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
           ),
           child: Column(
             children: [
-              _buildSummaryRow('Método', _selectedMethod ?? 'Pago Móvil'),
+              _buildSummaryRow('Método', _selectedMethod),
               const SizedBox(height: 8),
-              _buildSummaryRow('Monto reportado', 'Bs. ${equivalenteVes.toStringAsFixed(2).replaceAll('.', ',')}'),
+              _buildSummaryRow('Monto reportado', isBs ? 'Bs. ${rawMonto.toStringAsFixed(2).replaceAll('.', ',')}' : '\$${rawMonto.toStringAsFixed(2).replaceAll('.', ',')} USD'),
               const SizedBox(height: 8),
               _buildSummaryRow('Estudiante', widget.studentName),
             ],
@@ -700,7 +943,6 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     );
   }
 
-  // --- BOTONES DE NAVEGACIÓN INFERIOR ---
   Widget _buildBottomActionButtons() {
     if (_isSubmitted) {
       return Row(
@@ -712,15 +954,10 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
               backgroundColor: AppColors.primaryBlue,
               foregroundColor: Colors.white,
               elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
             ),
-            child: const Text(
-              'Volver a mi portal',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-            ),
+            child: const Text('Volver a mi portal', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
           ),
         ],
       );
@@ -751,12 +988,17 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
             ),
             child: const Text('Atrás', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
           ),
-
         if (_currentStep < 3)
           ElevatedButton(
             onPressed: (_currentStep == 2 && !_isRefValid)
                 ? null
-                : () => setState(() => _currentStep++),
+                : () async {
+                    if (_currentStep == 2) {
+                      final bool isUnique = await _validateReferenceUniqueness();
+                      if (!isUnique) return;
+                    }
+                    setState(() => _currentStep++);
+                  },
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primaryBlue,
               disabledBackgroundColor: const Color(0xFFBFDBFE),
@@ -765,19 +1007,20 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
             ),
-            child: const Row(
+            child: Row(
               children: [
-                Text('Continuar', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                SizedBox(width: 8),
-                Icon(Icons.arrow_forward, size: 16),
+                Text(_isCheckingRef ? 'Verificando...' : 'Continuar', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                const SizedBox(width: 8),
+                const Icon(Icons.arrow_forward, size: 16),
               ],
             ),
           )
         else
           ElevatedButton(
-            onPressed: _isSubmitting ? null : _submitReport,
+            onPressed: (_isSubmitting || _attachedFileBytes == null) ? null : _submitReport,
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primaryBlue,
+              disabledBackgroundColor: const Color(0xFFBFDBFE),
               foregroundColor: Colors.white,
               elevation: 0,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -797,7 +1040,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     );
   }
 
-  InputDecoration _inputDecoration(String hint) {
+  InputDecoration inputDecoration(String hint) {
     return InputDecoration(
       hintText: hint,
       hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 13),
