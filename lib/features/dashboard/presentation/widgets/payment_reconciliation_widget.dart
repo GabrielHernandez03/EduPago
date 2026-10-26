@@ -13,10 +13,12 @@ class PaymentReconciliationWidget extends StatefulWidget {
   });
 
   @override
-  State<PaymentReconciliationWidget> createState() => _PaymentReconciliationWidgetState();
+  State<PaymentReconciliationWidget> createState() =>
+      _PaymentReconciliationWidgetState();
 }
 
-class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidget> {
+class _PaymentReconciliationWidgetState
+    extends State<PaymentReconciliationWidget> {
   final SupabaseClient _supabase = Supabase.instance.client;
 
   List<Map<String, dynamic>> _pendingPayments = [];
@@ -73,73 +75,119 @@ class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidge
     }
   }
 
-  Future<void> _approvePayment(String pagoId) async {
+  Future<void> _approvePayment(Map<String, dynamic> pago) async {
+    final String pagoId = pago['id'].toString();
     final user = _supabase.auth.currentUser;
+
     try {
-      // 1. Consultar el pago para obtener representante y monto
-      final pago = await _supabase
+      // Solo se cambia el estado del pago. El trigger de base de datos
+      // (fn_conciliar_cuota_al_aprobar_pago) aplica el monto por FIFO a las
+      // cuotas de todos los hijos del representante y registra cada abono en
+      // pago_aplicaciones. Si sobra dinero queda como saldo a favor.
+      // .select() devuelve las filas realmente actualizadas: si viene vacío,
+      // la base de datos bloqueó el cambio (p. ej. por permisos/RLS).
+      final updated = await _supabase
           .from('pagos')
-          .select('representante_id, monto_usd_equivalente')
+          .update({
+            'estado': 'aprobado',
+            'revisado_por': user?.id,
+            'revisado_at': DateTime.now().toUtc().toIso8601String(),
+          })
           .eq('id', pagoId)
-          .single();
+          .select('id');
 
-      final String repId = pago['representante_id'].toString();
-      final double montoAprobado = (pago['monto_usd_equivalente'] as num?)?.toDouble() ?? 0.0;
-
-      // 2. Cambiar estado del pago a 'aprobado'
-      await _supabase.from('pagos').update({
-        'estado': 'aprobado',
-        'revisado_por': user?.id,
-        'revisado_at': DateTime.now().toIso8601String(),
-      }).eq('id', pagoId);
-
-      // 3. Buscar estudiantes del representante para saldar su cuota
-      final repEstud = await _supabase
-          .from('representante_estudiante')
-          .select('estudiante_id')
-          .eq('representante_id', repId);
-
-      final List<String> estIds = (repEstud as List)
-          .map((e) => e['estudiante_id'].toString())
-          .toList();
-
-      if (estIds.isNotEmpty) {
-        final cuotasPendientes = await _supabase
-            .from('cuotas')
-            .select('id, monto_usd')
-            .inFilter('estudiante_id', estIds)
-            .eq('estado', 'pendiente')
-            .order('fecha_vencimiento', ascending: true);
-
-        double saldoPorAplicar = montoAprobado;
-
-        for (final cuota in cuotasPendientes) {
-          final double montoCuota = (cuota['monto_usd'] as num).toDouble();
-          if (saldoPorAplicar >= montoCuota) {
-            await _supabase
-                .from('cuotas')
-                .update({'estado': 'pagado'})
-                .eq('id', cuota['id']);
-            saldoPorAplicar -= montoCuota;
-          }
-          if (saldoPorAplicar <= 0) break;
-        }
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Pago aprobado y cuota conciliada exitosamente.'),
-            backgroundColor: Color(0xFF059669),
-          ),
+      if ((updated as List).isEmpty) {
+        throw Exception(
+          'La base de datos no actualizó el pago (revisa permisos/RLS de la tabla pagos).',
         );
-        _fetchPayments();
-        widget.onPaymentProcessed?.call(); // Recarga las métricas del Dashboard
       }
+
+      if (!mounted) return;
+
+      // Quita el pago de la lista al instante y luego recarga desde la BD.
+      setState(() {
+        _pendingPayments.removeWhere((p) => p['id'].toString() == pagoId);
+      });
+      widget.onPaymentProcessed?.call(); // Recarga las métricas del Dashboard
+      _fetchPayments();
+
+      await _showApprovedDialog(pago);
     } catch (e) {
       debugPrint('Error al aprobar el pago: $e');
-      _showErrorSnackBar('Error al aprobar el pago: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al aprobar el pago: $e'),
+          backgroundColor: Colors.redAccent,
+          duration: const Duration(seconds: 10),
+        ),
+      );
     }
+  }
+
+  /// Diálogo de confirmación que se muestra tras aprobar un pago.
+  Future<void> _showApprovedDialog(Map<String, dynamic> pago) {
+    final rep = pago['representantes'];
+    final String nombre = rep is Map
+        ? '${rep['nombres'] ?? ''} ${rep['apellidos'] ?? ''}'.trim()
+        : '';
+    final num monto = (pago['monto'] as num?) ?? 0;
+    final num usd = (pago['monto_usd_equivalente'] as num?) ?? 0;
+    final String moneda = (pago['moneda'] ?? '').toString();
+
+    return showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        contentPadding: const EdgeInsets.fromLTRB(24, 28, 24, 8),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: const BoxDecoration(
+                color: Color(0xFFDCFCE7),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.check_circle,
+                color: Color(0xFF16A34A),
+                size: 48,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              '¡Pago aprobado!',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            if (nombre.isNotEmpty)
+              Text(nombre, style: const TextStyle(fontWeight: FontWeight.w600)),
+            Text('Referencia: ${pago['referencia'] ?? '-'}'),
+            Text('Monto: ${monto.toStringAsFixed(2)} $moneda'),
+            Text('Equivalente: \$${usd.toStringAsFixed(2)} USD'),
+            const SizedBox(height: 12),
+            const Text(
+              'Se aplicó a las cuotas más antiguas. Cualquier excedente '
+              'queda como saldo a favor del representante.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: Colors.black54),
+            ),
+          ],
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF059669),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Entendido'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _rejectPaymentDialog(String pagoId) async {
@@ -154,7 +202,10 @@ class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidge
           children: [
             Icon(Icons.cancel_outlined, color: Colors.redAccent),
             SizedBox(width: 8),
-            Text('Rechazar Pago', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            Text(
+              'Rechazar Pago',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
           ],
         ),
         content: Form(
@@ -172,8 +223,11 @@ class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidge
                 controller: motivoController,
                 maxLines: 3,
                 decoration: InputDecoration(
-                  hintText: 'Ej. Referencia no encontrada en la cuenta bancaria...',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  hintText:
+                      'Ej. Referencia no encontrada en la cuenta bancaria...',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
                 validator: (val) {
                   if (val == null || val.trim().isEmpty) {
@@ -196,7 +250,10 @@ class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidge
                 Navigator.pop(ctx, true);
               }
             },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+            ),
             child: const Text('Confirmar Rechazo'),
           ),
         ],
@@ -206,12 +263,15 @@ class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidge
     if (confirmed == true) {
       final user = _supabase.auth.currentUser;
       try {
-        await _supabase.from('pagos').update({
-          'estado': 'rechazado',
-          'motivo_rechazo': motivoController.text.trim(),
-          'revisado_por': user?.id,
-          'revisado_at': DateTime.now().toIso8601String(),
-        }).eq('id', pagoId);
+        await _supabase
+            .from('pagos')
+            .update({
+              'estado': 'rechazado',
+              'motivo_rechazo': motivoController.text.trim(),
+              'revisado_por': user?.id,
+              'revisado_at': DateTime.now().toUtc().toIso8601String(),
+            })
+            .eq('id', pagoId);
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -221,11 +281,35 @@ class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidge
             ),
           );
           _fetchPayments();
-          widget.onPaymentProcessed?.call(); // <-- Notifica al Dashboard principal
+          widget.onPaymentProcessed
+              ?.call(); // <-- Notifica al Dashboard principal
         }
       } catch (e) {
         _showErrorSnackBar('Error al rechazar el pago: $e');
       }
+    }
+  }
+
+  /// Devuelve una URL firmada y temporal para ver el comprobante.
+  /// Acepta la ruta del archivo (formato nuevo) o la URL pública completa que
+  /// guardaban los registros antiguos. El bucket debe ser privado.
+  Future<String?> _resolveComprobanteUrl(String stored) async {
+    if (stored.isEmpty) return null;
+    String path = stored;
+    final legacy = RegExp(
+      r'/storage/v1/object/(?:public|sign|authenticated)/comprobantes/',
+    ).firstMatch(stored);
+    if (legacy != null) {
+      path = Uri.decodeComponent(stored.substring(legacy.end).split('?').first);
+    }
+    try {
+      return await _supabase.storage
+          .from('comprobantes')
+          .createSignedUrl(path, 300);
+    } catch (e) {
+      debugPrint('No se pudo firmar el comprobante: $e');
+      // Último recurso para registros antiguos con bucket aún público.
+      return stored.startsWith('http') ? stored : null;
     }
   }
 
@@ -251,21 +335,53 @@ class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidge
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Detalle de Comprobante', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
-                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
+                  const Text(
+                    'Detalle de Comprobante',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.darkNavy,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
                 ],
               ),
               const Divider(),
               const SizedBox(height: 12),
               _buildDetailRow('Representante', '$repNombre (C.I. $repCedula)'),
-              _buildDetailRow('Método de pago', pago['metodo'].toString().toUpperCase()),
-              _buildDetailRow('Banco Origen', pago['banco_origen'] ?? 'No especificado'),
-              _buildDetailRow('Número de Referencia', pago['referencia'] ?? 'N/A'),
-              _buildDetailRow('Monto Reportado', '${pago['moneda']} ${pago['monto']}'),
-              _buildDetailRow('Equivalente USD', '\$${(pago['monto_usd_equivalente'] as num?)?.toStringAsFixed(2)} USD'),
+              _buildDetailRow(
+                'Método de pago',
+                pago['metodo'].toString().toUpperCase(),
+              ),
+              _buildDetailRow(
+                'Banco Origen',
+                pago['banco_origen'] ?? 'No especificado',
+              ),
+              _buildDetailRow(
+                'Número de Referencia',
+                pago['referencia'] ?? 'N/A',
+              ),
+              _buildDetailRow(
+                'Monto Reportado',
+                '${pago['moneda']} ${pago['monto']}',
+              ),
+              _buildDetailRow(
+                'Equivalente USD',
+                '\$${(pago['monto_usd_equivalente'] as num?)?.toStringAsFixed(2)} USD',
+              ),
               _buildDetailRow('Fecha de Reporte', pago['fecha_pago'] ?? ''),
               const SizedBox(height: 16),
-              const Text('Soporte / Comprobante:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
+              const Text(
+                'Soporte / Comprobante:',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.darkNavy,
+                ),
+              ),
               const SizedBox(height: 8),
               Container(
                 height: 200,
@@ -275,14 +391,55 @@ class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidge
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: AppColors.cardBorder),
                 ),
-                child: comprobanteUrl.startsWith('http')
-                    ? (isPdf
-                        ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.picture_as_pdf, color: Colors.red, size: 48), SizedBox(height: 8), Text('Documento PDF adjunto')]))
-                        : ClipRRect(
+                child: comprobanteUrl.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'Sin imagen de comprobante adjunta',
+                          style: TextStyle(color: AppColors.textMuted),
+                        ),
+                      )
+                    : FutureBuilder<String?>(
+                        future: _resolveComprobanteUrl(comprobanteUrl),
+                        builder: (context, snap) {
+                          if (snap.connectionState != ConnectionState.done) {
+                            return const Center(
+                              child: CircularProgressIndicator(),
+                            );
+                          }
+                          final String? url = snap.data;
+                          if (url == null) {
+                            return const Center(
+                              child: Text('No se pudo cargar el comprobante'),
+                            );
+                          }
+                          if (isPdf) {
+                            return const Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.picture_as_pdf,
+                                    color: Colors.red,
+                                    size: 48,
+                                  ),
+                                  SizedBox(height: 8),
+                                  Text('Documento PDF adjunto'),
+                                ],
+                              ),
+                            );
+                          }
+                          return ClipRRect(
                             borderRadius: BorderRadius.circular(8),
-                            child: Image.network(comprobanteUrl, fit: BoxFit.contain, errorBuilder: (c, e, s) => const Center(child: Text('No se pudo cargar la imagen'))),
-                          ))
-                    : const Center(child: Text('Sin imagen de comprobante adjunta', style: TextStyle(color: AppColors.textMuted))),
+                            child: Image.network(
+                              url,
+                              fit: BoxFit.contain,
+                              errorBuilder: (c, e, s) => const Center(
+                                child: Text('No se pudo cargar la imagen'),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
               ),
               const SizedBox(height: 20),
               if (pago['estado'] == 'pendiente')
@@ -294,7 +451,10 @@ class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidge
                         Navigator.pop(ctx);
                         _rejectPaymentDialog(pago['id'].toString());
                       },
-                      style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent, side: const BorderSide(color: Colors.redAccent)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.redAccent,
+                        side: const BorderSide(color: Colors.redAccent),
+                      ),
                       icon: const Icon(Icons.close, size: 16),
                       label: const Text('Rechazar'),
                     ),
@@ -302,9 +462,12 @@ class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidge
                     ElevatedButton.icon(
                       onPressed: () {
                         Navigator.pop(ctx);
-                        _approvePayment(pago['id'].toString());
+                        _approvePayment(pago);
                       },
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF059669), foregroundColor: Colors.white),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF059669),
+                        foregroundColor: Colors.white,
+                      ),
                       icon: const Icon(Icons.check, size: 16),
                       label: const Text('Aprobar Pago'),
                     ),
@@ -323,8 +486,18 @@ class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidge
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textMuted)),
-          Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+          ),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: AppColors.darkNavy,
+            ),
+          ),
         ],
       ),
     );
@@ -351,11 +524,18 @@ class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidge
               children: [
                 const Row(
                   children: [
-                    Icon(Icons.fact_check_outlined, color: AppColors.primaryBlue),
+                    Icon(
+                      Icons.fact_check_outlined,
+                      color: AppColors.primaryBlue,
+                    ),
                     SizedBox(width: 8),
                     Text(
                       'Conciliación de Pagos',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.darkNavy),
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.darkNavy,
+                      ),
                     ),
                   ],
                 ),
@@ -363,10 +543,22 @@ class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidge
                   value: _filterStatus,
                   underline: const SizedBox(),
                   items: const [
-                    DropdownMenuItem(value: 'pendiente', child: Text('Pendientes de revisión')),
-                    DropdownMenuItem(value: 'aprobado', child: Text('Aprobados')),
-                    DropdownMenuItem(value: 'rechazado', child: Text('Rechazados')),
-                    DropdownMenuItem(value: 'todos', child: Text('Todos los registros')),
+                    DropdownMenuItem(
+                      value: 'pendiente',
+                      child: Text('Pendientes de revisión'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'aprobado',
+                      child: Text('Aprobados'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'rechazado',
+                      child: Text('Rechazados'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'todos',
+                      child: Text('Todos los registros'),
+                    ),
                   ],
                   onChanged: (val) {
                     if (val != null) {
@@ -390,11 +582,20 @@ class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidge
                 width: double.infinity,
                 child: Column(
                   children: [
-                    Icon(Icons.check_circle_outline, size: 48, color: Colors.green.shade400),
+                    Icon(
+                      Icons.check_circle_outline,
+                      size: 48,
+                      color: Colors.green.shade400,
+                    ),
                     const SizedBox(height: 12),
                     Text(
-                      _filterStatus == 'pendiente' ? '¡Al día! No hay pagos pendientes por conciliar.' : 'No se encontraron registros.',
-                      style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                      _filterStatus == 'pendiente'
+                          ? '¡Al día! No hay pagos pendientes por conciliar.'
+                          : 'No se encontraron registros.',
+                      style: const TextStyle(
+                        color: AppColors.textMuted,
+                        fontSize: 13,
+                      ),
                     ),
                   ],
                 ),
@@ -413,21 +614,41 @@ class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidge
                   final String status = pago['estado'] ?? 'pendiente';
 
                   Color badgeColor = Colors.orange;
-                  if (status == 'aprobado') badgeColor = const Color(0xFF059669);
+                  if (status == 'aprobado')
+                    badgeColor = const Color(0xFF059669);
                   if (status == 'rechazado') badgeColor = Colors.redAccent;
 
                   return ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     leading: CircleAvatar(
                       backgroundColor: badgeColor.withOpacity(0.1),
                       child: Icon(
-                        status == 'aprobado' ? Icons.check : (status == 'rechazado' ? Icons.close : Icons.access_time),
+                        status == 'aprobado'
+                            ? Icons.check
+                            : (status == 'rechazado'
+                                  ? Icons.close
+                                  : Icons.access_time),
                         color: badgeColor,
                         size: 20,
                       ),
                     ),
-                    title: Text('$repNombre — ${pago['referencia']}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                    subtitle: Text('${pago['metodo'].toString().toUpperCase()} • ${pago['fecha_pago']}', style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                    title: Text(
+                      '$repNombre — ${pago['referencia']}',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    subtitle: Text(
+                      '${pago['metodo'].toString().toUpperCase()} • ${pago['fecha_pago']}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -437,17 +658,27 @@ class _PaymentReconciliationWidgetState extends State<PaymentReconciliationWidge
                           children: [
                             Text(
                               '${pago['moneda']} ${pago['monto']}',
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.darkNavy),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                                color: AppColors.darkNavy,
+                              ),
                             ),
                             Text(
                               '\$${(pago['monto_usd_equivalente'] as num?)?.toStringAsFixed(2)} USD',
-                              style: const TextStyle(fontSize: 10, color: AppColors.textMuted),
+                              style: const TextStyle(
+                                fontSize: 10,
+                                color: AppColors.textMuted,
+                              ),
                             ),
                           ],
                         ),
                         const SizedBox(width: 12),
                         IconButton(
-                          icon: const Icon(Icons.visibility_outlined, color: AppColors.primaryBlue),
+                          icon: const Icon(
+                            Icons.visibility_outlined,
+                            color: AppColors.primaryBlue,
+                          ),
                           onPressed: () => _showDetailModal(pago),
                         ),
                       ],

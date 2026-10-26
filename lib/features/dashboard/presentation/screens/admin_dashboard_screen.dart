@@ -13,6 +13,7 @@ import '../../../landing/presentation/screens/home_screen.dart';
 import '../widgets/students_import_card.dart';
 import '../widgets/payment_reconciliation_widget.dart';
 import '../widgets/generate_billing_dialog.dart';
+import '../../../../core/widgets/dashboard_shell.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -34,7 +35,15 @@ class _PendingItem {
   final String studentId;
   final double saldo;
   final int daysOverdue; // <= 0 significa vigente (aún no vence)
-  const _PendingItem(this.studentId, this.saldo, this.daysOverdue);
+  final String? periodo; // Ej. "Diciembre 2026"
+  final DateTime? due; // fecha de vencimiento de la cuota
+  const _PendingItem(
+    this.studentId,
+    this.saldo,
+    this.daysOverdue, {
+    this.periodo,
+    this.due,
+  });
 }
 
 class _PagoRow {
@@ -57,27 +66,23 @@ class _PagoRow {
   });
 }
 
-class _NavDef {
-  final IconData icon;
-  final IconData activeIcon;
-  final String title;
-  const _NavDef(this.icon, this.activeIcon, this.title);
-}
-
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
-  final _scaffoldKey = GlobalKey<ScaffoldState>();
   final BcvService _bcvService = BcvService();
 
-  static const _navItems = <_NavDef>[
-    _NavDef(Icons.home_outlined, Icons.home, 'Resumen'),
-    _NavDef(Icons.people_outline, Icons.people, 'Estudiantes'),
-    _NavDef(
+  static const _navItems = <DashboardNavItem>[
+    DashboardNavItem(Icons.home_outlined, Icons.home, 'Resumen'),
+    DashboardNavItem(Icons.people_outline, Icons.people, 'Estudiantes'),
+    DashboardNavItem(
       Icons.account_balance_wallet_outlined,
       Icons.account_balance_wallet,
       'Pagos',
     ),
-    _NavDef(Icons.receipt_long_outlined, Icons.receipt_long, 'Conciliación'),
-    _NavDef(Icons.bar_chart_outlined, Icons.bar_chart, 'Reportes'),
+    DashboardNavItem(
+      Icons.receipt_long_outlined,
+      Icons.receipt_long,
+      'Conciliación',
+    ),
+    DashboardNavItem(Icons.bar_chart_outlined, Icons.bar_chart, 'Reportes'),
   ];
 
   static const _monthsShort = [
@@ -134,7 +139,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   // Estado de la pantalla
   bool _loading = true;
   String? _error;
-  bool _sidebarExpanded = false;
   int _navIndex = 0;
 
   // Validación de cuenta / colegio
@@ -259,7 +263,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         await _logoutByInactivity();
         return;
       }
-      if (_lastActivity.difference(_persistedActivity) >= const Duration(seconds: 10)) {
+      if (_lastActivity.difference(_persistedActivity) >=
+          const Duration(seconds: 10)) {
         _persistedActivity = _lastActivity;
         IdleSessionStore.touch(_lastActivity);
       }
@@ -313,7 +318,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     ).then((_) => _idleWarningOpen = false);
   }
 
-  Future<void> _logoutByInactivity() => _forceLogout('Tu sesión se cerró por inactividad.');
+  Future<void> _logoutByInactivity() =>
+      _forceLogout('Tu sesión se cerró por inactividad.');
 
   Future<void> _forceLogout(String message) async {
     if (_loggingOut) return;
@@ -362,7 +368,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     if (v <= 0) return 100;
     final exp = math.pow(10, (math.log(v) / math.ln10).floor()).toDouble();
     final f = v / exp;
-    final nice = f <= 1 ? 1.0 : (f <= 2 ? 2.0 : (f <= 2.5 ? 2.5 : (f <= 5 ? 5.0 : 10.0)));
+    final nice = f <= 1
+        ? 1.0
+        : (f <= 2 ? 2.0 : (f <= 2.5 ? 2.5 : (f <= 5 ? 5.0 : 10.0)));
     return nice * exp;
   }
 
@@ -527,7 +535,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       try {
         final resCuotas = await supabase
             .from('cuotas')
-            .select('id, fecha_vencimiento');
+            .select('id, fecha_vencimiento, periodo');
         cuotaRows = List<Map<String, dynamic>>.from(resCuotas);
       } catch (e) {
         debugPrint('Error en cuotas: $e');
@@ -575,6 +583,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           c['id'].toString(): DateTime.tryParse('${c['fecha_vencimiento']}'),
       };
 
+      // Período (mes) de cada cuota
+      final periodos = <String, String?>{
+        for (final c in cuotaRows) c['id'].toString(): c['periodo']?.toString(),
+      };
+
       // Estado de cada estudiante: 0 solvente, 1 pendiente, 2 insolvente
       final status = <String, int>{
         for (final s in students) s['id'].toString(): 0,
@@ -591,7 +604,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         final studentId = row['estudiante_id'].toString();
         final due = venc[row['cuota_id'].toString()];
         final overdue = due == null ? 0 : today.difference(due).inDays;
-        pending.add(_PendingItem(studentId, saldo, overdue));
+        pending.add(
+          _PendingItem(
+            studentId,
+            saldo,
+            overdue,
+            periodo: periodos[row['cuota_id'].toString()],
+            due: due,
+          ),
+        );
 
         if (status.containsKey(studentId)) {
           if (overdue > 0) {
@@ -748,66 +769,24 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   //
   @override
   Widget build(BuildContext context) {
-    final isDesktop = MediaQuery.of(context).size.width > 900;
-    final sidebarW = _sidebarExpanded ? 250.0 : 76.0;
-
-    return Scaffold(
-      key: _scaffoldKey,
-      backgroundColor: const Color(0xFFF8FAFC),
-      drawer: isDesktop
-          ? null
-          : Drawer(
-              backgroundColor: const Color(0xFF0F172A),
-              child: _buildSidebar(expanded: true),
-            ),
-      body: Stack(
-        children: [
-          Row(
-            children: [
-              if (isDesktop) _buildSidebar(expanded: _sidebarExpanded),
-              Expanded(
-                child: Column(
-                  children: [
-                    _buildTopHeader(isDesktop),
-                    Expanded(child: _buildBody()),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          if (isDesktop)
-            Positioned(
-              left: sidebarW - 12,
-              top: 64,
-              child: _buildCollapseButton(),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCollapseButton() {
-    return InkWell(
-      onTap: () => setState(() => _sidebarExpanded = !_sidebarExpanded),
-      customBorder: const CircleBorder(),
-      child: Container(
-        width: 24,
-        height: 24,
-        decoration: BoxDecoration(
-          color: const Color(0xFF0F172A),
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white24),
-        ),
-        child: Icon(
-          _sidebarExpanded ? Icons.chevron_left : Icons.chevron_right,
-          color: Colors.white,
-          size: 16,
-        ),
-      ),
+    return DashboardShell(
+      navItems: _navItems,
+      selectedIndex: _navIndex,
+      onNavSelected: (i) => setState(() => _navIndex = i),
+      schoolName: _schoolName,
+      userName: _adminName.isEmpty ? 'Administrador' : _adminName,
+      userInitials: _initials(_adminName),
+      userRole: 'Administración',
+      onLogout: _logout,
+      searchHint: 'Buscar alumno por cédula, código escolar o nombre...',
+      hasNotifications: _pendingReceipts > 0,
+      headerActions: [_tasaChip(MediaQuery.sizeOf(context).width < 1150)],
+      body: _buildBody(),
     );
   }
 
   Widget _buildBody() {
+    final pagePad = Breakpoints.pageInsets(MediaQuery.sizeOf(context).width);
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) {
       return Center(
@@ -903,7 +882,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         onRefresh: _load,
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+          padding: pagePad,
           child: Center(
             child: Container(
               constraints: const BoxConstraints(maxWidth: 1200),
@@ -948,13 +927,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       onRefresh: _load,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+        padding: pagePad,
         child: Center(
           child: Container(
             constraints: const BoxConstraints(maxWidth: 1200),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if (MediaQuery.sizeOf(context).width <= 760) ...[
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: _tasaChip(true),
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 _buildGreeting(),
                 const SizedBox(height: 20),
                 _buildQuickActions(),
@@ -962,6 +948,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 _grid(
                   wideCols: 4,
                   narrowCols: 2,
+                  hoverLift: 3,
                   items: [
                     _kpiRecaudado(),
                     _kpiPorCobrar(),
@@ -980,417 +967,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  //
-  // Barra lateral
-  //
-  Widget _buildSidebar({required bool expanded}) {
-    return Container(
-      width: expanded ? 250 : 76,
-      color: const Color(0xFF0F172A),
-      padding: EdgeInsets.symmetric(
-        horizontal: expanded ? 16 : 12,
-        vertical: 20,
-      ),
-      child: Column(
-        crossAxisAlignment:
-            expanded ? CrossAxisAlignment.start : CrossAxisAlignment.center,
-        children: [
-          _sidebarInstitution(expanded),
-          SizedBox(height: expanded ? 28 : 24),
-          if (expanded) ...[
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 12),
-              child: Text(
-                'MENÚ PRINCIPAL',
-                style: TextStyle(
-                  color: Colors.white38,
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.8,
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-          ],
-          for (var i = 0; i < _navItems.length; i++) _navItem(i, expanded),
-          const Spacer(),
-          const Divider(color: Colors.white12, height: 1),
-          const SizedBox(height: 12),
-          _sidebarUser(expanded),
-        ],
-      ),
-    );
-  }
-
-  Widget _sidebarInstitution(bool expanded) {
-    final school = _schoolName.isEmpty ? 'Mi institución' : _schoolName;
-    final iconBox = Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: AppColors.primaryBlue.withValues(alpha: 0.2),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: const Icon(
-        Icons.apartment,
-        color: AppColors.primaryBlue,
-        size: 18,
-      ),
-    );
-
-    if (!expanded) {
-      return Tooltip(
-        message: school,
-        child: Container(
-          width: 52,
-          height: 52,
-          decoration: BoxDecoration(
-            color: const Color(0xFF1E293B),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-          ),
-          child: Center(child: iconBox),
-        ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E293B),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-      ),
-      child: Row(
-        children: [
-          iconBox,
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'INSTITUCIÓN',
-                  style: TextStyle(
-                    color: Colors.white54,
-                    fontSize: 9,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-                Text(
-                  school,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _navItem(int index, bool expanded) {
-    final item = _navItems[index];
-    final selected = _navIndex == index;
-
-    void onTap() {
-      setState(() => _navIndex = index);
-      if (!expanded &&
-          Navigator.of(context).canPop() &&
-          (_scaffoldKey.currentState?.isDrawerOpen ?? false)) {
-        Navigator.of(context).pop();
-      }
-    }
-
-    if (!expanded) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Tooltip(
-          message: item.title,
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(12),
-            child: Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: selected ? const Color(0xFF1E3A8A) : Colors.transparent,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: selected ? AppColors.primaryBlue : Colors.transparent,
-                ),
-              ),
-              child: Icon(
-                selected ? item.activeIcon : item.icon,
-                color: selected ? Colors.white : Colors.white60,
-                size: 20,
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: InkWell(
-        onTap: () {
-          setState(() => _navIndex = index);
-          if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
-            Navigator.of(context).pop();
-          }
-        },
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: selected ? const Color(0xFF1E3A8A) : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                selected ? item.activeIcon : item.icon,
-                color: selected ? Colors.white : Colors.white60,
-                size: 18,
-              ),
-              const SizedBox(width: 12),
-              Text(
-                item.title,
-                style: TextStyle(
-                  color: selected ? Colors.white : Colors.white70,
-                  fontSize: 13,
-                  fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _sidebarUser(bool expanded) {
-    final avatar = _userMenu(
-      child: CircleAvatar(
-        radius: expanded ? 16 : 20,
-        backgroundColor: AppColors.primaryBlue,
-        child: Text(
-          _initials(_adminName),
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
-
-    if (!expanded) return avatar;
-
-    return Row(
-      children: [
-        avatar,
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _adminName,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              const Text(
-                'Administración',
-                style: TextStyle(color: Colors.white38, fontSize: 11),
-              ),
-            ],
-          ),
-        ),
-        IconButton(
-          icon: const Icon(Icons.logout, color: Colors.white54, size: 18),
-          onPressed: _logout,
-          tooltip: 'Cerrar sesión',
-        ),
-      ],
-    );
-  }
-
-  Widget _userMenu({required Widget child}) {
-    return PopupMenuButton<String>(
-      tooltip: 'Cuenta',
-      onSelected: (v) {
-        if (v == 'logout') _logout();
-      },
-      itemBuilder: (context) => const [
-        PopupMenuItem(
-          value: 'logout',
-          child: Row(
-            children: [
-              Icon(Icons.logout, size: 16),
-              SizedBox(width: 8),
-              Text('Cerrar sesión'),
-            ],
-          ),
-        ),
-      ],
-      child: child,
-    );
-  }
-
-  //
-  // Encabezado superior
-  //
-  Widget _buildTopHeader(bool isDesktop) {
-    final w = MediaQuery.of(context).size.width;
-    final showTasa = w > 760;
-    final compactTasa = w < 1150;
-    final showUserText = w > 1000;
-
-    return Container(
-      height: 64,
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: AppColors.cardBorder)),
-      ),
-      child: Row(
-        children: [
-          if (!isDesktop)
-            IconButton(
-              icon: const Icon(Icons.menu, color: AppColors.darkNavy),
-              onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-              tooltip: 'Menú',
-            ),
-          Expanded(
-            child: Container(
-              height: 38,
-              constraints: const BoxConstraints(maxWidth: 380),
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF1F5F9),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.search, color: AppColors.textMuted, size: 18),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Buscar alumno por cédula, código escolar o nombre...',
-                      style: TextStyle(
-                        color: AppColors.textMuted,
-                        fontSize: 13,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          if (showTasa) ...[
-            _tasaChip(compactTasa),
-            const SizedBox(width: 12),
-          ],
-          Stack(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  border: Border.all(color: AppColors.cardBorder),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(
-                  Icons.notifications_none,
-                  size: 18,
-                  color: AppColors.darkNavy,
-                ),
-              ),
-              if (_pendingReceipts > 0)
-                Positioned(
-                  right: 6,
-                  top: 6,
-                  child: Container(
-                    width: 7,
-                    height: 7,
-                    decoration: const BoxDecoration(
-                      color: Colors.redAccent,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(width: 12),
-          _userMenu(
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 16,
-                  backgroundColor: const Color(0xFFDBEAFE),
-                  child: Text(
-                    _initials(_adminName),
-                    style: const TextStyle(
-                      color: AppColors.primaryBlue,
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                if (showUserText) ...[
-                  const SizedBox(width: 10),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 140),
-                        child: Text(
-                          _adminName,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.darkNavy,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                      const Row(
-                        children: [
-                          Icon(Icons.circle, size: 7, color: _green),
-                          SizedBox(width: 4),
-                          Text(
-                            'Sesión activa',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: AppColors.textMuted,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1437,7 +1013,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
               if (!compact)
                 Text(
-                  ok ? _tasaSubtitle : 'Los saldos en Bs. no se pueden calcular',
+                  ok
+                      ? _tasaSubtitle
+                      : 'Los saldos en Bs. no se pueden calcular',
                   style: TextStyle(fontSize: 10, color: accent),
                 ),
             ],
@@ -1460,6 +1038,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final saludo = now.hour < 12
         ? 'Buenos días'
         : (now.hour < 19 ? 'Buenas tardes' : 'Buenas noches');
+    final isPhone = Breakpoints.isCompact(MediaQuery.sizeOf(context).width);
 
     final left = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1476,8 +1055,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         const SizedBox(height: 6),
         Text(
           '$saludo, $_firstName',
-          style: const TextStyle(
-            fontSize: 28,
+          style: TextStyle(
+            fontSize: isPhone ? 22 : 28,
             fontWeight: FontWeight.bold,
             color: AppColors.darkNavy,
           ),
@@ -1669,53 +1248,73 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     required Color subColor,
     required VoidCallback onTap,
   }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: bg,
+    final dark = bg.computeLuminance() < 0.3;
+
+    return HoverLift(
+      radius: 10,
+      lift: 2,
+      child: HoverBuilder(
+        builder: (context, hovered) => InkWell(
+          onTap: onTap,
+          hoverColor: Colors.transparent,
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: border),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: leadingBg,
-                borderRadius: BorderRadius.circular(9),
-              ),
-              child: Center(child: leading),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: titleColor,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: TextStyle(fontSize: 10, color: subColor),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Color.lerp(
+                bg,
+                dark ? Colors.white : Colors.black,
+                hovered ? (dark ? 0.08 : 0.03) : 0,
+              )!,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: Color.lerp(
+                  border,
+                  dark ? Colors.white : AppColors.primaryBlue,
+                  hovered ? 0.25 : 0,
+                )!,
               ),
             ),
-          ],
+            child: Row(
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: leadingBg,
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: Center(child: leading),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: titleColor,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        style: TextStyle(fontSize: 10, color: subColor),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -1824,7 +1423,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   Widget _kpiRecaudado() {
     final cur = _monthly.isNotEmpty ? _monthly.last.value : 0.0;
-    final prev = _monthly.length > 1 ? _monthly[_monthly.length - 2].value : 0.0;
+    final prev = _monthly.length > 1
+        ? _monthly[_monthly.length - 2].value
+        : 0.0;
 
     Widget? badge;
     if (prev > 0) {
@@ -1872,11 +1473,38 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final items = _filteredPending;
     final amount = items.fold<double>(0, (a, p) => a + p.saldo);
     final accounts = items.map((p) => p.studentId).toSet().length;
+    final cuotasCount = items.length;
+
+    // Cuota activa más cercana a hoy (por fecha de vencimiento)
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    _PendingItem? nearest;
+    for (final p in items) {
+      if (p.due == null) continue;
+      if (nearest == null ||
+          p.due!.difference(today).inDays.abs() <
+              nearest.due!.difference(today).inDays.abs()) {
+        nearest = p;
+      }
+    }
+    String? nearestMonth;
+    if (nearest != null) {
+      final raw = nearest.periodo?.trim();
+      if (raw != null && raw.isNotEmpty) {
+        nearestMonth = raw;
+      } else {
+        final m = _monthsLong[nearest.due!.month - 1];
+        nearestMonth =
+            '${m[0].toUpperCase()}${m.substring(1)} ${nearest.due!.year}';
+      }
+    }
+
     final overdueAmount = _pending
         .where((p) => p.daysOverdue > 0)
         .fold<double>(0, (a, p) => a + p.saldo);
-    final morosidad =
-        _totalBilled > 0 ? overdueAmount / _totalBilled * 100 : 0.0;
+    final morosidad = _totalBilled > 0
+        ? overdueAmount / _totalBilled * 100
+        : 0.0;
 
     final filter = PopupMenuButton<int>(
       tooltip: 'Filtrar por antigüedad',
@@ -1916,11 +1544,27 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       iconFg: _amber,
       label: 'Cuentas por cobrar',
       value: _bigValue('\$${_money(amount)}', unit: 'USD'),
-      sub: Text(
-        '${_pct(morosidad)}% de morosidad • $accounts ${accounts == 1 ? 'cuenta' : 'cuentas'}',
-        style: const TextStyle(fontSize: 11, color: _red),
+      sub: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${_pct(morosidad)}% de morosidad • $accounts ${accounts == 1 ? 'cuenta' : 'cuentas'}',
+            style: const TextStyle(fontSize: 11, color: _red),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            nearestMonth == null
+                ? 'Sin cuotas activas'
+                : '$cuotasCount ${cuotasCount == 1 ? 'cuota activa' : 'cuotas activas'} • $nearestMonth',
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: AppColors.darkNavy,
+            ),
+          ),
+        ],
       ),
-      topRight: filter,
+      topRight: HoverTint(borderRadius: 8, child: filter),
     );
   }
 
@@ -2137,7 +1781,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   ],
                 ),
               ),
-              rangeMenu,
+              HoverTint(borderRadius: 8, child: rangeMenu),
             ],
           ),
           const SizedBox(height: 20),
@@ -2222,11 +1866,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       for (final m in data)
                         Expanded(
                           child: Center(
-                            child: Text(
-                              m.label,
-                              style: const TextStyle(
-                                fontSize: 10,
-                                color: AppColors.textMuted,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                m.label,
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: AppColors.textMuted,
+                                ),
                               ),
                             ),
                           ),
@@ -2244,53 +1891,58 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   Widget _bar(int index, double value, double maxV, bool selected) {
     final f = maxV > 0 ? (value / maxV).clamp(0.0, 1.0).toDouble() : 0.0;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => setState(() => _selectedBar = index),
-      child: LayoutBuilder(
-        builder: (context, c) {
-          final h = math.max(c.maxHeight * f, value > 0 ? 3.0 : 0.0);
-          final w = (c.maxWidth * 0.42).clamp(14.0, 36.0).toDouble();
+    return HoverBuilder(
+      cursor: SystemMouseCursors.click,
+      builder: (context, hovered) => GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _selectedBar = index),
+        child: LayoutBuilder(
+          builder: (context, c) {
+            final h = math.max(c.maxHeight * f, value > 0 ? 3.0 : 0.0);
+            final w = (c.maxWidth * 0.42).clamp(14.0, 36.0).toDouble();
 
-          return Stack(
-            clipBehavior: Clip.none,
-            alignment: Alignment.bottomCenter,
-            children: [
-              Container(
-                width: w,
-                height: h,
-                decoration: BoxDecoration(
-                  color: selected
-                      ? AppColors.primaryBlue
-                      : const Color(0xFFBFDBFE),
-                  borderRadius: BorderRadius.circular(4),
+            return Stack(
+              clipBehavior: Clip.none,
+              alignment: Alignment.bottomCenter,
+              children: [
+                Container(
+                  width: w,
+                  height: h,
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? AppColors.primaryBlue
+                        : (hovered
+                              ? const Color(0xFF93C5FD)
+                              : const Color(0xFFBFDBFE)),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
                 ),
-              ),
-              if (selected)
-                Positioned(
-                  bottom: h + 8,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0F172A),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      '\$${_compact(value)}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
+                if (selected)
+                  Positioned(
+                    bottom: h + 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0F172A),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '\$${_compact(value)}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ),
-                ),
-            ],
-          );
-        },
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -2401,9 +2053,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           const SizedBox(height: 16),
           const Divider(height: 1, color: AppColors.cardBorder),
           const SizedBox(height: 8),
-          legend(_green, 'Solventes', _solventes),
-          legend(_amber, 'Pendientes', _pendientes),
-          legend(_red, 'Insolventes', _insolventes),
+          HoverTint(
+            borderRadius: 8,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: legend(_green, 'Solventes', _solventes),
+          ),
+          HoverTint(
+            borderRadius: 8,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: legend(_amber, 'Pendientes', _pendientes),
+          ),
+          HoverTint(
+            borderRadius: 8,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: legend(_red, 'Insolventes', _insolventes),
+          ),
         ],
       ),
     );
@@ -2444,24 +2108,24 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
 
     Widget header() => Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-          decoration: const BoxDecoration(
-            color: Color(0xFFF8FAFC),
-            border: Border.symmetric(
-              horizontal: BorderSide(color: AppColors.cardBorder),
-            ),
-          ),
-          child: const Row(
-            children: [
-              Expanded(flex: 3, child: Text('REPRESENTANTE', style: headerStyle)),
-              Expanded(flex: 3, child: Text('ESTUDIANTE', style: headerStyle)),
-              Expanded(flex: 3, child: Text('CONCEPTO', style: headerStyle)),
-              Expanded(flex: 2, child: Text('MONTO', style: headerStyle)),
-              Expanded(flex: 2, child: Text('ESTADO', style: headerStyle)),
-              Expanded(flex: 2, child: Text('FECHA', style: headerStyle)),
-            ],
-          ),
-        );
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: const BoxDecoration(
+        color: Color(0xFFF8FAFC),
+        border: Border.symmetric(
+          horizontal: BorderSide(color: AppColors.cardBorder),
+        ),
+      ),
+      child: const Row(
+        children: [
+          Expanded(flex: 3, child: Text('REPRESENTANTE', style: headerStyle)),
+          Expanded(flex: 3, child: Text('ESTUDIANTE', style: headerStyle)),
+          Expanded(flex: 3, child: Text('CONCEPTO', style: headerStyle)),
+          Expanded(flex: 2, child: Text('MONTO', style: headerStyle)),
+          Expanded(flex: 2, child: Text('ESTADO', style: headerStyle)),
+          Expanded(flex: 2, child: Text('FECHA', style: headerStyle)),
+        ],
+      ),
+    );
 
     return _card(
       padding: EdgeInsets.zero,
@@ -2473,26 +2137,28 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Pagos recientes',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.darkNavy,
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Pagos recientes',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.darkNavy,
+                        ),
                       ),
-                    ),
-                    SizedBox(height: 2),
-                    Text(
-                      'Últimas operaciones registradas',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: AppColors.textMuted,
+                      SizedBox(height: 2),
+                      Text(
+                        'Últimas operaciones registradas',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textMuted,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
                 TextButton(
                   onPressed: () => _soon('El historial completo de pagos'),
@@ -2521,6 +2187,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ),
           LayoutBuilder(
             builder: (context, c) {
+              if (c.maxWidth < 640) return _recentPaymentsCompact();
               final width = math.max(c.maxWidth, 760.0);
               return SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
@@ -2544,7 +2211,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         )
                       else
                         for (var i = 0; i < _recent.length; i++) ...[
-                          _payRow(_recent[i]),
+                          HoverTint(child: _payRow(_recent[i])),
                           if (i < _recent.length - 1)
                             const Divider(
                               height: 1,
@@ -2556,6 +2223,111 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 ),
               );
             },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Vista de pagos para pantallas angostas: una tarjeta por pago.
+  Widget _recentPaymentsCompact() {
+    if (_recent.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(28),
+        child: Center(
+          child: Text(
+            'Aún no hay pagos registrados. Cuando un representante reporte uno, aparecerá aquí.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+          ),
+        ),
+      );
+    }
+    return Column(
+      children: [
+        const Divider(height: 1, color: AppColors.cardBorder),
+        for (var i = 0; i < _recent.length; i++) ...[
+          HoverTint(child: _payRowCompact(_recent[i])),
+          if (i < _recent.length - 1)
+            const Divider(height: 1, color: AppColors.cardBorder),
+        ],
+      ],
+    );
+  }
+
+  Widget _payRowCompact(_PagoRow p) {
+    final amount = p.currency == 'USD'
+        ? '\$${_money(p.amount)}'
+        : 'Bs. ${_money(p.amount)}';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 16,
+            backgroundColor: const Color(0xFFEFF6FF),
+            child: Text(
+              _initials(p.representative),
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color: AppColors.primaryBlue,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  p.representative,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.darkNavy,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${p.student} • ${p.concept}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _when(p.date),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                amount,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.darkNavy,
+                ),
+              ),
+              const SizedBox(height: 6),
+              _statusChip(p.status),
+            ],
           ),
         ],
       ),
@@ -2715,14 +2487,19 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     required Widget child,
     EdgeInsets padding = const EdgeInsets.all(20),
   }) {
-    return Container(
-      padding: padding,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.cardBorder),
+    return HoverLift(
+      radius: 16,
+      lift: 0,
+      child: Container(
+        padding: padding,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.cardBorder),
+        ),
+        child: child,
       ),
-      child: child,
     );
   }
 
@@ -2731,36 +2508,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     required int wideCols,
     required int narrowCols,
     double gap = 16,
+    double? hoverLift,
   }) {
-    return LayoutBuilder(
-      builder: (context, c) {
-        final cols = c.maxWidth >= 800 ? wideCols : narrowCols;
-        final rows = <Widget>[];
-
-        for (var i = 0; i < items.length; i += cols) {
-          final slice = items.sublist(i, math.min(i + cols, items.length));
-          final cells = <Widget>[];
-
-          for (var j = 0; j < cols; j++) {
-            if (j > 0) cells.add(SizedBox(width: gap));
-            cells.add(
-              Expanded(child: j < slice.length ? slice[j] : const SizedBox()),
-            );
-          }
-
-          if (rows.isNotEmpty) rows.add(SizedBox(height: gap));
-          rows.add(
-            IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: cells,
-              ),
-            ),
-          );
-        }
-
-        return Column(children: rows);
-      },
+    return ResponsiveGrid(
+      items: items,
+      wideCols: wideCols,
+      mediumCols: narrowCols,
+      narrowCols: 1,
+      gap: gap,
+      hoverLift: hoverLift,
     );
   }
 }
@@ -2777,7 +2533,8 @@ class _DonutPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final rect = Offset(stroke / 2, stroke / 2) &
+    final rect =
+        Offset(stroke / 2, stroke / 2) &
         Size(size.width - stroke, size.height - stroke);
     final total = values.fold<double>(0, (a, b) => a + b);
 

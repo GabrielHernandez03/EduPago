@@ -21,10 +21,12 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
   final SupabaseClient _supabase = Supabase.instance.client;
   final _formKey = GlobalKey<FormState>();
 
-  final TextEditingController _conceptoController =
-      TextEditingController(text: 'Mensualidad escolar');
-  final TextEditingController _montoUsdController =
-      TextEditingController(text: '45.00');
+  final TextEditingController _conceptoController = TextEditingController(
+    text: 'Mensualidad escolar',
+  );
+  final TextEditingController _montoUsdController = TextEditingController(
+    text: '45.00',
+  );
 
   String _selectedMonth = 'Noviembre';
   String _selectedYear = '2026';
@@ -46,7 +48,7 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
     'Septiembre',
     'Octubre',
     'Noviembre',
-    'Diciembre'
+    'Diciembre',
   ];
 
   final List<String> _years = ['2025', '2026', '2027'];
@@ -85,34 +87,6 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
     }
   }
 
-  /// Obtiene o crea el concepto_id de forma garantizada
-  Future<String> _getOrCreateConceptoId(String conceptoNombre, double montoUsd) async {
-    final existingConcept = await _supabase
-        .from('conceptos_cobro')
-        .select('id')
-        .eq('colegio_id', widget.colegioId)
-        .ilike('nombre', conceptoNombre)
-        .maybeSingle();
-
-    if (existingConcept != null && existingConcept['id'] != null) {
-      return existingConcept['id'].toString();
-    }
-
-    // Se asigna 'monto_usd' para cumplir la restricción NOT NULL de conceptos_cobro
-    final newConcept = await _supabase
-        .from('conceptos_cobro')
-        .insert({
-          'colegio_id': widget.colegioId,
-          'nombre': conceptoNombre,
-          'monto_usd': montoUsd,
-          'monto_defecto_usd': montoUsd,
-        })
-        .select('id')
-        .single();
-
-    return newConcept['id'].toString();
-  }
-
   /// Ejecuta el proceso de facturación masiva
   Future<void> _executeMassBilling() async {
     if (!_formKey.currentState!.validate()) return;
@@ -127,24 +101,34 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
       final String fechaVencimiento =
           '${_dueDate.year}-${_dueDate.month.toString().padLeft(2, '0')}-${_dueDate.day.toString().padLeft(2, '0')}';
 
-      // 1. Obtener obligatoriamente el concepto_id
-      final String conceptoId = await _getOrCreateConceptoId(conceptoNombre, montoUsd);
+      // Facturación atómica en el servidor (un solo viaje a la base de datos):
+      // valida que el usuario sea administrador del colegio, crea o reutiliza
+      // el concepto, inserta las cuotas omitiendo duplicados y aplica el saldo
+      // a favor de las familias que lo tengan.
+      final dynamic res = await _supabase.rpc(
+        'generar_facturacion',
+        params: {
+          'p_colegio': widget.colegioId,
+          'p_concepto': conceptoNombre,
+          'p_periodo': periodo,
+          'p_monto_usd': montoUsd,
+          'p_vencimiento': fechaVencimiento,
+        },
+      );
+      final Map<String, dynamic> row = Map<String, dynamic>.from(
+        (res is List ? res.first : res) as Map,
+      );
+      final int generatedCount = (row['generadas'] as num?)?.toInt() ?? 0;
+      final int skippedDuplicates = (row['omitidas'] as num?)?.toInt() ?? 0;
+      final int activos = (row['activos'] as num?)?.toInt() ?? 0;
 
-      // 2. Obtener lista de estudiantes ACTIVOS del colegio
-      final activeStudents = await _supabase
-          .from('estudiantes')
-          .select('id')
-          .eq('colegio_id', widget.colegioId)
-          .eq('activo', true);
-
-      final List<Map<String, dynamic>> students =
-          List<Map<String, dynamic>>.from(activeStudents);
-
-      if (students.isEmpty) {
+      if (activos == 0) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('No hay estudiantes activos registrados para facturar.'),
+              content: Text(
+                'No hay estudiantes activos registrados para facturar.',
+              ),
               backgroundColor: Colors.orangeAccent,
             ),
           );
@@ -153,47 +137,23 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
         return;
       }
 
-      int generatedCount = 0;
-      int skippedDuplicates = 0;
-
-      // 3. Insertar las cuotas incluyendo concepto_id
-      for (final student in students) {
-        final studentId = student['id'].toString();
-
-        try {
-          await _supabase.from('cuotas').insert({
-            'colegio_id': widget.colegioId,
-            'estudiante_id': studentId,
-            'concepto_id': conceptoId,
-            'concepto': conceptoNombre,
-            'periodo': periodo,
-            'monto_usd': montoUsd,
-            'fecha_vencimiento': fechaVencimiento,
-            'fecha_corte': fechaVencimiento,
-            'estado': 'pendiente',
-            'creado_at': DateTime.now().toIso8601String(),
-          });
-          generatedCount++;
-        } on PostgrestException catch (e) {
-          if (e.code == '23505') {
-            skippedDuplicates++;
-          } else {
-            rethrow;
-          }
-        }
-      }
-
       if (mounted) {
+        // Se captura el messenger ANTES de cerrar el diálogo: después del pop,
+        // este context ya no es válido y el SnackBar/refresh fallaban en silencio.
+        final messenger = ScaffoldMessenger.of(context);
+        final onDone = widget.onBillingGenerated;
+
         setState(() => _isProcessing = false);
         Navigator.pop(context);
 
         _showSummarySnackBar(
+          messenger: messenger,
           generatedCount: generatedCount,
           skippedDuplicates: skippedDuplicates,
           periodo: periodo,
         );
 
-        widget.onBillingGenerated();
+        onDone(); // recarga el dashboard
       }
     } catch (e) {
       debugPrint('Error al generar facturación masiva: $e');
@@ -201,7 +161,9 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
         setState(() => _isProcessing = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al procesar la facturación: $e'),
+            content: Text(
+              'Error al procesar la facturación: ${e is PostgrestException ? e.message : e}',
+            ),
             backgroundColor: Colors.redAccent,
           ),
         );
@@ -210,6 +172,7 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
   }
 
   void _showSummarySnackBar({
+    required ScaffoldMessengerState messenger,
     required int generatedCount,
     required int skippedDuplicates,
     required String periodo,
@@ -218,16 +181,19 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
     Color bg = const Color(0xFF059669);
 
     if (generatedCount > 0 && skippedDuplicates == 0) {
-      msg = '¡Éxito! Se generaron $generatedCount cuotas para el período $periodo.';
+      msg =
+          '¡Éxito! Se generaron $generatedCount cuotas para el período $periodo.';
     } else if (generatedCount > 0 && skippedDuplicates > 0) {
-      msg = 'Facturación parcial: $generatedCount cuotas creadas. $skippedDuplicates estudiantes ya tenían el cargo previamente.';
+      msg =
+          'Facturación parcial: $generatedCount cuotas creadas. $skippedDuplicates estudiantes ya tenían el cargo previamente.';
       bg = Colors.orange.shade800;
     } else if (generatedCount == 0 && skippedDuplicates > 0) {
-      msg = 'El proceso fue omitido: Todas las cuotas para $periodo ya fueron generadas previamente.';
+      msg =
+          'El proceso fue omitido: Todas las cuotas para $periodo ya fueron generadas previamente.';
       bg = Colors.amber.shade900;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    messenger.showSnackBar(
       SnackBar(
         content: Text(msg),
         backgroundColor: bg,
@@ -245,7 +211,9 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(primary: AppColors.primaryBlue),
+            colorScheme: const ColorScheme.light(
+              primary: AppColors.primaryBlue,
+            ),
           ),
           child: child!,
         );
@@ -312,7 +280,11 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
                   ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close, color: AppColors.textMuted, size: 20),
+                    icon: const Icon(
+                      Icons.close,
+                      color: AppColors.textMuted,
+                      size: 20,
+                    ),
                   ),
                 ],
               ),
@@ -328,13 +300,21 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.people_alt_outlined,
-                        color: Color(0xFF166534), size: 20),
+                    const Icon(
+                      Icons.people_alt_outlined,
+                      color: Color(0xFF166534),
+                      size: 20,
+                    ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: _isLoadingCount
-                          ? const Text('Consultando matrícula activa...',
-                              style: TextStyle(fontSize: 12, color: Color(0xFF166534)))
+                          ? const Text(
+                              'Consultando matrícula activa...',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF166534),
+                              ),
+                            )
                           : Text(
                               'Se facturará a $_activeStudentsCount estudiantes con estatus "Activo". Se excluirán los retirados.',
                               style: const TextStyle(
@@ -348,17 +328,21 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
                 ),
               ),
               const SizedBox(height: 16),
-              const Text('Concepto de cobro',
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.darkNavy)),
+              const Text(
+                'Concepto de cobro',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.darkNavy,
+                ),
+              ),
               const SizedBox(height: 6),
               TextFormField(
                 controller: _conceptoController,
                 decoration: _inputDecoration('Ej. Mensualidad escolar'),
-                validator: (val) =>
-                    (val == null || val.trim().isEmpty) ? 'Ingresa el concepto' : null,
+                validator: (val) => (val == null || val.trim().isEmpty)
+                    ? 'Ingresa el concepto'
+                    : null,
               ),
               const SizedBox(height: 14),
               Row(
@@ -367,21 +351,32 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Mes correspondiente',
-                            style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: AppColors.darkNavy)),
+                        const Text(
+                          'Mes correspondiente',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.darkNavy,
+                          ),
+                        ),
                         const SizedBox(height: 6),
                         DropdownButtonFormField<String>(
                           initialValue: _selectedMonth,
                           decoration: _inputDecoration(''),
                           items: _months
-                              .map((m) =>
-                                  DropdownMenuItem(value: m, child: Text(m, style: const TextStyle(fontSize: 13))))
+                              .map(
+                                (m) => DropdownMenuItem(
+                                  value: m,
+                                  child: Text(
+                                    m,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
+                              )
                               .toList(),
                           onChanged: (val) {
-                            if (val != null) setState(() => _selectedMonth = val);
+                            if (val != null)
+                              setState(() => _selectedMonth = val);
                           },
                         ),
                       ],
@@ -392,21 +387,32 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Año',
-                            style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: AppColors.darkNavy)),
+                        const Text(
+                          'Año',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.darkNavy,
+                          ),
+                        ),
                         const SizedBox(height: 6),
                         DropdownButtonFormField<String>(
                           initialValue: _selectedYear,
                           decoration: _inputDecoration(''),
                           items: _years
-                              .map((y) =>
-                                  DropdownMenuItem(value: y, child: Text(y, style: const TextStyle(fontSize: 13))))
+                              .map(
+                                (y) => DropdownMenuItem(
+                                  value: y,
+                                  child: Text(
+                                    y,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
+                              )
                               .toList(),
                           onChanged: (val) {
-                            if (val != null) setState(() => _selectedYear = val);
+                            if (val != null)
+                              setState(() => _selectedYear = val);
                           },
                         ),
                       ],
@@ -421,22 +427,28 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Monto por cuota (\$ USD)',
-                            style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: AppColors.darkNavy)),
+                        const Text(
+                          'Monto por cuota (\$ USD)',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.darkNavy,
+                          ),
+                        ),
                         const SizedBox(height: 6),
                         TextFormField(
                           controller: _montoUsdController,
-                          keyboardType:
-                              const TextInputType.numberWithOptions(decimal: true),
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
                           inputFormatters: [
                             FilteringTextInputFormatter.allow(
-                                RegExp(r'^\d+[\.,]?\d{0,2}'))
+                              RegExp(r'^\d+[\.,]?\d{0,2}'),
+                            ),
                           ],
                           decoration: _inputDecoration('\$ 0.00'),
-                          validator: (val) => (val == null || val.trim().isEmpty)
+                          validator: (val) =>
+                              (val == null || val.trim().isEmpty)
                               ? 'Ingresa el monto'
                               : null,
                         ),
@@ -448,17 +460,22 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Fecha de vencimiento',
-                            style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: AppColors.darkNavy)),
+                        const Text(
+                          'Fecha de vencimiento',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.darkNavy,
+                          ),
+                        ),
                         const SizedBox(height: 6),
                         InkWell(
                           onTap: () => _selectDueDate(context),
                           child: Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 12),
+                              horizontal: 12,
+                              vertical: 12,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(10),
@@ -470,10 +487,15 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
                                 Text(
                                   '${_dueDate.day.toString().padLeft(2, '0')}/${_dueDate.month.toString().padLeft(2, '0')}/${_dueDate.year}',
                                   style: const TextStyle(
-                                      fontSize: 13, color: AppColors.darkNavy),
+                                    fontSize: 13,
+                                    color: AppColors.darkNavy,
+                                  ),
                                 ),
-                                const Icon(Icons.calendar_month_outlined,
-                                    size: 16, color: AppColors.textMuted),
+                                const Icon(
+                                  Icons.calendar_month_outlined,
+                                  size: 16,
+                                  color: AppColors.textMuted,
+                                ),
                               ],
                             ),
                           ),
@@ -493,9 +515,12 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
                       foregroundColor: AppColors.darkNavy,
                       side: const BorderSide(color: AppColors.cardBorder),
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 14),
+                        horizontal: 20,
+                        vertical: 14,
+                      ),
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                     ),
                     child: const Text('Cancelar'),
                   ),
@@ -507,9 +532,12 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
                       foregroundColor: Colors.white,
                       elevation: 0,
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 24, vertical: 14),
+                        horizontal: 24,
+                        vertical: 14,
+                      ),
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                     ),
                     child: _isProcessing
                         ? const SizedBox(
@@ -524,8 +552,10 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
                             children: [
                               Icon(Icons.bolt, size: 18),
                               SizedBox(width: 6),
-                              Text('Generar cuotas ahora',
-                                  style: TextStyle(fontWeight: FontWeight.bold)),
+                              Text(
+                                'Generar cuotas ahora',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
                             ],
                           ),
                   ),
@@ -546,15 +576,17 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
       fillColor: Colors.white,
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: AppColors.cardBorder)),
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: AppColors.cardBorder),
+      ),
       enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: AppColors.cardBorder)),
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: AppColors.cardBorder),
+      ),
       focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide:
-              const BorderSide(color: AppColors.primaryBlue, width: 1.5)),
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: AppColors.primaryBlue, width: 1.5),
+      ),
     );
   }
 }
