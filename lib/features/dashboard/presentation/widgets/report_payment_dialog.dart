@@ -1,4 +1,3 @@
-// lib/features/dashboard/presentation/widgets/report_payment_dialog.dart
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -56,7 +55,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
   Uint8List? _attachedFileBytes;
   String _generatedReportCode = '';
 
-  final List<String> banks = [
+  final List<String> _banks = [
     'Banesco',
     'Mercantil',
     'Provincial',
@@ -66,11 +65,31 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     'Bancaribe',
   ];
 
-  final List<String> destinationAccounts = [
+  final List<String> _destinationAccounts = [
     'Mercantil 4872',
     'Banesco 0194',
     'BNC 8812',
   ];
+
+  // Datos bancarios oficiales del colegio
+  final Map<String, String> _pagoMovilColegio = {
+    'Banco': 'Mercantil (0105)',
+    'RIF': 'J-30062942-0',
+    'Teléfono': '0412-3456789',
+    'Titular': 'U.E. Nueva Generación',
+  };
+
+  final Map<String, String> _zelleColegio = {
+    'Correo': 'pagos@nuevageneracion.edu.ve',
+    'Titular': 'U.E. Nueva Generación Inc.',
+  };
+
+  final Map<String, String> _transferenciaColegio = {
+    'Banco': 'Mercantil',
+    'Cuenta': '0105-0123-45-6789012345',
+    'RIF': 'J-30062942-0',
+    'Titular': 'U.E. Nueva Generación',
+  };
 
   @override
   void initState() {
@@ -86,9 +105,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     super.dispose();
   }
 
-  /// Carga la tasa BCV real y la deuda pendiente real del estudiante
   Future<void> _initDataAndRate() async {
-    // 1. Obtener Tasa BCV en vivo de la API
     try {
       final bcvData = await _bcvService.getLatestBcvRate();
       if (mounted && bcvData.rate > 0) {
@@ -98,7 +115,6 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       debugPrint('Error obteniendo tasa BCV en diálogo: $e');
     }
 
-    // 2. Consultar deuda pendiente real en v_saldo_cuotas
     double initialUsd = widget.amountUsd;
     if (widget.studentId != null && widget.studentId!.isNotEmpty) {
       try {
@@ -117,7 +133,6 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       }
     }
 
-    // Pre-llenar campo de monto editable
     if (mounted) {
       _updateMontoField(initialUsd);
     }
@@ -168,8 +183,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
         type: FileType.custom,
         allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf'],
       );
-
-      if (files.isNotEmpty) {
+      if (files != null && files.isNotEmpty) {
         final file = files.first;
         final bytes = await file.readAsBytes();
         setState(() {
@@ -182,7 +196,6 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     }
   }
 
-  /// Validación anti-fraude: Verifica referencia en Supabase
   Future<bool> _validateReferenceUniqueness() async {
     final ref = _refController.text.trim();
     if (_selectedMethod == 'Efectivo USD') return true;
@@ -211,7 +224,6 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     }
   }
 
-  /// Registro final del pago obligatorio con subida a Supabase Storage
   Future<void> _submitReport() async {
     if (_attachedFileBytes == null || _attachedFileName == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -224,7 +236,6 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     }
 
     setState(() => _isSubmitting = true);
-
     try {
       final user = _supabase.auth.currentUser;
       String repId = '';
@@ -249,6 +260,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
             .select('colegio_id')
             .eq('id', widget.studentId!)
             .maybeSingle();
+
         if (est != null && est['colegio_id'] != null) {
           colegioId = est['colegio_id'].toString();
         }
@@ -258,14 +270,13 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       final double montoIngresado = double.tryParse(_montoController.text.replaceAll(',', '.')) ?? 0.0;
       final double montoUsdEquivalente = isBs ? (montoIngresado / _currentTasaBcv) : montoIngresado;
 
-      // 1. Subida del comprobante a Supabase Storage
       final String fileExt = _attachedFileName!.split('.').last;
       final String storagePath = '${DateTime.now().millisecondsSinceEpoch}_${_refController.text.trim()}.$fileExt';
 
       await _supabase.storage.from('comprobantes').uploadBinary(
-        storagePath,
-        _attachedFileBytes!,
-      );
+            storagePath,
+            _attachedFileBytes!,
+          );
 
       final String comprobanteUrl = _supabase.storage.from('comprobantes').getPublicUrl(storagePath);
 
@@ -278,7 +289,6 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
           ? 'EFECTIVO_${DateTime.now().millisecondsSinceEpoch}'
           : _refController.text.trim();
 
-      // 2. Inserción en la tabla 'pagos'
       await _supabase.from('pagos').insert({
         'colegio_id': colegioId,
         'representante_id': repId,
@@ -305,7 +315,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
         });
       }
     } catch (e) {
-      debugPrint('Error al subir comprobante o registrar pago: $e');
+      debugPrint('Error al registrar pago: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -320,6 +330,8 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final double heightScreen = MediaQuery.of(context).size.height;
+
     return Dialog(
       backgroundColor: Colors.white,
       surfaceTintColor: Colors.transparent,
@@ -327,87 +339,101 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       child: Container(
         width: 580,
         constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.9,
+          maxHeight: heightScreen * 0.88,
         ),
-        padding: const EdgeInsets.all(28),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFEFF6FF),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(
-                          Icons.account_balance_wallet_outlined,
-                          color: AppColors.primaryBlue,
-                          size: 22,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Column(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildHeader(),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: _buildStepperHeader(),
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1, color: AppColors.cardBorder),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: _isSubmitted
+                    ? _buildSuccessWidget()
+                    : Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            'Reportar pago multimoneda',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.darkNavy,
-                            ),
-                          ),
-                          Text(
-                            '${widget.studentName} • ${widget.monthPeriod}',
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: AppColors.textMuted,
-                            ),
-                          ),
+                          if (_currentStep == 1) _buildStep1Widget(),
+                          if (_currentStep == 2) _buildStep2Widget(),
+                          if (_currentStep == 3) _buildStep3Widget(),
                         ],
                       ),
-                    ],
+              ),
+            ),
+            const Divider(height: 1, color: AppColors.cardBorder),
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: _buildBottomActionButtons(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.account_balance_wallet_outlined,
+                  color: AppColors.primaryBlue,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Reportar pago multimoneda',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.darkNavy,
+                    ),
                   ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close, color: AppColors.textMuted, size: 20),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
+                  Text(
+                    '${widget.studentName} • ${widget.monthPeriod}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textMuted,
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
-
-              _buildStepperHeader(),
-              const SizedBox(height: 24),
-
-              if (_isSubmitted)
-                _buildSuccessWidget()
-              else ...[
-                if (_currentStep == 1) _buildStep1Widget(),
-                if (_currentStep == 2) _buildStep2Widget(),
-                if (_currentStep == 3) _buildStep3Widget(),
-                const SizedBox(height: 24),
-                _buildBottomActionButtons(),
-              ],
             ],
           ),
-        ),
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.close, color: AppColors.textMuted, size: 20),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildStepperHeader() {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
         borderRadius: BorderRadius.circular(12),
@@ -449,9 +475,9 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
                 : Text(
                     '$step',
                     style: TextStyle(
-                      color: isActive ? Colors.white : AppColors.textMuted,
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
+                      color: isActive ? Colors.white : AppColors.textMuted,
                     ),
                   ),
           ),
@@ -476,72 +502,6 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       height: 2,
       margin: const EdgeInsets.symmetric(horizontal: 10),
       color: isCompleted ? const Color(0xFF059669) : AppColors.cardBorder,
-    );
-  }
-
-  Widget _buildSuccessWidget() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const SizedBox(height: 20),
-          Container(
-            width: 72,
-            height: 72,
-            decoration: const BoxDecoration(
-              color: Color(0xFFD1FAE5),
-              shape: BoxShape.circle,
-            ),
-            child: Center(
-              child: Container(
-                width: 54,
-                height: 54,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF059669),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.check, color: Colors.white, size: 32),
-              ),
-            ),
-          ),
-          const SizedBox(height: 20),
-          const Text(
-            '¡Reporte enviado!',
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: AppColors.darkNavy,
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Tu pago fue enviado para conciliación. Te notificaremos cuando sea\nverificado.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: AppColors.textMuted,
-              fontSize: 13,
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-            decoration: BoxDecoration(
-              color: const Color(0xFFEFF6FF),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              'Reporte #$_generatedReportCode',
-              style: const TextStyle(
-                color: AppColors.primaryBlue,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          const SizedBox(height: 20),
-        ],
-      ),
     );
   }
 
@@ -669,7 +629,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     );
   }
 
-  // PASO 2: DATOS Y MONTO EDITABLE
+  // PASO 2: DATOS DEL COLEGIO + FORMULARIO
   Widget _buildStep2Widget() {
     final bool isBs = _selectedMethod == 'Pago Móvil' || _selectedMethod == 'Transferencia Bancaria';
     final double rawMonto = double.tryParse(_montoController.text.replaceAll(',', '.')) ?? 0.0;
@@ -678,10 +638,14 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        _buildDatosColegioInfoCard(),
+        const SizedBox(height: 16),
+
         const Text('Datos de la transacción', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
         const SizedBox(height: 4),
         const Text('Ingresa los datos tal como aparecen en tu comprobante.', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
         const SizedBox(height: 16),
+
         Row(
           children: [
             Expanded(
@@ -693,8 +657,8 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
                   DropdownButtonFormField<String>(
                     value: _selectedOriginBank,
                     hint: const Text('Seleccionar banco', style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
-                    decoration: inputDecoration(''),
-                    items: banks.map((b) => DropdownMenuItem(value: b, child: Text(b, style: const TextStyle(fontSize: 13)))).toList(),
+                    decoration: _inputDecoration(''),
+                    items: _banks.map((b) => DropdownMenuItem(value: b, child: Text(b, style: const TextStyle(fontSize: 13)))).toList(),
                     onChanged: (val) => setState(() => _selectedOriginBank = val),
                   ),
                 ],
@@ -709,8 +673,8 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
                   const SizedBox(height: 6),
                   DropdownButtonFormField<String>(
                     value: _selectedDestinationBank,
-                    decoration: inputDecoration(''),
-                    items: destinationAccounts.map((c) => DropdownMenuItem(value: c, child: Text(c, style: const TextStyle(fontSize: 13)))).toList(),
+                    decoration: _inputDecoration(''),
+                    items: _destinationAccounts.map((c) => DropdownMenuItem(value: c, child: Text(c, style: const TextStyle(fontSize: 13)))).toList(),
                     onChanged: (val) => setState(() => _selectedDestinationBank = val!),
                   ),
                 ],
@@ -718,6 +682,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
             ),
           ],
         ),
+
         const SizedBox(height: 14),
         const Text('Referencia bancaria', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
         const SizedBox(height: 6),
@@ -747,6 +712,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
           const SizedBox(height: 4),
           const Text('Referencia válida y disponible para conciliación.', style: TextStyle(fontSize: 11, color: Color(0xFF16A34A), fontWeight: FontWeight.bold)),
         ],
+
         const SizedBox(height: 14),
         Row(
           children: [
@@ -797,7 +763,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
                     controller: _montoController,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d+[\.,]?\d{0,2}'))],
-                    onChanged: (_) => setState(() {}),
+                    onChanged: (val) => setState(() {}),
                     style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.darkNavy),
                     decoration: InputDecoration(
                       prefixText: isBs ? 'Bs. ' : '\$ ',
@@ -814,6 +780,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
             ),
           ],
         ),
+
         const SizedBox(height: 16),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -845,6 +812,180 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     );
   }
 
+  // Tarjeta dinámica con datos del Colegio + Monto a Pagar + Copiar Todo
+  Widget _buildDatosColegioInfoCard() {
+    final bool isBs = _selectedMethod == 'Pago Móvil' || _selectedMethod == 'Transferencia Bancaria';
+    double rawMonto = double.tryParse(_montoController.text.replaceAll(',', '.')) ?? 0.0;
+    if (rawMonto == 0.0) {
+      rawMonto = isBs ? (widget.amountUsd * _currentTasaBcv) : widget.amountUsd;
+    }
+
+    final String montoStr = isBs
+        ? 'Bs. ${rawMonto.toStringAsFixed(2).replaceAll('.', ',')}'
+        : '\$${rawMonto.toStringAsFixed(2).replaceAll('.', ',')} USD';
+
+    switch (_selectedMethod) {
+      case 'Pago Móvil':
+        final Map<String, String> mapPM = {
+          'Banco': _pagoMovilColegio['Banco']!,
+          'RIF': _pagoMovilColegio['RIF']!,
+          'Teléfono': _pagoMovilColegio['Teléfono']!,
+          'Titular': _pagoMovilColegio['Titular']!,
+          'Monto a pagar': montoStr,
+        };
+        return _buildInfoBox(
+          titulo: 'Datos para Pago Móvil (Colegio)',
+          icon: Icons.smartphone,
+          color: Colors.blue,
+          items: mapPM,
+        );
+
+      case 'Zelle':
+        final Map<String, String> mapZelle = {
+          'Correo': _zelleColegio['Correo']!,
+          'Titular': _zelleColegio['Titular']!,
+          'Monto a pagar': montoStr,
+        };
+        return _buildInfoBox(
+          titulo: 'Datos para Zelle (Colegio)',
+          icon: Icons.mail_outline,
+          color: Colors.purple,
+          items: mapZelle,
+        );
+
+      case 'Transferencia Bancaria':
+        final Map<String, String> mapTransf = {
+          'Banco': _transferenciaColegio['Banco']!,
+          'Cuenta': _transferenciaColegio['Cuenta']!,
+          'RIF': _transferenciaColegio['RIF']!,
+          'Titular': _transferenciaColegio['Titular']!,
+          'Monto a pagar': montoStr,
+        };
+        return _buildInfoBox(
+          titulo: 'Datos para Transferencia Bancaria',
+          icon: Icons.account_balance_outlined,
+          color: Colors.indigo,
+          items: mapTransf,
+        );
+
+      default:
+        return Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.amber.shade50,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.amber.shade300),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.payments_outlined, color: Colors.amber.shade900, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'El pago en efectivo se entrega en la caja del colegio. Monto exacto: \$${widget.amountUsd.toStringAsFixed(2).replaceAll('.', ',')} USD.',
+                  style: TextStyle(fontSize: 12, color: Colors.amber.shade900, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+        );
+    }
+  }
+
+  Widget _buildInfoBox({
+    required String titulo,
+    required IconData icon,
+    required Color color,
+    required Map<String, String> items,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, color: color, size: 18),
+                  const SizedBox(width: 8),
+                  Text(titulo, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: color)),
+                ],
+              ),
+              InkWell(
+                onTap: () {
+                  final String textoCompleto = items.entries.map((e) => '${e.key}: ${e.value}').join('\n');
+                  Clipboard.setData(ClipboardData(text: textoCompleto));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Todos los datos copiados al portapapeles'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                },
+                borderRadius: BorderRadius.circular(6),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.copy_all, size: 14, color: color),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Copiar todo',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ...items.entries.map((e) {
+            final bool isMonto = e.key == 'Monto a pagar';
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 3),
+              child: Row(
+                children: [
+                  Text('${e.key}: ', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
+                  Expanded(
+                    child: Text(
+                      e.value,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isMonto ? const Color(0xFF16A34A) : AppColors.darkNavy,
+                        fontWeight: isMonto ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                  ),
+                  InkWell(
+                    onTap: () {
+                      Clipboard.setData(ClipboardData(text: e.value));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Copiado: ${e.value}'), duration: const Duration(seconds: 1)),
+                      );
+                    },
+                    child: const Icon(Icons.copy, size: 14, color: AppColors.textMuted),
+                  )
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
   // PASO 3: COMPROBANTE
   Widget _buildStep3Widget() {
     final bool isBs = _selectedMethod == 'Pago Móvil' || _selectedMethod == 'Transferencia Bancaria';
@@ -861,7 +1002,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
           onTap: _pickComprobanteFile,
           child: Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(28),
+            padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
               color: const Color(0xFFF8FAFC),
               borderRadius: BorderRadius.circular(16),
@@ -943,6 +1084,72 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     );
   }
 
+  Widget _buildSuccessWidget() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const SizedBox(height: 10),
+          Container(
+            width: 72,
+            height: 72,
+            decoration: const BoxDecoration(
+              color: Color(0xFFD1FAE5),
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Container(
+                width: 54,
+                height: 54,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF059669),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.check, color: Colors.white, size: 32),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          const Text(
+            '¡Reporte enviado!',
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: AppColors.darkNavy,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Tu pago fue enviado para conciliación. Te notificaremos cuando sea verificado.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: AppColors.textMuted,
+              fontSize: 13,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEFF6FF),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              'Reporte #$_generatedReportCode',
+              style: const TextStyle(
+                color: AppColors.primaryBlue,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBottomActionButtons() {
     if (_isSubmitted) {
       return Row(
@@ -990,14 +1197,16 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
           ),
         if (_currentStep < 3)
           ElevatedButton(
-            onPressed: (_currentStep == 2 && !_isRefValid)
+            onPressed: (_currentStep == 2 && !_isRefValid && _selectedMethod != 'Efectivo USD')
                 ? null
                 : () async {
                     if (_currentStep == 2) {
                       final bool isUnique = await _validateReferenceUniqueness();
                       if (!isUnique) return;
+                      setState(() => _currentStep++);
+                    } else {
+                      setState(() => _currentStep++);
                     }
-                    setState(() => _currentStep++);
                   },
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primaryBlue,
@@ -1040,7 +1249,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     );
   }
 
-  InputDecoration inputDecoration(String hint) {
+  InputDecoration _inputDecoration(String hint) {
     return InputDecoration(
       hintText: hint,
       hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 13),
