@@ -14,6 +14,7 @@ import '../widgets/students_import_card.dart';
 import '../widgets/payment_reconciliation_widget.dart';
 import '../widgets/generate_billing_dialog.dart';
 import '../../../../core/widgets/dashboard_shell.dart';
+import '../../../../core/widgets/skeleton_loader.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -138,6 +139,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   // Estado de la pantalla
   bool _loading = true;
+  bool _hasLoaded = false; // true tras la primera carga exitosa
   String? _error;
   int _navIndex = 0;
 
@@ -449,7 +451,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   //
   Future<void> _load() async {
     setState(() {
-      _loading = true;
+      // Skeleton solo en la primera carga; las siguientes recargas son
+      // silenciosas para no destruir la pantalla actual (p. ej. Conciliación).
+      _loading = !_hasLoaded;
       _error = null;
       _needsStudents = false;
       _noSchool = false;
@@ -665,6 +669,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         _tasa = tasa;
         _tasaSubtitle = tasaSubtitle;
         _loading = false;
+        _hasLoaded = true;
       });
 
       _loadSchool(colegioId);
@@ -787,7 +792,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   Widget _buildBody() {
     final pagePad = Breakpoints.pageInsets(MediaQuery.sizeOf(context).width);
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return AdminDashboardSkeleton(padding: pagePad);
     if (_error != null) {
       return Center(
         child: Padding(

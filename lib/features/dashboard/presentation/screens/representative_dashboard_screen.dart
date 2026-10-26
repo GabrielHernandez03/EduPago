@@ -8,6 +8,7 @@ import '../../data/account_status_service.dart';
 import '../widgets/edit_profile_dialog.dart';
 import '../widgets/report_payment_dialog.dart';
 import '../../../../core/widgets/dashboard_shell.dart';
+import '../../../../core/widgets/skeleton_loader.dart';
 
 class RepresentativeDashboardScreen extends StatefulWidget {
   const RepresentativeDashboardScreen({super.key});
@@ -147,10 +148,12 @@ class _RepresentativeDashboardScreenState
           _familyName = fetchedFamily;
           _initials = _getInitials(fetchedName);
 
-          // 2. Cargar estudiantes vinculados
+          // 2. Cargar colegio y estudiantes vinculados (en paralelo)
+          final schoolFuture = _loadSchoolName(data['colegio_id']?.toString());
           if (_repDbId.isNotEmpty) {
             await fetchAssociatedStudents(_repDbId);
           }
+          await schoolFuture;
         } else {
           // Fallback para usuario sin perfil creado aún
           final fallbackName = userFullName.isNotEmpty
@@ -226,8 +229,36 @@ class _RepresentativeDashboardScreenState
     }
   }
 
+  // --- NOMBRE DEL COLEGIO DEL REPRESENTANTE ---
+  Future<void> _loadSchoolName(String? colegioId) async {
+    if (colegioId == null || colegioId.isEmpty) return;
+    try {
+      final row = await supabase
+          .from('colegios')
+          .select('nombre')
+          .eq('id', colegioId)
+          .maybeSingle();
+      final nombre = row?['nombre']?.toString() ?? '';
+      if (mounted && nombre.isNotEmpty) {
+        setState(() => _schoolName = nombre);
+      }
+    } catch (e) {
+      debugPrint('Error al cargar el colegio del representante: $e');
+    }
+  }
+
   // --- CÁLCULO DINÁMICO DE SALDOS Y TASA BCV (HU7) ---
   Future<void> _updateFinancialSummary() async {
+    // Estado de cuenta de TODA la familia: se lanza ya y corre en paralelo
+    // con la consulta de la Tasa BCV. Si falla NO se asume solvencia.
+    final Future<EstadoCuenta?> estadoFuture = _accountStatusService
+        .getEstadoCuenta(representanteId: _repDbId)
+        .then<EstadoCuenta?>((v) => v)
+        .catchError((Object e) {
+          debugPrint('Error consultando el estado de cuenta: $e');
+          return null;
+        });
+
     // 1. Tasa BCV (oficial o caché). Si falla se conserva la última conocida.
     double rate = _tasaBcv;
     String rateStr = _tasaBcvStr;
@@ -245,14 +276,7 @@ class _RepresentativeDashboardScreenState
 
     // 2. Estado de cuenta de TODA la familia (una fila por cuota).
     //    Si falla NO se asume solvencia: se muestra un estado de error.
-    EstadoCuenta? estado;
-    try {
-      estado = await _accountStatusService.getEstadoCuenta(
-        representanteId: _repDbId,
-      );
-    } catch (e) {
-      debugPrint('Error consultando el estado de cuenta: $e');
-    }
+    final EstadoCuenta? estado = await estadoFuture;
 
     if (!mounted) return;
     setState(() {
@@ -383,7 +407,8 @@ class _RepresentativeDashboardScreenState
     ),
   ];
 
-  static const String _schoolName = 'U.E. Nueva Generación';
+  // Nombre del colegio del representante (representantes.colegio_id -> colegios.nombre)
+  String _schoolName = '';
 
   @override
   Widget build(BuildContext context) {
@@ -396,6 +421,7 @@ class _RepresentativeDashboardScreenState
       userInitials: _initials.isEmpty ? 'U' : _initials,
       userRole: 'Representante',
       onLogout: _handleLogout,
+      onEditProfile: () => _showEditProfileModal(context),
       searchHint: 'Buscar pago, documento o referencia...',
       hasNotifications: true,
       headerActions: [_buildPeriodChip()],
@@ -405,7 +431,9 @@ class _RepresentativeDashboardScreenState
 
   Widget _buildBody() {
     if (_isLoading || _isLoadingProfile) {
-      return const Center(child: CircularProgressIndicator());
+      return RepresentativeDashboardSkeleton(
+        padding: Breakpoints.pageInsets(MediaQuery.sizeOf(context).width),
+      );
     }
 
     // Pestañas aún pendientes (igual que en el panel del administrador)
@@ -737,8 +765,21 @@ class _RepresentativeDashboardScreenState
         child: InkWell(
           hoverColor: Colors.transparent,
           onTap: () {
-            setState(() => _selectedStudentIndex = index);
-            _updateFinancialSummary(); // Recalcular dinámicamente saldos al cambiar opción
+            if (_selectedStudentIndex == index) return;
+            // El estado de cuenta ya contiene a TODA la familia: el saldo del
+            // estudiante elegido se calcula en memoria, sin consultar la red.
+            setState(() {
+              _selectedStudentIndex = index;
+              final String? selectedId =
+                  (index >= 0 && index < _students.length)
+                  ? _students[index]['id'].toString()
+                  : null;
+              _montoUsd =
+                  _estadoCuenta?.pendienteDe(estudianteId: selectedId) ?? 0.0;
+              _equivalenteVes = _montoUsd * _tasaBcv;
+            });
+            // Solo si la consulta anterior falló se reintenta contra la red.
+            if (_estadoCuenta == null) _updateFinancialSummary();
           },
           borderRadius: BorderRadius.circular(12),
           child: AnimatedContainer(

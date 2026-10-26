@@ -50,6 +50,50 @@ const Color _navActive = Color(0xFF1E3A8A);
 const Color _danger = Color(0xFFDC2626);
 const Duration _hoverDuration = Duration(milliseconds: 150);
 
+// Barra lateral: tamaños y animación de contraer / expandir.
+const double _sidebarExpandedW = 250.0;
+const double _sidebarCollapsedW = 76.0;
+// Red de seguridad: con los rebotes actuales la barra no baja de ~68 px.
+const double _sidebarMinW = 62.0;
+
+// Si es true, la animación se desactiva cuando el sistema pide "reducir
+// movimiento" (en Windows: Accesibilidad > Efectos visuales > Efectos de
+// animación apagado). Déjalo en false para que SIEMPRE se vea la animación.
+const bool _respectReduceMotion = false;
+
+// Al abrir: más larga y con un rebote elegante. Al cerrar: más corta y casi seca.
+const Duration _expandDuration = Duration(milliseconds: 650);
+const Duration _collapseDuration = Duration(milliseconds: 480);
+const Curve _expandCurve = _SpringCurve(damping: 0.62);
+const Curve _collapseCurve = _SpringCurve(damping: 0.72);
+
+// Fundido cruzado entre el diseño contraído y el expandido:
+// empieza cuando la barra lleva ~18 % del recorrido y termina al ~68 %.
+const double _fadeStart = 0.18;
+const double _fadeSpan = 0.50;
+
+/// Resorte amortiguado normalizado a la duración de la animación.
+///   [damping]  0.5 = muy elástico · 0.6 = elegante · 0.8 = casi sin rebote
+///   [settle]   cuánto queda de oscilación al terminar (0.001 = invisible)
+/// La frecuencia se deduce de [settle], así que la animación SIEMPRE termina
+/// asentada al llegar a t = 1, sin importar el amortiguamiento que elijas.
+/// Sobrepaso aprox.: 0.5 → 16 % · 0.6 → 9.5 % · 0.7 → 4.6 % · 0.8 → 1.5 %
+class _SpringCurve extends Curve {
+  final double damping;
+  final double settle;
+  const _SpringCurve({this.damping = 0.6, this.settle = 0.001})
+    : assert(damping > 0 && damping < 1);
+
+  @override
+  double transformInternal(double t) {
+    final wn = -math.log(settle) / damping; // frecuencia natural
+    final wd = wn * math.sqrt(1 - damping * damping); // frecuencia amortiguada
+    final decay = math.exp(-damping * wn * t);
+    return 1 -
+        decay * (math.cos(wd * t) + (damping * wn / wd) * math.sin(wd * t));
+  }
+}
+
 class DashboardShell extends StatefulWidget {
   final List<DashboardNavItem> navItems;
   final int selectedIndex;
@@ -79,6 +123,10 @@ class DashboardShell extends StatefulWidget {
   /// Acción del ítem "Soporte y seguridad". Si es null muestra un aviso.
   final VoidCallback? onSupportTap;
 
+  /// Si se indica, el menú de cuenta muestra la opción "Editar perfil" y
+  /// ejecuta esta acción al elegirla. Si es null, la opción no aparece.
+  final VoidCallback? onEditProfile;
+
   /// Contenido de la página.
   final Widget body;
 
@@ -97,6 +145,7 @@ class DashboardShell extends StatefulWidget {
     this.headerActions = const [],
     this.hasNotifications = false,
     this.onSupportTap,
+    this.onEditProfile,
   });
 
   @override
@@ -114,7 +163,19 @@ class _DashboardShellState extends State<DashboardShell> {
     final w = MediaQuery.sizeOf(context).width;
     final isDesktop = Breakpoints.isDesktop(w);
     final expanded = _expandedOverride ?? (w >= Breakpoints.wide);
-    final sidebarW = expanded ? 250.0 : 76.0;
+    final reduceMotion =
+        _respectReduceMotion && MediaQuery.disableAnimationsOf(context);
+
+    // Parte que NO depende de la animación: se construye una sola vez y se
+    // reutiliza en cada fotograma (solo se vuelve a medir, no a construir).
+    final main = Expanded(
+      child: Column(
+        children: [
+          _buildTopHeader(w, isDesktop),
+          Expanded(child: widget.body),
+        ],
+      ),
+    );
 
     return Scaffold(
       key: _scaffoldKey,
@@ -128,28 +189,40 @@ class _DashboardShellState extends State<DashboardShell> {
                 child: _buildSidebar(expanded: true, inDrawer: true),
               ),
             ),
-      body: Stack(
-        children: [
-          Row(
+      // t: 0 = barra contraída, 1 = expandida. Se anima sola cada vez que
+      // cambia `expanded` (botón de la flecha o cambio de tamaño de ventana).
+      body: TweenAnimationBuilder<double>(
+        tween: Tween<double>(end: expanded ? 1.0 : 0.0),
+        duration: reduceMotion
+            ? Duration.zero
+            : (expanded ? _expandDuration : _collapseDuration),
+        curve: expanded ? _expandCurve : _collapseCurve,
+        child: main,
+        builder: (context, t, mainChild) {
+          // t puede pasarse de [0, 1] durante el rebote: de ahí el efecto.
+          final sidebarW =
+              (_sidebarCollapsedW +
+                      (_sidebarExpandedW - _sidebarCollapsedW) * t)
+                  .clamp(_sidebarMinW, _sidebarExpandedW + 40)
+                  .toDouble();
+          return Stack(
             children: [
-              if (isDesktop) _buildSidebar(expanded: expanded),
-              Expanded(
-                child: Column(
-                  children: [
-                    _buildTopHeader(w, isDesktop),
-                    Expanded(child: widget.body),
-                  ],
-                ),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (isDesktop) _buildAnimatedSidebar(t, sidebarW),
+                  mainChild!,
+                ],
               ),
+              if (isDesktop)
+                Positioned(
+                  left: sidebarW - 12,
+                  top: 64,
+                  child: _buildCollapseButton(expanded, t),
+                ),
             ],
-          ),
-          if (isDesktop)
-            Positioned(
-              left: sidebarW - 12,
-              top: 64,
-              child: _buildCollapseButton(expanded),
-            ),
-        ],
+          );
+        },
       ),
     );
   }
@@ -169,9 +242,10 @@ class _DashboardShellState extends State<DashboardShell> {
   //
   // Botón para colapsar / expandir
   //
-  Widget _buildCollapseButton(bool expanded) {
-    return Tooltip(
-      message: expanded ? 'Contraer menú' : 'Expandir menú',
+  Widget _buildCollapseButton(bool expanded, double t) {
+    return Semantics(
+      button: true,
+      label: expanded ? 'Contraer menú' : 'Expandir menú',
       child: HoverBuilder(
         builder: (context, hovered) => AnimatedScale(
           scale: hovered ? 1.15 : 1.0,
@@ -191,10 +265,19 @@ class _DashboardShellState extends State<DashboardShell> {
                   color: hovered ? AppColors.primaryBlue : Colors.white24,
                 ),
               ),
-              child: Icon(
-                expanded ? Icons.chevron_left : Icons.chevron_right,
-                color: Colors.white,
-                size: 16,
+              // La flecha gira suave y se queda en 0°–180° aunque la barra rebote.
+              child: Transform.rotate(
+                angle:
+                    (1 -
+                        Curves.easeInOutCubic.transform(
+                          t.clamp(0.0, 1.0).toDouble(),
+                        )) *
+                    math.pi,
+                child: const Icon(
+                  Icons.chevron_left,
+                  color: Colors.white,
+                  size: 16,
+                ),
               ),
             ),
           ),
@@ -206,9 +289,66 @@ class _DashboardShellState extends State<DashboardShell> {
   //
   // Barra lateral
   //
+  /// Barra lateral de escritorio animada.
+  ///
+  /// El ancho sigue a [t] (con rebote). Dentro hay DOS capas a su tamaño real
+  /// (contraída de 76 px y expandida de 250 px) con un fundido cruzado entre
+  /// ellas. Los íconos están casi en el mismo punto en ambas, así que se ve
+  /// como si se quedaran quietos mientras las etiquetas aparecen y se
+  /// desvelan con el borde de la barra. No hay corte ni parpadeo.
+  Widget _buildAnimatedSidebar(double t, double width) {
+    // p: 0 = solo contraída, 1 = solo expandida.
+    final p = Curves.easeInOut.transform(
+      ((t - _fadeStart) / _fadeSpan).clamp(0.0, 1.0).toDouble(),
+    );
+
+    Widget layer({
+      required bool expanded,
+      required double opacity,
+      required bool active,
+    }) {
+      final w = expanded ? _sidebarExpandedW : _sidebarCollapsedW;
+      return IgnorePointer(
+        ignoring: !active,
+        child: ExcludeSemantics(
+          excluding: !active,
+          child: Opacity(
+            opacity: opacity,
+            child: OverflowBox(
+              alignment: Alignment.topLeft,
+              minWidth: w,
+              maxWidth: w,
+              child: _buildSidebar(expanded: expanded),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return RepaintBoundary(
+      child: SizedBox(
+        width: width,
+        child: ColoredBox(
+          color: _navy,
+          child: ClipRect(
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                layer(expanded: false, opacity: 1 - p, active: p < 0.5),
+                layer(expanded: true, opacity: p, active: p >= 0.5),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSidebar({required bool expanded, bool inDrawer = false}) {
     return Container(
-      width: inDrawer ? null : (expanded ? 250.0 : 76.0),
+      width: inDrawer
+          ? null
+          : (expanded ? _sidebarExpandedW : _sidebarCollapsedW),
       color: _navy,
       padding: EdgeInsets.symmetric(
         horizontal: expanded ? 16 : 12,
@@ -618,8 +758,8 @@ class _DashboardShellState extends State<DashboardShell> {
   // la salida siempre pasa por el diálogo de confirmación.
   //
   Widget _userMenu({required Widget child, bool opensUpwards = false}) {
-    // Alto aproximado del menú (cabecera + divisor + acción + relleno)
-    const menuHeight = 140.0;
+    // Alto aproximado del menú (cabecera + divisor + acciones + relleno)
+    final menuHeight = widget.onEditProfile != null ? 192.0 : 140.0;
 
     return Theme(
       data: Theme.of(context).copyWith(
@@ -632,9 +772,7 @@ class _DashboardShellState extends State<DashboardShell> {
         position: opensUpwards
             ? PopupMenuPosition.over
             : PopupMenuPosition.under,
-        offset: opensUpwards
-            ? const Offset(0, -menuHeight)
-            : const Offset(0, 8),
+        offset: opensUpwards ? Offset(0, -menuHeight) : const Offset(0, 8),
         color: Colors.white,
         surfaceTintColor: Colors.transparent,
         shadowColor: Colors.black.withValues(alpha: 0.25),
@@ -645,6 +783,7 @@ class _DashboardShellState extends State<DashboardShell> {
           side: const BorderSide(color: AppColors.cardBorder),
         ),
         onSelected: (v) {
+          if (v == 'profile') widget.onEditProfile?.call();
           if (v == 'logout') _confirmLogout();
         },
         itemBuilder: (context) => [
@@ -697,6 +836,48 @@ class _DashboardShellState extends State<DashboardShell> {
             ),
           ),
           const PopupMenuDivider(height: 1),
+          if (widget.onEditProfile != null)
+            PopupMenuItem<String>(
+              value: 'profile',
+              height: 52,
+              padding: EdgeInsets.zero,
+              child: HoverBuilder(
+                builder: (context, hovered) => AnimatedContainer(
+                  duration: _hoverDuration,
+                  margin: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  height: 40,
+                  alignment: Alignment.centerLeft,
+                  decoration: BoxDecoration(
+                    color: hovered
+                        ? const Color(0xFFF1F5F9)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(
+                        Icons.person_outline_rounded,
+                        size: 18,
+                        color: AppColors.darkNavy,
+                      ),
+                      SizedBox(width: 12),
+                      Text(
+                        'Editar perfil',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.darkNavy,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           PopupMenuItem<String>(
             value: 'logout',
             height: 52,
