@@ -784,7 +784,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       userRole: 'Administración',
       onLogout: _logout,
       searchHint: 'Buscar alumno por cédula, código escolar o nombre...',
-      hasNotifications: _pendingReceipts > 0,
+      onNotificationTap: (n) {
+        // Un pago reportado lleva directo a la pestaña de Conciliación.
+        if (n.tipo == 'pago_reportado') setState(() => _navIndex = 3);
+      },
       headerActions: [_tasaChip(MediaQuery.sizeOf(context).width < 1150)],
       body: _buildBody(),
     );

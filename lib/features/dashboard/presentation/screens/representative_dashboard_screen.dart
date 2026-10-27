@@ -423,7 +423,6 @@ class _RepresentativeDashboardScreenState
       onLogout: _handleLogout,
       onEditProfile: () => _showEditProfileModal(context),
       searchHint: 'Buscar pago, documento o referencia...',
-      hasNotifications: true,
       headerActions: [_buildPeriodChip()],
       body: _buildBody(),
     );

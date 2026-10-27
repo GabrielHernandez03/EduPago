@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import '../services/notification_service.dart';
 import '../theme/app_colors.dart';
+import 'notification_bell.dart';
 
 //
 // Ubicación sugerida: lib/core/widgets/dashboard_shell.dart
@@ -117,8 +119,9 @@ class DashboardShell extends StatefulWidget {
   /// pantallas angostas (<= 760 px) para no desbordar.
   final List<Widget> headerActions;
 
-  /// Muestra el punto rojo sobre la campana.
-  final bool hasNotifications;
+  /// Se ejecuta al tocar una notificación de la campana (p. ej. para
+  /// cambiar de pestaña). Si es null, solo se marca como leída.
+  final ValueChanged<AppNotification>? onNotificationTap;
 
   /// Acción del ítem "Soporte y seguridad". Si es null muestra un aviso.
   final VoidCallback? onSupportTap;
@@ -143,7 +146,7 @@ class DashboardShell extends StatefulWidget {
     required this.body,
     this.searchHint = 'Buscar...',
     this.headerActions = const [],
-    this.hasNotifications = false,
+    this.onNotificationTap,
     this.onSupportTap,
     this.onEditProfile,
   });
@@ -757,163 +760,108 @@ class _DashboardShellState extends State<DashboardShell> {
   // Menú de cuenta (avatar). Muestra al usuario y la acción de salir;
   // la salida siempre pasa por el diálogo de confirmación.
   //
+  // Menú propio (no PopupMenuButton) para poder animarlo desde su ancla:
+  //   · opensUpwards = true  → nace en el avatar y SUBE (de abajo hacia arriba)
+  //   · opensUpwards = false → nace debajo del botón y BAJA
+  //
   Widget _userMenu({required Widget child, bool opensUpwards = false}) {
-    // Alto aproximado del menú (cabecera + divisor + acciones + relleno)
-    final menuHeight = widget.onEditProfile != null ? 192.0 : 140.0;
-
-    return Theme(
-      data: Theme.of(context).copyWith(
-        hoverColor: Colors.transparent,
-        highlightColor: Colors.transparent,
-        splashColor: _danger.withValues(alpha: 0.06),
-      ),
-      child: PopupMenuButton<String>(
-        tooltip: 'Cuenta',
-        position: opensUpwards
-            ? PopupMenuPosition.over
-            : PopupMenuPosition.under,
-        offset: opensUpwards ? Offset(0, -menuHeight) : const Offset(0, 8),
-        color: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        shadowColor: Colors.black.withValues(alpha: 0.25),
-        elevation: 14,
-        constraints: const BoxConstraints(minWidth: 240, maxWidth: 290),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-          side: const BorderSide(color: AppColors.cardBorder),
+    return Builder(
+      builder: (anchorContext) => Tooltip(
+        message: 'Cuenta',
+        child: Semantics(
+          button: true,
+          label: 'Cuenta',
+          child: MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _showAccountMenu(anchorContext, opensUpwards),
+              child: child,
+            ),
+          ),
         ),
-        onSelected: (v) {
-          if (v == 'profile') widget.onEditProfile?.call();
-          if (v == 'logout') _confirmLogout();
-        },
-        itemBuilder: (context) => [
-          PopupMenuItem<String>(
-            enabled: false,
-            height: 68,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 18,
-                  backgroundColor: AppColors.primaryBlue,
-                  child: Text(
-                    widget.userInitials,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Flexible(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.userName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.darkNavy,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        widget.userRole,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: AppColors.textMuted,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const PopupMenuDivider(height: 1),
-          if (widget.onEditProfile != null)
-            PopupMenuItem<String>(
-              value: 'profile',
-              height: 52,
-              padding: EdgeInsets.zero,
-              child: HoverBuilder(
-                builder: (context, hovered) => AnimatedContainer(
-                  duration: _hoverDuration,
-                  margin: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 6,
-                  ),
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  height: 40,
-                  alignment: Alignment.centerLeft,
-                  decoration: BoxDecoration(
-                    color: hovered
-                        ? const Color(0xFFF1F5F9)
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Row(
-                    children: [
-                      Icon(
-                        Icons.person_outline_rounded,
-                        size: 18,
-                        color: AppColors.darkNavy,
-                      ),
-                      SizedBox(width: 12),
-                      Text(
-                        'Editar perfil',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.darkNavy,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          PopupMenuItem<String>(
-            value: 'logout',
-            height: 52,
-            padding: EdgeInsets.zero,
-            child: HoverBuilder(
-              builder: (context, hovered) => AnimatedContainer(
-                duration: _hoverDuration,
-                margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                height: 40,
-                alignment: Alignment.centerLeft,
-                decoration: BoxDecoration(
-                  color: hovered ? const Color(0xFFFEF2F2) : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.logout_rounded, size: 18, color: _danger),
-                    SizedBox(width: 12),
-                    Text(
-                      'Cerrar sesión',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: _danger,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-        child: child,
       ),
     );
+  }
+
+  Future<void> _showAccountMenu(
+    BuildContext anchorContext,
+    bool opensUpwards,
+  ) async {
+    final box = anchorContext.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+
+    final rect = box.localToGlobal(Offset.zero) & box.size;
+    final screen = MediaQuery.sizeOf(context);
+    const gap = 8.0;
+    const menuW = _AccountMenuPanel.width;
+
+    final left = rect.left
+        .clamp(8.0, math.max(8.0, screen.width - menuW - 8))
+        .toDouble();
+    final right = (screen.width - rect.right)
+        .clamp(8.0, math.max(8.0, screen.width - menuW - 8))
+        .toDouble();
+
+    final choice = await showGeneralDialog<String>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Cerrar menú de cuenta',
+      barrierColor: Colors.transparent,
+      transitionDuration: const Duration(milliseconds: 300),
+      pageBuilder: (dialogContext, animation, secondaryAnimation) {
+        final panel = _AccountMenuPanel(
+          userName: widget.userName,
+          userInitials: widget.userInitials,
+          userRole: widget.userRole,
+          showEditProfile: widget.onEditProfile != null,
+        );
+
+        return SizedBox.expand(
+          child: Stack(
+            children: [
+              Positioned(
+                left: opensUpwards ? left : null,
+                right: opensUpwards ? null : right,
+                top: opensUpwards ? null : rect.bottom + gap,
+                bottom: opensUpwards ? screen.height - rect.top + gap : null,
+                child: AnimatedBuilder(
+                  animation: animation,
+                  child: panel,
+                  builder: (context, child) {
+                    final reversing =
+                        animation.status == AnimationStatus.reverse;
+                    final v =
+                        (reversing ? Curves.easeInCubic : Curves.easeOutCubic)
+                            .transform(
+                              animation.value.clamp(0.0, 1.0).toDouble(),
+                            );
+                    return Opacity(
+                      opacity: v,
+                      child: Transform.translate(
+                        // Pequeño desplazamiento en el sentido de la apertura.
+                        offset: Offset(0, (1 - v) * (opensUpwards ? 12 : -12)),
+                        child: ClipRect(
+                          clipper: _RevealClipper(v, fromBottom: opensUpwards),
+                          child: child,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+      // La animación la hace el propio pageBuilder; aquí no se añade otra.
+      transitionBuilder: (context, animation, secondaryAnimation, child) =>
+          child,
+    );
+
+    if (!mounted) return;
+    if (choice == 'profile') widget.onEditProfile?.call();
+    if (choice == 'logout') _confirmLogout();
   }
 
   //
@@ -987,43 +935,9 @@ class _DashboardShellState extends State<DashboardShell> {
               HoverLift(radius: 10, lift: 1, child: a),
               const SizedBox(width: 12),
             ],
-          HoverBuilder(
-            cursor: SystemMouseCursors.click,
-            builder: (context, hovered) => Stack(
-              children: [
-                AnimatedContainer(
-                  duration: _hoverDuration,
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: hovered ? const Color(0xFFF1F5F9) : Colors.white,
-                    border: Border.all(
-                      color: hovered
-                          ? const Color(0xFF94A3B8)
-                          : AppColors.cardBorder,
-                    ),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(
-                    Icons.notifications_none,
-                    size: 18,
-                    color: AppColors.darkNavy,
-                  ),
-                ),
-                if (widget.hasNotifications)
-                  Positioned(
-                    right: 6,
-                    top: 6,
-                    child: Container(
-                      width: 7,
-                      height: 7,
-                      decoration: const BoxDecoration(
-                        color: Colors.redAccent,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
+          NotificationBell(
+            key: const ValueKey('notification-bell'),
+            onOpen: widget.onNotificationTap,
           ),
           const SizedBox(width: 12),
           _userMenu(
@@ -1391,6 +1305,204 @@ class ResponsiveGrid extends StatelessWidget {
 
         return Column(children: rows);
       },
+    );
+  }
+}
+
+//
+// Menú de cuenta: panel, acciones y recorte de la animación de apertura
+//
+
+/// Revela el panel desde un borde: desde ABAJO hacia arriba si [fromBottom],
+/// o desde ARRIBA hacia abajo si no. Deja un margen para que la sombra no se
+/// recorte cuando la animación termina.
+class _RevealClipper extends CustomClipper<Rect> {
+  final double progress;
+  final bool fromBottom;
+  const _RevealClipper(this.progress, {required this.fromBottom});
+
+  @override
+  Rect getClip(Size size) {
+    const m = 40.0;
+    final done = progress >= 1.0;
+    if (fromBottom) {
+      return Rect.fromLTRB(
+        -m,
+        done ? -m : size.height * (1 - progress),
+        size.width + m,
+        size.height + m,
+      );
+    }
+    return Rect.fromLTRB(
+      -m,
+      -m,
+      size.width + m,
+      done ? size.height + m : size.height * progress,
+    );
+  }
+
+  @override
+  bool shouldReclip(_RevealClipper old) =>
+      old.progress != progress || old.fromBottom != fromBottom;
+}
+
+class _AccountMenuPanel extends StatelessWidget {
+  static const double width = 250;
+
+  final String userName;
+  final String userInitials;
+  final String userRole;
+  final bool showEditProfile;
+
+  const _AccountMenuPanel({
+    required this.userName,
+    required this.userInitials,
+    required this.userRole,
+    required this.showEditProfile,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      elevation: 14,
+      shadowColor: Colors.black.withValues(alpha: 0.25),
+      surfaceTintColor: Colors.transparent,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: AppColors.cardBorder),
+      ),
+      child: SizedBox(
+        width: width,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              height: 68,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 18,
+                      backgroundColor: AppColors.primaryBlue,
+                      child: Text(
+                        userInitials,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Flexible(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            userName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.darkNavy,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            userRole,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textMuted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const Divider(height: 1, thickness: 1, color: AppColors.cardBorder),
+            if (showEditProfile)
+              _AccountMenuAction(
+                icon: Icons.person_outline_rounded,
+                label: 'Editar perfil',
+                color: AppColors.darkNavy,
+                hoverColor: const Color(0xFFF1F5F9),
+                onTap: () => Navigator.of(context).pop('profile'),
+              ),
+            _AccountMenuAction(
+              icon: Icons.logout_rounded,
+              label: 'Cerrar sesión',
+              color: _danger,
+              hoverColor: const Color(0xFFFEF2F2),
+              onTap: () => Navigator.of(context).pop('logout'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AccountMenuAction extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final Color hoverColor;
+  final VoidCallback onTap;
+
+  const _AccountMenuAction({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.hoverColor,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      hoverColor: Colors.transparent,
+      child: SizedBox(
+        height: 52,
+        child: HoverBuilder(
+          cursor: SystemMouseCursors.click,
+          builder: (context, hovered) => AnimatedContainer(
+            duration: _hoverDuration,
+            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            alignment: Alignment.centerLeft,
+            decoration: BoxDecoration(
+              color: hovered ? hoverColor : Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(icon, size: 18, color: color),
+                const SizedBox(width: 12),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: color,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
