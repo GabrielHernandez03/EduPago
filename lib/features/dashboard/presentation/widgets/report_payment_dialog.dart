@@ -295,7 +295,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       String metodoKey = 'pago_movil';
       if (_selectedMethod == 'Zelle') metodoKey = 'zelle';
       if (_selectedMethod == 'Transferencia Bancaria') {
-        metodoKey = 'transferencia';
+        metodoKey = 'transferencia_bancaria';
       }
       if (_selectedMethod == 'Efectivo USD') metodoKey = 'efectivo';
 
