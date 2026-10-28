@@ -403,7 +403,7 @@ class _HeroSectionState extends State<HeroSection> {
                       ),
                       SizedBox(width: 20),
                       Text(
-                        'Bs. 2.450',
+                        'Bs. 30.000',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: AppColors.darkNavy,

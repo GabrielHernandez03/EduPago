@@ -208,188 +208,186 @@ class RepresentativeDashboardSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     return _scrollable(
       padding: padding,
-      maxWidth: 1000,
+      maxWidth: 1250,
       child: LayoutBuilder(
-        builder: (context, constraints) {
-          final narrow = constraints.maxWidth < 640;
+        builder: (context, c) {
+          final narrow = c.maxWidth < 800;
+          final cols = c.maxWidth >= 970 ? 4 : (c.maxWidth >= 510 ? 2 : 1);
+          final actions = Column(
+            children: [
+              for (var row = 0; row < (4 / cols).ceil(); row++) ...[
+                if (row > 0) const SizedBox(height: 16),
+                Row(
+                  children: [
+                    for (var i = 0; i < cols; i++) ...[
+                      if (i > 0) const SizedBox(width: 16),
+                      Expanded(
+                        child: SkeletonCard(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SkeletonBox(
+                                width: 54,
+                                height: 54,
+                                circle: true,
+                              ),
+                              const SizedBox(height: 20),
+                              const _Line(height: 15),
+                              const SizedBox(height: 10),
+                              const _Line(height: 11),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ],
+          );
+          final student = const SkeletonCard(
+            child: Row(
+              children: [
+                SkeletonBox(width: 68, height: 68, circle: true),
+                SizedBox(width: 18),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _Line(width: 95, height: 11),
+                      SizedBox(height: 10),
+                      _Line(height: 19),
+                      SizedBox(height: 10),
+                      _Line(width: 150, height: 11),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+          final status = const SkeletonCard(
+            child: Row(
+              children: [
+                SkeletonBox(width: 52, height: 52, circle: true),
+                SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _Line(width: 110, height: 13),
+                      SizedBox(height: 9),
+                      _Line(height: 20),
+                      SizedBox(height: 8),
+                      _Line(height: 12),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+          final payment = const SkeletonCard(
+            padding: EdgeInsets.all(26),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    SkeletonBox(width: 52, height: 52, circle: true),
+                    SizedBox(width: 14),
+                    Expanded(child: _Line(height: 19)),
+                  ],
+                ),
+                SizedBox(height: 24),
+                _Line(width: 230, height: 31),
+                SizedBox(height: 14),
+                _Line(height: 13),
+                SizedBox(height: 18),
+                SkeletonBox(height: 44, radius: 11),
+                SizedBox(height: 10),
+                SkeletonBox(height: 44, radius: 11),
+              ],
+            ),
+          );
+          final secure = const SkeletonCard(
+            padding: EdgeInsets.all(26),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(child: SkeletonBox(width: 72, height: 72, circle: true)),
+                SizedBox(height: 20),
+                _Line(height: 18),
+                SizedBox(height: 12),
+                _Line(height: 12),
+                SizedBox(height: 10),
+                _Line(height: 12),
+                SizedBox(height: 22),
+                _Line(width: 110, height: 13),
+              ],
+            ),
+          );
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Cabecera del representante
-              const SkeletonCard(
-                child: Row(
-                  children: [
-                    SkeletonBox(width: 56, height: 56, circle: true),
-                    SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _Line(width: 200, height: 16),
-                          SizedBox(height: 10),
-                          _Line(width: 130, height: 11),
-                        ],
-                      ),
-                    ),
-                    SizedBox(width: 16),
-                    SkeletonBox(width: 88, height: 34, radius: 10),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              // Estudiantes
-              const _Line(width: 150, height: 16),
-              const SizedBox(height: 12),
               const Row(
                 children: [
+                  SkeletonBox(width: 42, height: 42, circle: true),
+                  SizedBox(width: 14),
                   Expanded(
-                    child: SkeletonCard(
-                      padding: EdgeInsets.all(14),
-                      child: Row(
-                        children: [
-                          SkeletonBox(width: 40, height: 40, circle: true),
-                          SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _Line(width: 120, height: 13),
-                                SizedBox(height: 8),
-                                _Line(width: 80, height: 10),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: SkeletonCard(
-                      padding: EdgeInsets.all(14),
-                      child: Row(
-                        children: [
-                          SkeletonBox(width: 40, height: 40, circle: true),
-                          SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _Line(width: 100, height: 13),
-                                SizedBox(height: 8),
-                                _Line(width: 70, height: 10),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _Line(width: 230, height: 27),
+                        SizedBox(height: 10),
+                        _Line(width: 300, height: 13),
+                      ],
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
-
-              // Banner de estado académico
-              const SkeletonBox(height: 56, radius: 14),
-              const SizedBox(height: 16),
-
-              // Tarjeta "saldo pendiente"
-              const SkeletonCard(
-                padding: EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _Line(width: 190, height: 15),
-                    SizedBox(height: 22),
-                    _Line(width: 70, height: 10),
-                    SizedBox(height: 10),
-                    _Line(width: 170, height: 38),
-                    SizedBox(height: 22),
-                    SkeletonBox(height: 40, radius: 10),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Estado de cuenta desglosado
-              const SkeletonCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _Line(width: 210, height: 15),
-                    SizedBox(height: 8),
-                    _Line(width: 280, height: 10),
-                    SizedBox(height: 18),
-                    SkeletonBox(height: 52, radius: 12),
-                    SizedBox(height: 10),
-                    SkeletonBox(height: 52, radius: 12),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Botones de acción
+              const SizedBox(height: 26),
               if (narrow) ...[
-                const SkeletonBox(height: 46, radius: 12),
-                const SizedBox(height: 12),
-                const SkeletonBox(height: 46, radius: 12),
+                student,
+                const SizedBox(height: 16),
+                status,
               ] else
-                const Row(
+                Row(
                   children: [
-                    Expanded(
-                      flex: 3,
-                      child: SkeletonBox(height: 46, radius: 12),
-                    ),
-                    SizedBox(width: 12),
-                    Expanded(
-                      flex: 2,
-                      child: SkeletonBox(height: 46, radius: 12),
-                    ),
+                    Expanded(flex: 7, child: student),
+                    const SizedBox(width: 18),
+                    Expanded(flex: 4, child: status),
                   ],
                 ),
-              const SizedBox(height: 28),
-
-              // Actividad reciente
+              const SizedBox(height: 20),
+              actions,
+              const SizedBox(height: 20),
+              if (narrow) ...[
+                payment,
+                const SizedBox(height: 16),
+                secure,
+              ] else
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(flex: 7, child: payment),
+                    const SizedBox(width: 18),
+                    Expanded(flex: 3, child: secure),
+                  ],
+                ),
+              const SizedBox(height: 20),
               const SkeletonCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _Line(width: 160, height: 15),
-                    SizedBox(height: 6),
-                    _Line(width: 220, height: 10),
-                    SizedBox(height: 10),
-                    _ListRowSkeleton(),
-                    _ListRowSkeleton(),
-                    _ListRowSkeleton(),
+                    _Line(width: 240, height: 18),
+                    SizedBox(height: 20),
+                    SkeletonBox(height: 62),
+                    SizedBox(height: 12),
+                    SkeletonBox(height: 62),
+                    SizedBox(height: 12),
+                    SkeletonBox(height: 62),
                   ],
                 ),
               ),
-              const SizedBox(height: 28),
-
-              // Documentos digitales
-              SkeletonCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const _Line(width: 180, height: 15),
-                    const SizedBox(height: 16),
-                    if (narrow) ...[
-                      const SkeletonBox(height: 84, radius: 12),
-                      const SizedBox(height: 12),
-                      const SkeletonBox(height: 84, radius: 12),
-                    ] else
-                      const Row(
-                        children: [
-                          Expanded(child: SkeletonBox(height: 84, radius: 12)),
-                          SizedBox(width: 12),
-                          Expanded(child: SkeletonBox(height: 84, radius: 12)),
-                        ],
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
             ],
           );
         },

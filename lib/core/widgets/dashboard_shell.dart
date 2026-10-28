@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../services/notification_service.dart';
 import '../theme/app_colors.dart';
 import 'notification_bell.dart';
@@ -29,12 +30,18 @@ class Breakpoints {
   static bool isCompact(double w) => w < compact;
   static bool isDesktop(double w) => w > desktop;
 
+  /// Márgenes laterales del dashboard compartidos entre todos los roles.
+  /// Más espacio en escritorio sin restar demasiado ancho en móviles.
   static double pagePadding(double w) =>
-      w < compact ? 16 : (w <= desktop ? 24 : 32);
+      w < compact ? 18 : (w <= desktop ? 28 : (w < wide ? 36 : 48));
 
-  static EdgeInsets pageInsets(double w) => EdgeInsets.symmetric(
-    horizontal: pagePadding(w),
-    vertical: w < compact ? 16 : 24,
+  /// El saludo se mantiene cerca del encabezado; aumentamos principalmente
+  /// los márgenes laterales y el espacio inferior para una interfaz aireada.
+  static EdgeInsets pageInsets(double w) => EdgeInsets.fromLTRB(
+    pagePadding(w),
+    w < compact ? 16 : 20,
+    pagePadding(w),
+    w < compact ? 24 : 36,
   );
 }
 
@@ -46,15 +53,15 @@ class DashboardNavItem {
   const DashboardNavItem(this.icon, this.activeIcon, this.title);
 }
 
-const Color _navy = Color(0xFF0F172A);
-const Color _navySurface = Color(0xFF1E293B);
-const Color _navActive = Color(0xFF1E3A8A);
+const Color _navy = AppColors.sidebarBottom;
+const Color _navySurface = AppColors.sidebarTop;
+const Color _navActive = AppColors.primaryBlue;
 const Color _danger = Color(0xFFDC2626);
 const Duration _hoverDuration = Duration(milliseconds: 150);
 
 // Barra lateral: tamaños y animación de contraer / expandir.
-const double _sidebarExpandedW = 250.0;
-const double _sidebarCollapsedW = 76.0;
+const double _sidebarExpandedW = 266.0;
+const double _sidebarCollapsedW = 78.0;
 // Red de seguridad: con los rebotes actuales la barra no baja de ~68 px.
 const double _sidebarMinW = 62.0;
 
@@ -94,6 +101,145 @@ class _SpringCurve extends Curve {
     return 1 -
         decay * (math.cos(wd * t) + (damping * wn / wd) * math.sin(wd * t));
   }
+}
+
+/// Fondo vectorial animado del menú lateral.
+///
+/// Las dos ondas avanzan de izquierda a derecha a la misma velocidad.
+/// La onda inferior sigue a la superior con un desfase del 6 % del ciclo.
+/// Además, la altura del relleno crece y disminuye lentamente: la onda
+/// superior asciende más que la inferior, creando un efecto de marea.
+/// El ciclo es periódico tanto en X como en Y, por lo que no hay saltos.
+/// Solo se vuelve a pintar el fondo, no el contenido de la barra.
+class _SidebarWavePainter extends CustomPainter {
+  final Animation<double> progress;
+
+  _SidebarWavePainter({required this.progress}) : super(repaint: progress);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+
+    final bounds = Offset.zero & size;
+    final h = size.height;
+    final w = size.width;
+
+    canvas.drawRect(
+      bounds,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF152E58), Color(0xFF0E2144), Color(0xFF0B1A37)],
+          stops: [0.0, 0.54, 1.0],
+        ).createShader(bounds),
+    );
+
+    canvas.save();
+    canvas.clipRect(bounds);
+
+    // Las ondas comparten reloj, longitud, velocidad y dirección.
+    final wavelength = math.max(w * 2.0, 180.0);
+    const phase = -math.pi / 2;
+    const lagFraction = 0.06; // ~1,7 s en un ciclo de 28 s.
+    const phaseLag = 2 * math.pi * lagFraction;
+
+    // El factor va de 0 a 1 y vuelve a 0 sin cambios bruscos de velocidad.
+    // La onda posterior sube más alto y se ensancha más que la inferior.
+    final upperExpansion = _tidalExpansion(progress.value);
+    final lowerExpansion = _tidalExpansion(progress.value - lagFraction);
+
+    // Movimiento vertical más contenido: las olas permanecen en la mitad
+    // inferior, incluso cuando llegan a su altura máxima.
+    final upperRise = math.min(36.0, h * 0.055) * upperExpansion;
+    final lowerRise = math.min(20.0, h * 0.035) * lowerExpansion;
+
+    // Capa posterior (más alta): se desplaza en X y crece desde abajo.
+    _paintMovingWave(
+      canvas,
+      size,
+      baseY: math.max(h * 0.41, h - 295.0) + 60 - upperRise,
+      amplitude: 40 + 7 * upperExpansion,
+      wavelength: wavelength,
+      phaseOffset: phase,
+      paint: Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            const Color(0xFF294975).withValues(alpha: 0.44),
+            const Color(0xFF17355F).withValues(alpha: 0.36),
+          ],
+        ).createShader(bounds),
+    );
+
+    // Capa delantera: se mueve en el mismo sentido, un poco retrasada.
+    // Su expansión vertical es deliberadamente menor que la superior.
+    _paintMovingWave(
+      canvas,
+      size,
+      baseY: math.max(h * 0.49, h - 200.0) + 30 - lowerRise,
+      amplitude: 33 + 5 * lowerExpansion,
+      wavelength: wavelength,
+      phaseOffset: phase + phaseLag,
+      paint: Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            const Color(0xFF31578A).withValues(alpha: 0.36),
+            const Color(0xFF1D3E6F).withValues(alpha: 0.25),
+          ],
+        ).createShader(bounds),
+    );
+
+    canvas.restore();
+  }
+
+  /// Expansión de tipo marea: 0 → 1 → 0 en un solo ciclo suave.
+  double _tidalExpansion(double t) => (1 - math.cos(2 * math.pi * t)) / 2;
+
+  void _paintMovingWave(
+    Canvas canvas,
+    Size size, {
+    required double baseY,
+    required double amplitude,
+    required double wavelength,
+    required double phaseOffset,
+    required Paint paint,
+  }) {
+    // Una longitud de onda exacta por ciclo, sin corte al reiniciarse.
+    // Ambas capas comparten el mismo desplazamiento hacia la derecha.
+    final shiftX = progress.value * wavelength;
+    final firstTile = ((-shiftX) / wavelength).floor() - 1;
+    final lastTile = ((size.width - shiftX) / wavelength).ceil() + 1;
+    const segments = 96;
+
+    for (var tile = firstTile; tile <= lastTile; tile++) {
+      final originX = tile * wavelength + shiftX;
+      final curve = Path();
+      for (var i = 0; i <= segments; i++) {
+        final relativeX = wavelength * i / segments;
+        final angle = 2 * math.pi * i / segments + phaseOffset;
+        final y = baseY + amplitude * math.sin(angle);
+        final x = originX + relativeX;
+        if (i == 0) {
+          curve.moveTo(x, y);
+        } else {
+          curve.lineTo(x, y);
+        }
+      }
+      curve
+        ..lineTo(originX + wavelength, size.height)
+        ..lineTo(originX, size.height)
+        ..close();
+      canvas.drawPath(curve, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SidebarWavePainter oldDelegate) =>
+      oldDelegate.progress != progress;
 }
 
 class DashboardShell extends StatefulWidget {
@@ -155,8 +301,51 @@ class DashboardShell extends StatefulWidget {
   State<DashboardShell> createState() => _DashboardShellState();
 }
 
-class _DashboardShellState extends State<DashboardShell> {
+class _DashboardShellState extends State<DashboardShell>
+    with SingleTickerProviderStateMixin {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
+
+  // Un único reloj para las dos capas del menú: sus ondas quedan sincronizadas
+  // también durante la animación de expandir/contraer.
+  late final AnimationController _waveController;
+  bool _drawerOpen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _waveController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 28),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncWaveAnimation();
+  }
+
+  void _syncWaveAnimation() {
+    // Evita trabajo en móviles cuando el cajón está cerrado y respeta
+    // «Reducir movimiento» y TickerMode (por ejemplo, rutas inactivas).
+    final enabled =
+        !MediaQuery.disableAnimationsOf(context) &&
+        TickerMode.of(context) &&
+        (Breakpoints.isDesktop(MediaQuery.sizeOf(context).width) ||
+            _drawerOpen);
+    if (enabled) {
+      if (!_waveController.isAnimating) _waveController.repeat();
+    } else {
+      _waveController.stop();
+      if (_waveController.value != 0) _waveController.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _waveController.dispose();
+    super.dispose();
+  }
 
   /// null = automático según el ancho; true/false = el usuario lo alternó.
   bool? _expandedOverride;
@@ -175,57 +364,74 @@ class _DashboardShellState extends State<DashboardShell> {
       child: Column(
         children: [
           _buildTopHeader(w, isDesktop),
+          // Navegación duplicada eliminada: el menú lateral ya indica la
+          // sección actual. El contenido empieza justo bajo el encabezado.
           Expanded(child: widget.body),
         ],
       ),
     );
 
-    return Scaffold(
-      key: _scaffoldKey,
-      backgroundColor: const Color(0xFFF8FAFC),
-      drawer: isDesktop
-          ? null
-          : Drawer(
-              width: 280,
-              backgroundColor: _navy,
-              child: SafeArea(
-                child: _buildSidebar(expanded: true, inDrawer: true),
-              ),
-            ),
-      // t: 0 = barra contraída, 1 = expandida. Se anima sola cada vez que
-      // cambia `expanded` (botón de la flecha o cambio de tamaño de ventana).
-      body: TweenAnimationBuilder<double>(
-        tween: Tween<double>(end: expanded ? 1.0 : 0.0),
-        duration: reduceMotion
-            ? Duration.zero
-            : (expanded ? _expandDuration : _collapseDuration),
-        curve: expanded ? _expandCurve : _collapseCurve,
-        child: main,
-        builder: (context, t, mainChild) {
-          // t puede pasarse de [0, 1] durante el rebote: de ahí el efecto.
-          final sidebarW =
-              (_sidebarCollapsedW +
-                      (_sidebarExpandedW - _sidebarCollapsedW) * t)
-                  .clamp(_sidebarMinW, _sidebarExpandedW + 40)
-                  .toDouble();
-          return Stack(
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (isDesktop) _buildAnimatedSidebar(t, sidebarW),
-                  mainChild!,
-                ],
-              ),
-              if (isDesktop)
-                Positioned(
-                  left: sidebarW - 12,
-                  top: 64,
-                  child: _buildCollapseButton(expanded, t),
-                ),
-            ],
-          );
+    // Misma tipografía Lexend configurada en main.dart. Se aplica también
+    // a menú, botones, campos y el contenido de ambos dashboards.
+    final baseTheme = Theme.of(context);
+    return Theme(
+      data: baseTheme.copyWith(
+        textTheme: GoogleFonts.lexendTextTheme(baseTheme.textTheme),
+        primaryTextTheme: GoogleFonts.lexendTextTheme(
+          baseTheme.primaryTextTheme,
+        ),
+      ),
+      child: Scaffold(
+        key: _scaffoldKey,
+        backgroundColor: AppColors.backgroundLight,
+        onDrawerChanged: (opened) {
+          _drawerOpen = opened;
+          _syncWaveAnimation();
         },
+        drawer: isDesktop
+            ? null
+            : Drawer(
+                width: 280,
+                backgroundColor: _navy,
+                child: SafeArea(
+                  child: _buildSidebar(expanded: true, inDrawer: true),
+                ),
+              ),
+        // t: 0 = barra contraída, 1 = expandida. Se anima sola cada vez que
+        // cambia `expanded` (botón de la flecha o cambio de tamaño de ventana).
+        body: TweenAnimationBuilder<double>(
+          tween: Tween<double>(end: expanded ? 1.0 : 0.0),
+          duration: reduceMotion
+              ? Duration.zero
+              : (expanded ? _expandDuration : _collapseDuration),
+          curve: expanded ? _expandCurve : _collapseCurve,
+          child: main,
+          builder: (context, t, mainChild) {
+            // t puede pasarse de [0, 1] durante el rebote: de ahí el efecto.
+            final sidebarW =
+                (_sidebarCollapsedW +
+                        (_sidebarExpandedW - _sidebarCollapsedW) * t)
+                    .clamp(_sidebarMinW, _sidebarExpandedW + 40)
+                    .toDouble();
+            return Stack(
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (isDesktop) _buildAnimatedSidebar(t, sidebarW),
+                    mainChild!,
+                  ],
+                ),
+                if (isDesktop)
+                  Positioned(
+                    left: sidebarW - 12,
+                    top: 64,
+                    child: _buildCollapseButton(expanded, t),
+                  ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -331,8 +537,14 @@ class _DashboardShellState extends State<DashboardShell> {
     return RepaintBoundary(
       child: SizedBox(
         width: width,
-        child: ColoredBox(
-          color: _navy,
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [AppColors.sidebarTop, AppColors.sidebarBottom],
+            ),
+          ),
           child: ClipRect(
             child: Stack(
               fit: StackFit.expand,
@@ -348,139 +560,197 @@ class _DashboardShellState extends State<DashboardShell> {
   }
 
   Widget _buildSidebar({required bool expanded, bool inDrawer = false}) {
-    return Container(
+    return SizedBox(
       width: inDrawer
           ? null
           : (expanded ? _sidebarExpandedW : _sidebarCollapsedW),
-      color: _navy,
-      padding: EdgeInsets.symmetric(
-        horizontal: expanded ? 16 : 12,
-        vertical: 20,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _sidebarInstitution(expanded),
-          SizedBox(height: expanded ? 28 : 24),
-          if (expanded) ...[
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 12),
-              child: Text(
-                'MENÚ PRINCIPAL',
-                style: TextStyle(
-                  color: Colors.white38,
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.8,
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-          ],
-          // Scroll por si la ventana es baja: el pie nunca se desborda.
-          Expanded(
-            child: ListView(
-              padding: EdgeInsets.zero,
-              children: [
-                for (var i = 0; i < widget.navItems.length; i++)
-                  _navItem(i, expanded, inDrawer),
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-          _supportItem(expanded),
-          const SizedBox(height: 12),
-          const Divider(color: Colors.white12, height: 1),
-          const SizedBox(height: 12),
-          _sidebarUser(expanded),
-        ],
-      ),
-    );
-  }
-
-  Widget _sidebarInstitution(bool expanded) {
-    final school = widget.schoolName.isEmpty
-        ? 'Mi institución'
-        : widget.schoolName;
-
-    final iconBox = Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: AppColors.primaryBlue.withValues(alpha: 0.2),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: const Icon(
-        Icons.apartment,
-        color: AppColors.primaryBlue,
-        size: 18,
-      ),
-    );
-
-    if (!expanded) {
-      return Center(
-        child: Tooltip(
-          message: school,
-          child: HoverBuilder(
-            builder: (context, hovered) => AnimatedContainer(
-              duration: _hoverDuration,
-              width: 52,
-              height: 52,
-              decoration: BoxDecoration(
-                color: hovered ? const Color(0xFF273449) : _navySurface,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: hovered ? 0.18 : 0.08),
-                ),
-              ),
-              child: Center(child: iconBox),
-            ),
-          ),
-        ),
-      );
-    }
-
-    return HoverBuilder(
-      builder: (context, hovered) => AnimatedContainer(
-        duration: _hoverDuration,
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: hovered ? const Color(0xFF273449) : _navySurface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: Colors.white.withValues(alpha: hovered ? 0.18 : 0.08),
-          ),
-        ),
-        child: Row(
+      child: ClipRect(
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            iconBox,
-            const SizedBox(width: 10),
-            Expanded(
+            // Las ondas viajan hacia la derecha y expanden su altura
+            // suavemente; la posterior llega más arriba que la delantera.
+            // No usa imágenes; sigue nítido en cualquier resolución.
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  painter: _SidebarWavePainter(progress: _waveController),
+                ),
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: expanded ? 16 : 12,
+                vertical: 20,
+              ),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text(
-                    'INSTITUCIÓN',
-                    style: TextStyle(
-                      color: Colors.white54,
-                      fontSize: 9,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
+                  _sidebarInstitution(expanded, inDrawer),
+                  SizedBox(height: expanded ? 34 : 28),
+                  Expanded(
+                    child: ListView(
+                      padding: EdgeInsets.zero,
+                      children: [
+                        for (var i = 0; i < widget.navItems.length; i++)
+                          _navItem(i, expanded, inDrawer),
+                      ],
                     ),
                   ),
-                  Text(
-                    school,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  _supportItem(expanded),
+                  const SizedBox(height: 16),
+                  _sidebarLogout(expanded),
                 ],
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// Logotipo HD (1024 x 1024) reconstruido en formato vectorial.
+  /// Se representa sin ClipRRect para no cortar detalles en los bordes.
+  /// El asset usa la misma ruta que el anterior: no requiere cambiar imports.
+  Widget _brandMark() {
+    return SizedBox(
+      width: 52,
+      height: 52,
+      child: Image.asset(
+        'assets/images/logo_edupago.png',
+        width: 52,
+        height: 52,
+        fit: BoxFit.contain,
+        alignment: Alignment.center,
+        filterQuality: FilterQuality.high,
+        isAntiAlias: true,
+        semanticLabel: 'Logo de EduPago',
+        errorBuilder: (context, error, stackTrace) => DecoratedBox(
+          decoration: BoxDecoration(
+            color: AppColors.primaryBlue,
+            borderRadius: BorderRadius.circular(13),
+          ),
+          child: const Icon(
+            Icons.school_rounded,
+            color: Colors.white,
+            size: 30,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Cabecera de marca: hover sutil sobre toda la tarjeta (expandida o
+  /// contraída). Al pulsarla se regresa al primer apartado del menú.
+  Widget _sidebarInstitution(bool expanded, bool inDrawer) {
+    return HoverBuilder(
+      cursor: widget.navItems.isEmpty
+          ? MouseCursor.defer
+          : SystemMouseCursors.click,
+      builder: (context, hovered) => Semantics(
+        button: widget.navItems.isNotEmpty,
+        label: 'EduPago, ir al inicio',
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(15),
+          child: InkWell(
+            onTap: widget.navItems.isEmpty ? null : () => _select(0, inDrawer),
+            hoverColor: Colors.transparent,
+            splashColor: Colors.white.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(15),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 190),
+              curve: Curves.easeOutCubic,
+              width: double.infinity,
+              padding: EdgeInsets.symmetric(
+                horizontal: expanded ? 11 : 6,
+                vertical: expanded ? 11 : 8,
+              ),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: hovered
+                      ? const [Color(0xFF2F568B), Color(0xFF224777)]
+                      : const [Color(0xFF254B7F), Color(0xFF1B3868)],
+                ),
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: hovered ? 0.34 : 0.12),
+                ),
+                boxShadow: hovered
+                    ? [
+                        BoxShadow(
+                          color: const Color(
+                            0xFF60A5FA,
+                          ).withValues(alpha: 0.13),
+                          blurRadius: 14,
+                          offset: const Offset(0, 4),
+                        ),
+                      ]
+                    : [],
+              ),
+              child: expanded
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 46,
+                          height: 46,
+                          child: FittedBox(
+                            fit: BoxFit.contain,
+                            child: _brandMark(),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'EduPago',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 23,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: -0.6,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                widget.schoolName.isEmpty
+                                    ? 'Tu colegio, más cerca'
+                                    : widget.schoolName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: AppColors.onDarkMuted,
+                                  fontSize: 10.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    )
+                  : Tooltip(
+                      message: 'EduPago · Inicio',
+                      child: Center(
+                        child: SizedBox(
+                          width: 40,
+                          height: 40,
+                          child: FittedBox(
+                            fit: BoxFit.contain,
+                            child: _brandMark(),
+                          ),
+                        ),
+                      ),
+                    ),
+            ),
+          ),
         ),
       ),
     );
@@ -502,7 +772,7 @@ class _DashboardShellState extends State<DashboardShell> {
             : (hovered
                   ? Colors.white.withValues(alpha: 0.08)
                   : Colors.transparent);
-        final fg = (selected || hovered) ? Colors.white : Colors.white60;
+        final fg = (selected || hovered) ? Colors.white : AppColors.onDarkMuted;
 
         if (!expanded) {
           return Padding(
@@ -540,14 +810,14 @@ class _DashboardShellState extends State<DashboardShell> {
         }
 
         return Padding(
-          padding: const EdgeInsets.only(bottom: 4),
+          padding: const EdgeInsets.only(bottom: 8),
           child: InkWell(
             onTap: () => _select(index, inDrawer),
             borderRadius: BorderRadius.circular(10),
             hoverColor: Colors.transparent,
             child: AnimatedContainer(
               duration: _hoverDuration,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
               decoration: BoxDecoration(
                 color: bg,
                 borderRadius: BorderRadius.circular(10),
@@ -568,8 +838,8 @@ class _DashboardShellState extends State<DashboardShell> {
                       style: TextStyle(
                         color: (selected || hovered)
                             ? Colors.white
-                            : Colors.white70,
-                        fontSize: 13,
+                            : AppColors.onDarkMuted,
+                        fontSize: 14,
                         fontWeight: selected
                             ? FontWeight.bold
                             : FontWeight.normal,
@@ -585,6 +855,8 @@ class _DashboardShellState extends State<DashboardShell> {
     );
   }
 
+  /// Tarjeta de ayuda con resaltado azul en hover. En el menú compacto
+  /// el mismo efecto se aplica al botón con icono.
   Widget _supportItem(bool expanded) {
     void onTap() {
       if (widget.onSupportTap != null) {
@@ -592,165 +864,196 @@ class _DashboardShellState extends State<DashboardShell> {
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'Soporte y seguridad estará disponible próximamente.',
-            ),
+            content: Text('El canal de soporte todavía no está habilitado.'),
           ),
         );
       }
     }
 
     return HoverBuilder(
-      builder: (context, hovered) {
-        final bg = hovered
-            ? Colors.white.withValues(alpha: 0.08)
-            : Colors.transparent;
-        final fg = hovered ? Colors.white : Colors.white60;
-
-        if (!expanded) {
-          return Center(
-            child: Tooltip(
-              message: 'Soporte y seguridad',
-              child: InkWell(
-                onTap: onTap,
-                borderRadius: BorderRadius.circular(12),
-                hoverColor: Colors.transparent,
-                child: AnimatedContainer(
-                  duration: _hoverDuration,
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: bg,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(Icons.shield_outlined, color: fg, size: 20),
+      cursor: SystemMouseCursors.click,
+      builder: (context, hovered) => Tooltip(
+        message: expanded ? 'Abrir soporte' : '¿Necesitas ayuda?',
+        child: Semantics(
+          button: true,
+          label: '¿Necesitas ayuda? Abrir soporte',
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(14),
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(14),
+              hoverColor: Colors.transparent,
+              splashColor: const Color(0xFF60A5FA).withValues(alpha: 0.14),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                constraints: const BoxConstraints(
+                  minHeight: AppSizes.minTarget,
                 ),
+                padding: expanded
+                    ? const EdgeInsets.symmetric(horizontal: 12, vertical: 13)
+                    : const EdgeInsets.symmetric(horizontal: 0, vertical: 12),
+                decoration: BoxDecoration(
+                  color: hovered
+                      ? const Color(0xFF3564A8).withValues(alpha: 0.70)
+                      : const Color(0xFF213F72).withValues(alpha: 0.56),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: hovered
+                        ? const Color(0xFF8DBBFF)
+                        : const Color(0xFF45669D),
+                  ),
+                  boxShadow: hovered
+                      ? [
+                          BoxShadow(
+                            color: const Color(
+                              0xFF60A5FA,
+                            ).withValues(alpha: 0.12),
+                            blurRadius: 12,
+                            offset: const Offset(0, 3),
+                          ),
+                        ]
+                      : [],
+                ),
+                child: expanded
+                    ? Row(
+                        children: [
+                          const Icon(
+                            Icons.info_rounded,
+                            color: Color(0xFF75ACFF),
+                            size: 24,
+                          ),
+                          const SizedBox(width: 10),
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '¿Necesitas ayuda?',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                SizedBox(height: 3),
+                                Text(
+                                  'Estamos para ti',
+                                  style: TextStyle(
+                                    color: AppColors.onDarkMuted,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Icon(
+                            Icons.chevron_right,
+                            color: hovered
+                                ? Colors.white
+                                : AppColors.onDarkMuted,
+                            size: 19,
+                          ),
+                        ],
+                      )
+                    : const Icon(
+                        Icons.headset_mic_outlined,
+                        color: Colors.white,
+                        size: 22,
+                      ),
               ),
             ),
-          );
-        }
-
-        return InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(10),
-          hoverColor: Colors.transparent,
-          child: AnimatedContainer(
-            duration: _hoverDuration,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: bg,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.shield_outlined, color: fg, size: 18),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'Soporte y seguridad',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: hovered ? Colors.white : Colors.white70,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ],
-            ),
           ),
-        );
-      },
-    );
-  }
-
-  Widget _sidebarUser(bool expanded) {
-    final avatar = CircleAvatar(
-      radius: expanded ? 16 : 20,
-      backgroundColor: AppColors.primaryBlue,
-      child: Text(
-        widget.userInitials,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
         ),
       ),
     );
+  }
 
-    if (!expanded) {
-      return Center(
-        child: _userMenu(
-          opensUpwards: true,
-          child: HoverTint(
-            hoverColor: Colors.white.withValues(alpha: 0.08),
-            borderRadius: 24,
-            padding: const EdgeInsets.all(2),
-            child: avatar,
-          ),
-        ),
-      );
-    }
-
-    return Row(
+  /// Última acción de la barra lateral: salir sin mostrar la cuenta.
+  /// El avatar y el menú de perfil se conservan exclusivamente en el header.
+  Widget _sidebarLogout(bool expanded) {
+    const hoverRed = Color(0xFFEF4444);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(
-          child: _userMenu(
-            opensUpwards: true,
-            child: HoverTint(
-              hoverColor: Colors.white.withValues(alpha: 0.08),
-              borderRadius: 10,
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-              child: Row(
-                children: [
-                  avatar,
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+        Divider(height: 1, color: Colors.white.withValues(alpha: 0.17)),
+        const SizedBox(height: 12),
+        Tooltip(
+          message: 'Cerrar sesión',
+          child: HoverBuilder(
+            cursor: SystemMouseCursors.click,
+            builder: (context, hovered) => Semantics(
+              button: true,
+              label: 'Cerrar sesión',
+              child: Material(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(12),
+                child: InkWell(
+                  onTap: _confirmLogout,
+                  borderRadius: BorderRadius.circular(12),
+                  hoverColor: Colors.transparent,
+                  splashColor: hoverRed.withValues(alpha: 0.14),
+                  highlightColor: hoverRed.withValues(alpha: 0.10),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 170),
+                    curve: Curves.easeOutCubic,
+                    constraints: const BoxConstraints(
+                      minHeight: AppSizes.minTarget,
+                    ),
+                    padding: EdgeInsets.symmetric(
+                      vertical: 12,
+                      horizontal: expanded ? 13 : 0,
+                    ),
+                    decoration: BoxDecoration(
+                      color: hovered
+                          ? hoverRed.withValues(alpha: 0.18)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: hovered
+                            ? hoverRed.withValues(alpha: 0.40)
+                            : Colors.transparent,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: expanded
+                          ? MainAxisAlignment.start
+                          : MainAxisAlignment.center,
                       children: [
-                        Text(
-                          widget.userName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 170),
+                          child: Icon(
+                            Icons.logout_rounded,
+                            key: ValueKey(hovered),
+                            color: hovered
+                                ? const Color(0xFFFFB4B4)
+                                : AppColors.onDarkMuted,
+                            size: 22,
                           ),
                         ),
-                        Text(
-                          widget.userRole,
-                          style: const TextStyle(
-                            color: Colors.white38,
-                            fontSize: 11,
+                        if (expanded) ...[
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Text(
+                              'Cerrar sesión',
+                              style: TextStyle(
+                                color: hovered
+                                    ? const Color(0xFFFFD8D8)
+                                    : Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                           ),
-                        ),
+                        ],
                       ],
                     ),
                   ),
-                ],
+                ),
               ),
             ),
           ),
-        ),
-        const SizedBox(width: 4),
-        IconButton(
-          icon: const Icon(Icons.logout, size: 18),
-          onPressed: _confirmLogout,
-          tooltip: 'Cerrar sesión',
-          style:
-              IconButton.styleFrom(
-                foregroundColor: Colors.white54,
-                hoverColor: _danger.withValues(alpha: 0.18),
-              ).copyWith(
-                foregroundColor: WidgetStateProperty.resolveWith(
-                  (states) => states.contains(WidgetState.hovered)
-                      ? const Color(0xFFFCA5A5)
-                      : Colors.white54,
-                ),
-              ),
         ),
       ],
     );
@@ -867,139 +1170,154 @@ class _DashboardShellState extends State<DashboardShell> {
   //
   // Encabezado superior
   //
+  void _searchSections(String raw) {
+    final q = raw.trim().toLowerCase();
+    if (q.isEmpty) return;
+    final match = widget.navItems.indexWhere((item) {
+      final title = item.title.toLowerCase();
+      return title.contains(q) ||
+          q.contains(title) ||
+          (q.contains('mensualidad') && title.contains('pago')) ||
+          (q.contains('recibo') && title.contains('documento'));
+    });
+    if (match >= 0) {
+      widget.onNavSelected(match);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No encontramos esa sección. Prueba con el nombre de una opción del menú.',
+          ),
+        ),
+      );
+    }
+  }
+
   Widget _buildTopHeader(double w, bool isDesktop) {
     final compact = Breakpoints.isCompact(w);
-    final showActions = w > 760;
-    final showUserText = w > 1000;
-
+    final showUserText = w > 1040;
+    final showActions = w > 1180;
     return Container(
-      height: 64,
-      padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 24),
+      height: 86,
+      padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 30),
       decoration: const BoxDecoration(
         color: Colors.white,
         border: Border(bottom: BorderSide(color: AppColors.cardBorder)),
       ),
       child: Row(
         children: [
-          if (!isDesktop)
+          if (!isDesktop) ...[
             IconButton(
-              icon: const Icon(Icons.menu, color: AppColors.darkNavy),
+              icon: const Icon(Icons.menu_rounded, color: AppColors.darkNavy),
               onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-              tooltip: 'Menú',
+              tooltip: 'Abrir menú',
             ),
+            const SizedBox(width: 6),
+          ],
           Expanded(
-            child: HoverBuilder(
-              cursor: SystemMouseCursors.text,
-              builder: (context, hovered) => AnimatedContainer(
-                duration: _hoverDuration,
-                height: 38,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  color: hovered
-                      ? const Color(0xFFE9EEF5)
-                      : const Color(0xFFF1F5F9),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: hovered
-                        ? const Color(0xFFCBD5E1)
-                        : Colors.transparent,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 680),
+              child: TextField(
+                textInputAction: TextInputAction.search,
+                onSubmitted: _searchSections,
+                decoration: InputDecoration(
+                  hintText: compact
+                      ? 'Buscar sección...'
+                      : 'Buscar sección del menú...',
+                  hintStyle: const TextStyle(
+                    color: AppColors.textMuted,
+                    fontSize: 14,
                   ),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.search,
-                      color: AppColors.textMuted,
-                      size: 18,
+                  prefixIcon: const Icon(
+                    Icons.search_rounded,
+                    size: 23,
+                    color: Color(0xFF6381B5),
+                  ),
+                  filled: true,
+                  fillColor: const Color(0xFFF2F6FC),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 15,
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(15),
+                    borderSide: const BorderSide(color: Color(0xFFEDF1F9)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(15),
+                    borderSide: const BorderSide(
+                      color: AppColors.primaryBlue,
+                      width: 1.6,
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        widget.searchHint,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: AppColors.textMuted,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
           ),
-          const SizedBox(width: 12),
           if (showActions)
             for (final a in widget.headerActions) ...[
-              HoverLift(radius: 10, lift: 1, child: a),
               const SizedBox(width: 12),
+              a,
             ],
+          const SizedBox(width: 20),
           NotificationBell(
             key: const ValueKey('notification-bell'),
             onOpen: widget.onNotificationTap,
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 16),
+          Container(width: 1, height: 34, color: AppColors.cardBorder),
+          const SizedBox(width: 16),
           _userMenu(
-            child: HoverTint(
-              borderRadius: 24,
-              padding: const EdgeInsets.all(4),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 16,
-                    backgroundColor: const Color(0xFFDBEAFE),
-                    child: Text(
-                      widget.userInitials,
-                      style: const TextStyle(
-                        color: AppColors.primaryBlue,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                      ),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 21,
+                  backgroundColor: AppColors.primaryBlue,
+                  child: Text(
+                    widget.userInitials,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
                     ),
                   ),
-                  if (showUserText) ...[
-                    const SizedBox(width: 10),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                ),
+                if (showUserText) ...[
+                  const SizedBox(width: 12),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 155),
+                    child: Column(
                       mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 140),
-                          child: Text(
-                            widget.userName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.darkNavy,
-                            ),
+                        Text(
+                          widget.userName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.darkNavy,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
-                        const Row(
-                          children: [
-                            Icon(
-                              Icons.circle,
-                              size: 7,
-                              color: Color(0xFF059669),
-                            ),
-                            SizedBox(width: 4),
-                            Text(
-                              'Sesión activa',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: AppColors.textMuted,
-                              ),
-                            ),
-                          ],
+                        const SizedBox(height: 3),
+                        Text(
+                          widget.userRole,
+                          style: const TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: 12,
+                          ),
                         ),
                       ],
                     ),
-                    const SizedBox(width: 6),
-                  ],
+                  ),
+                  const SizedBox(width: 10),
+                  const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: AppColors.darkNavy,
+                  ),
                 ],
-              ),
+              ],
             ),
           ),
         ],
@@ -1363,90 +1681,108 @@ class _AccountMenuPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      elevation: 14,
-      shadowColor: Colors.black.withValues(alpha: 0.25),
-      surfaceTintColor: Colors.transparent,
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(
+    // Mismo diseño que el panel de notificaciones: borde marcado, sombra
+    // difusa y encabezado con fondo propio.
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        side: const BorderSide(color: AppColors.cardBorder),
+        border: Border.all(color: const Color(0xFF94A3B8)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.12),
+            blurRadius: 20,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
-      child: SizedBox(
-        width: width,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizedBox(
-              height: 68,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 18,
-                      backgroundColor: AppColors.primaryBlue,
-                      child: Text(
-                        userInitials,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Flexible(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            userName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+      child: Material(
+        color: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        child: SizedBox(
+          width: width,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ColoredBox(
+                color: const Color(0xFFF1F5F9),
+                child: SizedBox(
+                  height: 68,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 18,
+                          backgroundColor: AppColors.primaryBlue,
+                          child: Text(
+                            userInitials,
                             style: const TextStyle(
-                              fontSize: 13,
+                              color: Colors.white,
+                              fontSize: 12,
                               fontWeight: FontWeight.bold,
-                              color: AppColors.darkNavy,
                             ),
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            userRole,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: AppColors.textMuted,
-                            ),
+                        ),
+                        const SizedBox(width: 12),
+                        Flexible(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                userName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.darkNavy,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                userRole,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.textMuted,
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
-            ),
-            const Divider(height: 1, thickness: 1, color: AppColors.cardBorder),
-            if (showEditProfile)
-              _AccountMenuAction(
-                icon: Icons.person_outline_rounded,
-                label: 'Editar perfil',
-                color: AppColors.darkNavy,
-                hoverColor: const Color(0xFFF1F5F9),
-                onTap: () => Navigator.of(context).pop('profile'),
+              const Divider(
+                height: 1,
+                thickness: 1,
+                color: AppColors.cardBorder,
               ),
-            _AccountMenuAction(
-              icon: Icons.logout_rounded,
-              label: 'Cerrar sesión',
-              color: _danger,
-              hoverColor: const Color(0xFFFEF2F2),
-              onTap: () => Navigator.of(context).pop('logout'),
-            ),
-          ],
+              if (showEditProfile)
+                _AccountMenuAction(
+                  icon: Icons.person_outline_rounded,
+                  label: 'Editar perfil',
+                  color: AppColors.darkNavy,
+                  hoverColor: const Color(0xFFF1F5F9),
+                  onTap: () => Navigator.of(context).pop('profile'),
+                ),
+              _AccountMenuAction(
+                icon: Icons.logout_rounded,
+                label: 'Cerrar sesión',
+                color: _danger,
+                hoverColor: const Color(0xFFFEF2F2),
+                onTap: () => Navigator.of(context).pop('logout'),
+              ),
+            ],
+          ),
         ),
       ),
     );

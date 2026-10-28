@@ -5,8 +5,8 @@ import '../../../../core/session/idle_session_store.dart';
 import '../../../../main.dart';
 import '../widgets/forgot_password_dialog.dart';
 import 'register_screen.dart';
-import '../../../dashboard/presentation/screens/representative_dashboard_screen.dart';
 import '../../../dashboard/presentation/screens/admin_dashboard_screen.dart';
+import '../../../dashboard/presentation/screens/representative_dashboard_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});

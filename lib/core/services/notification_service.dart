@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -51,13 +52,16 @@ class AppNotification {
   );
 }
 
-/// Carga las notificaciones_app del usuario y escucha las nuevas en tiempo real
-/// (Supabase Realtime). Las notificaciones_app las crean triggers en la base de
+/// Carga las notificaciones del usuario y escucha las nuevas en tiempo real
+/// (Supabase Realtime). Las notificaciones las crean triggers en la base de
 /// datos; este servicio solo las lee y las marca como leídas. La RLS garantiza
 /// que cada usuario únicamente reciba las suyas.
 class NotificationService extends ChangeNotifier {
   NotificationService({SupabaseClient? client})
     : _client = client ?? Supabase.instance.client;
+
+  static const _table = 'notificaciones_app';
+  static const _pageSize = 20;
 
   final SupabaseClient _client;
   RealtimeChannel? _channel;
@@ -67,6 +71,8 @@ class NotificationService extends ChangeNotifier {
   List<AppNotification> _items = const [];
   bool _loading = true;
   bool _error = false;
+  bool _hasMore = false;
+  bool _loadingMore = false;
 
   /// Se llama cuando llega una notificación nueva en vivo (para un aviso).
   void Function(AppNotification n)? onNew;
@@ -74,6 +80,8 @@ class NotificationService extends ChangeNotifier {
   List<AppNotification> get items => _items;
   bool get loading => _loading;
   bool get hasError => _error;
+  bool get hasMore => _hasMore;
+  bool get loadingMore => _loadingMore;
   int get unreadCount => _items.where((n) => !n.leida).length;
 
   Future<void> start() async {
@@ -92,7 +100,7 @@ class NotificationService extends ChangeNotifier {
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
           schema: 'public',
-          table: 'notificaciones_app',
+          table: _table,
           filter: PostgresChangeFilter(
             type: PostgresChangeFilterType.eq,
             column: 'perfil_id',
@@ -121,6 +129,12 @@ class NotificationService extends ChangeNotifier {
     onNew?.call(n);
   }
 
+  List<AppNotification> _parse(dynamic rows) => (rows as List)
+      .whereType<Map>()
+      .map((m) => AppNotification.fromMap(Map<String, dynamic>.from(m)))
+      .toList();
+
+  /// Recarga lo ya cargado (como mínimo la primera página).
   Future<void> refresh({bool silent = false}) async {
     if (!silent) {
       _loading = true;
@@ -128,21 +142,46 @@ class NotificationService extends ChangeNotifier {
       _notify();
     }
     try {
+      final limit = math.max(_pageSize, _items.length);
       final rows = await _client
-          .from('notificaciones_app')
+          .from(_table)
           .select()
           .order('creada_at', ascending: false)
-          .limit(50);
-      _items = (rows as List)
-          .whereType<Map>()
-          .map((m) => AppNotification.fromMap(Map<String, dynamic>.from(m)))
-          .toList();
+          .order('id', ascending: false)
+          .limit(limit);
+      _items = _parse(rows);
+      _hasMore = _items.length >= limit;
       _error = false;
     } catch (e) {
-      debugPrint('Error cargando notificaciones_app: $e');
+      debugPrint('Error cargando notificaciones: $e');
       _error = true;
     } finally {
       _loading = false;
+      _notify();
+    }
+  }
+
+  /// Carga la siguiente página (las más antiguas).
+  Future<void> loadMore() async {
+    if (_loadingMore || !_hasMore) return;
+    _loadingMore = true;
+    _notify();
+    try {
+      final from = _items.length;
+      final rows = await _client
+          .from(_table)
+          .select()
+          .order('creada_at', ascending: false)
+          .order('id', ascending: false)
+          .range(from, from + _pageSize - 1);
+      final more = _parse(rows);
+      final known = _items.map((n) => n.id).toSet();
+      _items = [..._items, ...more.where((n) => !known.contains(n.id))];
+      _hasMore = more.length >= _pageSize;
+    } catch (e) {
+      debugPrint('Error cargando más notificaciones: $e');
+    } finally {
+      _loadingMore = false;
       _notify();
     }
   }
@@ -153,10 +192,7 @@ class NotificationService extends ChangeNotifier {
     _items = [..._items]..[idx] = _items[idx].copyWith(leida: true);
     _notify();
     try {
-      await _client
-          .from('notificaciones_app')
-          .update({'leida': true})
-          .eq('id', id);
+      await _client.from(_table).update({'leida': true}).eq('id', id);
     } catch (e) {
       debugPrint('Error marcando notificación como leída: $e');
       refresh(silent: true); // revierte al estado real del servidor
@@ -169,13 +205,48 @@ class NotificationService extends ChangeNotifier {
     _notify();
     try {
       await _client
-          .from('notificaciones_app')
+          .from(_table)
           .update({'leida': true})
           .eq('leida', false); // la RLS limita a las del propio usuario
     } catch (e) {
       debugPrint('Error marcando todas como leídas: $e');
       refresh(silent: true);
     }
+  }
+
+  /// Borra una notificación (se quita al instante; si el servidor no la
+  /// borró, se recarga la lista real).
+  Future<void> delete(String id) async {
+    if (!_items.any((n) => n.id == id)) return;
+    _items = _items.where((n) => n.id != id).toList();
+    _notify();
+    try {
+      final res = await _client.from(_table).delete().eq('id', id).select('id');
+      if ((res as List).isEmpty) {
+        debugPrint(
+          'No se pudo borrar la notificación (¿falta la política DELETE?)',
+        );
+        refresh(silent: true);
+      }
+    } catch (e) {
+      debugPrint('Error borrando notificación: $e');
+      refresh(silent: true);
+    }
+  }
+
+  /// Borra todas las notificaciones del usuario.
+  Future<void> deleteAll() async {
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null || _items.isEmpty) return;
+    _items = const [];
+    _hasMore = false;
+    _notify();
+    try {
+      await _client.from(_table).delete().eq('perfil_id', uid).select('id');
+    } catch (e) {
+      debugPrint('Error borrando notificaciones: $e');
+    }
+    refresh(silent: true); // refleja el estado real del servidor
   }
 
   void _notify() {

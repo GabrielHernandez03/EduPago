@@ -38,12 +38,14 @@ class _PendingItem {
   final int daysOverdue; // <= 0 significa vigente (aún no vence)
   final String? periodo; // Ej. "Diciembre 2026"
   final DateTime? due; // fecha de vencimiento de la cuota
+  final String monthKey; // mes contable de la cuota (AAAA-MM o sin-periodo)
   const _PendingItem(
     this.studentId,
     this.saldo,
     this.daysOverdue, {
     this.periodo,
     this.due,
+    required this.monthKey,
   });
 }
 
@@ -162,6 +164,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int? _selectedBar;
   List<_PendingItem> _pending = [];
   double _totalBilled = 0;
+  // El importe facturado se conserva también por mes para que el porcentaje
+  // de morosidad utilice el denominador correspondiente al período elegido.
+  Map<String, double> _billedByMonth = {};
+  List<String> _receivablesMonths = [];
+  String? _selectedReceivablesMonth; // null = todos los meses
   int _agingFilter = 0;
   int _pendingReceipts = 0;
   int _receiptsLastHour = 0;
@@ -379,6 +386,66 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   String _isoDate(DateTime d) =>
       '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
+  // Clave estable para agrupar cuotas de distintos años por mes.
+  // Se prioriza cuotas.periodo y se utiliza fecha_vencimiento cuando no se
+  // encuentra un período mensual reconocible.
+  static const String _noMonthKey = 'sin-periodo';
+
+  String _monthKey(int year, int month) =>
+      '${year.toString().padLeft(4, '0')}-${month.toString().padLeft(2, '0')}';
+
+  String _monthForQuota(Map<String, dynamic> cuota) {
+    final raw = (cuota['periodo'] ?? '').toString().trim().toLowerCase();
+    final normalized = raw
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u');
+
+    // Formatos admitidos: 2026-11, 11/2026, noviembre 2026.
+    final iso = RegExp(
+      r'\b(20\d{2})[-/](0?[1-9]|1[0-2])\b',
+    ).firstMatch(normalized);
+    if (iso != null) {
+      return _monthKey(int.parse(iso.group(1)!), int.parse(iso.group(2)!));
+    }
+    final reverse = RegExp(
+      r'\b(0?[1-9]|1[0-2])[-/](20\d{2})\b',
+    ).firstMatch(normalized);
+    if (reverse != null) {
+      return _monthKey(
+        int.parse(reverse.group(2)!),
+        int.parse(reverse.group(1)!),
+      );
+    }
+    final year = RegExp(r'\b(20\d{2})\b').firstMatch(normalized);
+    if (year != null) {
+      for (var i = 0; i < _monthsLong.length; i++) {
+        final name = _monthsLong[i].replaceAll('á', 'a').replaceAll('é', 'e');
+        if (normalized.contains(name) ||
+            (i == 8 && normalized.contains('setiembre'))) {
+          return _monthKey(int.parse(year.group(1)!), i + 1);
+        }
+      }
+    }
+
+    final due = DateTime.tryParse('${cuota['fecha_vencimiento']}');
+    return due == null ? _noMonthKey : _monthKey(due.year, due.month);
+  }
+
+  String _receivablesMonthLabel(String? key, {bool short = false}) {
+    if (key == null) return short ? 'Todos' : 'Todos los meses';
+    if (key == _noMonthKey) return 'Sin mes';
+    final date = DateTime.tryParse('$key-01');
+    if (date == null) return key;
+    final month = short
+        ? _monthsShort[date.month - 1]
+        : _monthsLong[date.month - 1];
+    final title = '${month[0].toUpperCase()}${month.substring(1)}';
+    return '$title ${date.year}';
+  }
+
   String _hm(DateTime d) {
     final h12 = d.hour % 12 == 0 ? 12 : d.hour % 12;
     final mm = d.minute.toString().padLeft(2, '0');
@@ -587,9 +654,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           c['id'].toString(): DateTime.tryParse('${c['fecha_vencimiento']}'),
       };
 
-      // Período (mes) de cada cuota
+      // Período y mes de cada cuota; se usan para filtrar saldos reales.
       final periodos = <String, String?>{
         for (final c in cuotaRows) c['id'].toString(): c['periodo']?.toString(),
+      };
+      final monthByQuota = <String, String>{
+        for (final c in cuotaRows) c['id'].toString(): _monthForQuota(c),
       };
 
       // Estado de cada estudiante: 0 solvente, 1 pendiente, 2 insolvente
@@ -598,23 +668,28 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       };
 
       final pending = <_PendingItem>[];
+      final billedByMonth = <String, double>{};
       var billed = 0.0;
       for (final row in saldoRows) {
         final monto = _num(row['monto_usd']);
         final saldo = _num(row['saldo_usd']);
+        final cuotaId = row['cuota_id'].toString();
+        final monthKey = monthByQuota[cuotaId] ?? _noMonthKey;
         billed += monto;
+        billedByMonth[monthKey] = (billedByMonth[monthKey] ?? 0) + monto;
         if (saldo <= 0.01) continue;
 
         final studentId = row['estudiante_id'].toString();
-        final due = venc[row['cuota_id'].toString()];
+        final due = venc[cuotaId];
         final overdue = due == null ? 0 : today.difference(due).inDays;
         pending.add(
           _PendingItem(
             studentId,
             saldo,
             overdue,
-            periodo: periodos[row['cuota_id'].toString()],
+            periodo: periodos[cuotaId],
             due: due,
+            monthKey: monthKey,
           ),
         );
 
@@ -662,6 +737,17 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         _insolventes = status.values.where((v) => v == 2).length;
         _pending = pending;
         _totalBilled = billed;
+        _billedByMonth = billedByMonth;
+        _receivablesMonths =
+            billedByMonth.keys.where((m) => m != _noMonthKey).toList()
+              ..sort((a, b) => b.compareTo(a));
+        if (billedByMonth.containsKey(_noMonthKey)) {
+          _receivablesMonths.add(_noMonthKey);
+        }
+        if (_selectedReceivablesMonth != null &&
+            !billedByMonth.containsKey(_selectedReceivablesMonth)) {
+          _selectedReceivablesMonth = null;
+        }
         _monthly = monthly;
         _selectedBar = null;
         _pendingReceipts = pendingRows.length;
@@ -809,14 +895,30 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 size: 36,
               ),
               const SizedBox(height: 12),
+              const Text(
+                'No pudimos cargar el panel',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: AppColors.darkNavy,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Revisa tu conexión e inténtalo de nuevo. Si el problema continúa, contacta a soporte.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.textMuted, fontSize: 14),
+              ),
+              const SizedBox(height: 10),
               ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 560),
                 child: SelectableText(
-                  _error!,
+                  'Detalle: $_error',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     color: AppColors.textMuted,
-                    fontSize: 13,
+                    fontSize: 12,
                   ),
                 ),
               ),
@@ -827,12 +929,16 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   backgroundColor: AppColors.primaryBlue,
                   foregroundColor: Colors.white,
                   elevation: 0,
+                  minimumSize: const Size(160, AppSizes.control),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
                 ),
                 icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('Reintentar'),
+                label: const Text(
+                  'Reintentar',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                ),
               ),
             ],
           ),
@@ -981,58 +1087,59 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   Widget _tasaChip(bool compact) {
     final ok = _tasa != null;
-    final bg = ok ? const Color(0xFFF0FDF4) : const Color(0xFFFFFBEB);
-    final border = ok ? const Color(0xFFBBF7D0) : const Color(0xFFFDE68A);
-    final accent = ok ? _green : _amber;
+    final accent = ok ? AppColors.successGreen : AppColors.warningAmber;
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: border),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(3),
-            decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
-            child: Icon(
-              ok ? Icons.check : Icons.priority_high,
-              color: Colors.white,
-              size: 11,
+    return Semantics(
+      container: true,
+      label: ok
+          ? 'Tasa BCV oficial: 1 dólar igual a ${_money(_tasa!)} bolívares. $_tasaSubtitle'
+          : 'Sin tasa BCV registrada hoy',
+      excludeSemantics: true,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: AppSizes.minTarget),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppColors.tint(accent),
+          borderRadius: BorderRadius.circular(AppSizes.radiusControl),
+          border: Border.all(color: AppColors.tint(accent, 0.4)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              ok ? Icons.check_circle_rounded : Icons.warning_amber_rounded,
+              color: accent,
+              size: 20,
             ),
-          ),
-          const SizedBox(width: 10),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                ok
-                    ? 'Tasa BCV Oficial: 1 USD = ${_money(_tasa!)} VES'
-                    : 'Sin tasa BCV registrada hoy',
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.darkNavy,
-                ),
-              ),
-              if (!compact)
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
                 Text(
                   ok
-                      ? _tasaSubtitle
-                      : 'Los saldos en Bs. no se pueden calcular',
-                  style: TextStyle(fontSize: 10, color: accent),
+                      ? 'Tasa BCV: 1 USD = ${_money(_tasa!)} VES'
+                      : 'Sin tasa BCV registrada hoy',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.darkNavy,
+                  ),
                 ),
-            ],
-          ),
-          if (!compact) ...[
-            const SizedBox(width: 12),
-            Icon(Icons.schedule, size: 16, color: accent),
+                if (!compact)
+                  Text(
+                    ok
+                        ? _tasaSubtitle
+                        : 'Los saldos en Bs. no se pueden calcular',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+              ],
+            ),
           ],
-        ],
+        ),
       ),
     );
   }
@@ -1179,7 +1286,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             bg: const Color(0xFF0F172A),
             border: const Color(0xFF0F172A),
             titleColor: Colors.white,
-            subColor: Colors.white60,
+            subColor: AppColors.onDarkMuted,
             onTap: () {
               if (_colegioId != null) {
                 showDialog(
@@ -1463,17 +1570,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   List<_PendingItem> get _filteredPending {
+    // Combina período contable y antigüedad, sin volver a consultar Supabase.
+    final byMonth = _selectedReceivablesMonth == null
+        ? _pending
+        : _pending.where((p) => p.monthKey == _selectedReceivablesMonth);
     switch (_agingFilter) {
       case 1:
-        return _pending.where((p) => p.daysOverdue <= 0).toList();
+        return byMonth.where((p) => p.daysOverdue <= 0).toList();
       case 2:
-        return _pending
+        return byMonth
             .where((p) => p.daysOverdue >= 1 && p.daysOverdue <= 30)
             .toList();
       case 3:
-        return _pending.where((p) => p.daysOverdue > 30).toList();
+        return byMonth.where((p) => p.daysOverdue > 30).toList();
       default:
-        return _pending;
+        return byMonth.toList();
     }
   }
 
@@ -1507,35 +1618,105 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       }
     }
 
-    final overdueAmount = _pending
+    // Calcula morosidad del mes elegido, no del total histórico.
+    final overdueAmount = items
         .where((p) => p.daysOverdue > 0)
         .fold<double>(0, (a, p) => a + p.saldo);
-    final morosidad = _totalBilled > 0
-        ? overdueAmount / _totalBilled * 100
-        : 0.0;
+    final monthBilled = _selectedReceivablesMonth == null
+        ? _totalBilled
+        : (_billedByMonth[_selectedReceivablesMonth] ?? 0);
+    final morosidad = monthBilled > 0 ? overdueAmount / monthBilled * 100 : 0.0;
 
-    final filter = PopupMenuButton<int>(
-      tooltip: 'Filtrar por antigüedad',
-      initialValue: _agingFilter,
-      onSelected: (v) => setState(() => _agingFilter = v),
+    // Un único menú compacto evita desbordamientos en las cuatro tarjetas KPI.
+    // Las opciones de antigüedad se conservan como segunda sección del menú.
+    final monthFilter = PopupMenuButton<String>(
+      tooltip: 'Filtrar cuentas por cobrar por mes o vencimiento',
+      initialValue: 'month:${_selectedReceivablesMonth ?? 'todos'}',
+      onSelected: (key) => setState(() {
+        if (key.startsWith('month:')) {
+          final month = key.substring('month:'.length);
+          _selectedReceivablesMonth = month == 'todos' ? null : month;
+        } else if (key.startsWith('aging:')) {
+          _agingFilter = int.parse(key.substring('aging:'.length));
+        }
+      }),
       itemBuilder: (context) => [
+        const PopupMenuItem<String>(
+          enabled: false,
+          height: 32,
+          child: Text(
+            'MES DE LA CUOTA',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textMuted,
+            ),
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'month:todos',
+          child: Text(
+            'Todos los meses${_selectedReceivablesMonth == null ? '  ✓' : ''}',
+          ),
+        ),
+        for (final key in _receivablesMonths)
+          PopupMenuItem<String>(
+            value: 'month:$key',
+            child: Text(
+              '${_receivablesMonthLabel(key)}${_selectedReceivablesMonth == key ? '  ✓' : ''}',
+            ),
+          ),
+        const PopupMenuDivider(),
+        const PopupMenuItem<String>(
+          enabled: false,
+          height: 32,
+          child: Text(
+            'ESTADO DE VENCIMIENTO',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textMuted,
+            ),
+          ),
+        ),
         for (var i = 0; i < _agingLabels.length; i++)
-          PopupMenuItem(value: i, child: Text(_agingLabels[i])),
+          PopupMenuItem<String>(
+            value: 'aging:$i',
+            child: Text('${_agingLabels[i]}${_agingFilter == i ? '  ✓' : ''}'),
+          ),
       ],
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        constraints: const BoxConstraints(minHeight: 44),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
-          border: Border.all(color: AppColors.cardBorder),
+          color: _selectedReceivablesMonth == null && _agingFilter == 0
+              ? Colors.white
+              : AppColors.primaryLight,
+          border: Border.all(
+            color: _selectedReceivablesMonth == null && _agingFilter == 0
+                ? AppColors.cardBorder
+                : AppColors.primaryBlue,
+          ),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              _agingLabels[_agingFilter],
+              _receivablesMonthLabel(_selectedReceivablesMonth, short: true),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 11, color: AppColors.darkNavy),
             ),
-            const SizedBox(width: 2),
+            if (_agingFilter != 0) ...[
+              const SizedBox(width: 3),
+              const Icon(
+                Icons.tune_rounded,
+                size: 14,
+                color: AppColors.primaryBlue,
+              ),
+            ],
+            const SizedBox(width: 3),
             const Icon(
               Icons.keyboard_arrow_down,
               size: 16,
@@ -1561,8 +1742,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ),
           const SizedBox(height: 4),
           Text(
-            nearestMonth == null
-                ? 'Sin cuotas activas'
+            cuotasCount == 0
+                ? 'Sin cuotas pendientes${_selectedReceivablesMonth == null ? '' : ' en este mes'}'
+                : nearestMonth == null
+                ? '$cuotasCount ${cuotasCount == 1 ? 'cuota activa' : 'cuotas activas'}'
                 : '$cuotasCount ${cuotasCount == 1 ? 'cuota activa' : 'cuotas activas'} • $nearestMonth',
             style: const TextStyle(
               fontSize: 11,
@@ -1572,7 +1755,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ),
         ],
       ),
-      topRight: HoverTint(borderRadius: 8, child: filter),
+      topRight: HoverTint(borderRadius: 8, child: monthFilter),
     );
   }
 
