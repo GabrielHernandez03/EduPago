@@ -7,6 +7,8 @@ import '../../../landing/presentation/screens/home_screen.dart';
 import '../../data/account_status_service.dart';
 import '../widgets/edit_profile_dialog.dart';
 import '../widgets/report_payment_dialog.dart';
+import '../widgets/representative_payments_section.dart';
+import '../../../../core/services/notification_service.dart';
 import '../../../../core/widgets/dashboard_shell.dart';
 import '../../../../core/widgets/skeleton_loader.dart';
 
@@ -43,6 +45,9 @@ class _RepresentativeDashboardScreenState
   List<Map<String, dynamic>> _students = [];
   int _selectedStudentIndex = 0; // -1 representa vista consolidada familiar
   int _selectedNavIndex = 0;
+  String? _paymentNotificationId;
+  String? _paymentNotificationReference;
+  int _paymentNotificationVersion = 0;
 
   // Variables financieras dinámicas (HU7)
   double _montoUsd = 0.0;
@@ -402,7 +407,14 @@ class _RepresentativeDashboardScreenState
     }
 
     final String titular = _students.length > 1
-        ? (_familyName.isNotEmpty ? 'Familia $_familyName' : 'Mi familia')
+        ? (_familyName.isNotEmpty
+              ? (RegExp(
+                      r'^familia\b',
+                      caseSensitive: false,
+                    ).hasMatch(_familyName)
+                    ? _familyName
+                    : 'Familia $_familyName')
+              : 'Mi familia')
         : (_students.isNotEmpty
               ? '${_students.first['nombres'] ?? ''} ${_students.first['apellidos'] ?? ''}'
                     .trim()
@@ -458,12 +470,64 @@ class _RepresentativeDashboardScreenState
     return 'Período $firstYear–${firstYear + 1}';
   }
 
+  // La campana ya marca la notificación como leída. Aquí abrimos la pestaña
+  // y enviamos el identificador del pago al historial para expandirlo.
+  void _openPaymentNotification(AppNotification notification) {
+    if (!{
+      'pago_reportado',
+      'pago_aprobado',
+      'pago_rechazado',
+    }.contains(notification.tipo))
+      return;
+
+    final data = notification.datos;
+    String? identifier;
+    for (final key in ['pago_id', 'id_pago', 'payment_id']) {
+      final value = data[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) {
+        identifier = value;
+        break;
+      }
+    }
+    final nested = data['pago'];
+    if (identifier == null && nested is Map) {
+      final candidate = nested['id']?.toString().trim();
+      if (candidate != null && candidate.isNotEmpty) identifier = candidate;
+    }
+    String? reference;
+    if (identifier == null) {
+      for (final key in [
+        'referencia',
+        'referencia_pago',
+        'referencia_bancaria',
+        'numero_referencia',
+      ]) {
+        final value = data[key]?.toString().trim();
+        if (value != null && value.isNotEmpty) {
+          reference = value;
+          break;
+        }
+      }
+    }
+    setState(() {
+      _selectedNavIndex = 1;
+      _paymentNotificationId = identifier;
+      _paymentNotificationReference = reference;
+      _paymentNotificationVersion++;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return DashboardShell(
       navItems: _navItems,
       selectedIndex: _selectedNavIndex,
-      onNavSelected: (i) => setState(() => _selectedNavIndex = i),
+      onNavSelected: (i) => setState(() {
+        _selectedNavIndex = i;
+        _paymentNotificationId = null;
+        _paymentNotificationReference = null;
+        _paymentNotificationVersion = 0;
+      }),
       schoolName: _schoolName,
       userName: _fullName.isEmpty ? 'Representante' : _fullName,
       userInitials: _initials.isEmpty ? 'U' : _initials,
@@ -472,6 +536,7 @@ class _RepresentativeDashboardScreenState
       onEditProfile: () => _showEditProfileModal(context),
       searchHint: 'Buscar una sección del menú...',
       onSupportTap: _showSupportDialog,
+      onNotificationTap: _openPaymentNotification,
       headerActions: const [],
       body: _buildBody(),
     );
@@ -485,6 +550,16 @@ class _RepresentativeDashboardScreenState
 
     if (_isLoading || _isLoadingProfile) {
       return RepresentativeDashboardSkeleton(padding: contentPadding);
+    }
+
+    if (_selectedNavIndex == 1) {
+      return RepresentativePaymentsSection(
+        representativeId: _repDbId,
+        focusPaymentId: _paymentNotificationId,
+        focusReference: _paymentNotificationReference,
+        notificationSequence: _paymentNotificationVersion,
+        onReportPayment: () => _showReportPaymentModal(context),
+      );
     }
 
     if (_selectedNavIndex != 0) {

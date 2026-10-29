@@ -11,6 +11,7 @@ import '../../../../core/session/idle_session_store.dart';
 import '../../../../main.dart';
 import '../../../landing/presentation/screens/home_screen.dart';
 import '../widgets/students_import_card.dart';
+import '../widgets/admin_students_section.dart';
 import '../widgets/payment_reconciliation_widget.dart';
 import '../widgets/generate_billing_dialog.dart';
 import '../../../../core/widgets/dashboard_shell.dart';
@@ -990,6 +991,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       return StudentsImportCard(colegioId: _colegioId!, onImported: _load);
     }
 
+    // Directorio académico y cuentas por cobrar por estudiante.
+    if (_navIndex == 1 && _colegioId != null) {
+      return AdminStudentsSection(colegioId: _colegioId!);
+    }
+
     // --- INTEGRACIÓN HU9: Pestaña "Conciliación" (_navIndex == 3) ---
     if (_navIndex == 3 && _colegioId != null) {
       return RefreshIndicator(
@@ -1010,7 +1016,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       );
     }
 
-    // Para las demás pestañas aún pendientes (Estudiantes, Pagos, Reportes)
+    // Para las pestañas aún pendientes (Pagos y Reportes)
     if (_navIndex != 0) {
       return Center(
         child: Column(

@@ -47,144 +47,150 @@ class SecuritySection extends StatelessWidget {
             ),
           ),
           Flex(
-        direction: isMobile ? Axis.vertical : Axis.horizontal,
-        children: [
-          // Lado izquierdo: escudo con pulsos tipo radar
-          Expanded(
-            flex: isMobile ? 0 : 1,
-            child: RevealOnScroll(
-              offset: const Offset(-40, 0),
-              startScale: 0.9,
-              duration: const Duration(milliseconds: 900),
-              child: Center(
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    const _PulseRings(),
-                    Container(
-                      width: 280,
-                      height: 280,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.08),
-                          width: 40,
-                        ),
-                      ),
-                    ),
-                    // El escudo "respira"
-                    Loop(
-                      duration: const Duration(milliseconds: 3200),
-                      builder: (context, t, child) {
-                        final double s = 1 + 0.05 * math.sin(t * 2 * math.pi);
-                        return Transform.scale(scale: s, child: child);
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.all(28),
-                        decoration: BoxDecoration(
-                          color: AppColors.primaryBlue.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(24),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppColors.primaryBlue.withOpacity(0.35),
-                              blurRadius: 40,
+            direction: isMobile ? Axis.vertical : Axis.horizontal,
+            children: [
+              // Lado izquierdo: escudo con pulsos tipo radar
+              Expanded(
+                flex: isMobile ? 0 : 1,
+                child: RevealOnScroll(
+                  offset: const Offset(-40, 0),
+                  startScale: 0.9,
+                  duration: const Duration(milliseconds: 900),
+                  child: Center(
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        const _PulseRings(),
+                        Container(
+                          width: 280,
+                          height: 280,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.08),
+                              width: 40,
                             ),
-                          ],
+                          ),
                         ),
-                        child: const Icon(
-                          Icons.shield_outlined,
-                          color: AppColors.primaryBlue,
-                          size: 50,
+                        // El escudo "respira"
+                        Loop(
+                          duration: const Duration(milliseconds: 3200),
+                          builder: (context, t, child) {
+                            final double s =
+                                1 + 0.05 * math.sin(t * 2 * math.pi);
+                            return Transform.scale(scale: s, child: child);
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(28),
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryBlue.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(24),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppColors.primaryBlue.withOpacity(
+                                    0.35,
+                                  ),
+                                  blurRadius: 40,
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
+                              Icons.shield_outlined,
+                              color: AppColors.primaryBlue,
+                              size: 50,
+                            ),
+                          ),
                         ),
+                        Positioned(
+                          top: 40,
+                          left: 20,
+                          child: Floating(
+                            amplitude: 5,
+                            period: const Duration(milliseconds: 4000),
+                            child: _buildBadge(
+                              Icons.lock_outline,
+                              'Cifrado TLS 1.3',
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          bottom: 40,
+                          right: 20,
+                          child: Floating(
+                            amplitude: 6,
+                            phase: 0.5,
+                            period: const Duration(milliseconds: 4600),
+                            child: _buildBadge(Icons.check, 'Datos protegidos'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+              if (isMobile) const SizedBox(height: 40),
+
+              // Lado derecho: textos y checks escalonados
+              Expanded(
+                flex: isMobile ? 0 : 1,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const RevealOnScroll(
+                      offset: Offset(40, 0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'SEGURIDAD SIN CONCESIONES',
+                            style: TextStyle(
+                              color: AppColors.primaryBlue,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                          SizedBox(height: 12),
+                          Text(
+                            'Tu información está en buenas manos.',
+                            style: TextStyle(
+                              fontSize: 32,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                          SizedBox(height: 12),
+                          Text(
+                            'Protegemos cada transacción y cada dato con estándares de seguridad de nivel bancario.',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    Positioned(
-                      top: 40,
-                      left: 20,
-                      child: Floating(
-                        amplitude: 5,
-                        period: const Duration(milliseconds: 4000),
-                        child: _buildBadge(
-                          Icons.lock_outline,
-                          'Cifrado TLS 1.3',
-                        ),
-                      ),
+                    const SizedBox(height: 30),
+                    const _CheckItem(
+                      delay: Duration(milliseconds: 250),
+                      title: 'Sesiones protegidas',
+                      subtitle: 'Tokens seguros JWT y HttpOnly',
                     ),
-                    Positioned(
-                      bottom: 40,
-                      right: 20,
-                      child: Floating(
-                        amplitude: 6,
-                        phase: 0.5,
-                        period: const Duration(milliseconds: 4600),
-                        child: _buildBadge(Icons.check, 'Datos protegidos'),
-                      ),
+                    const _CheckItem(
+                      delay: Duration(milliseconds: 400),
+                      title: 'Accesos por roles',
+                      subtitle: 'Cada usuario ve únicamente lo que necesita',
+                    ),
+                    const _CheckItem(
+                      delay: Duration(milliseconds: 550),
+                      title: 'Trazabilidad completa',
+                      subtitle: 'Registro auditable de cada operación',
                     ),
                   ],
                 ),
               ),
-            ),
+            ],
           ),
-
-          if (isMobile) const SizedBox(height: 40),
-
-          // Lado derecho: textos y checks escalonados
-          Expanded(
-            flex: isMobile ? 0 : 1,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const RevealOnScroll(
-                  offset: Offset(40, 0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'SEGURIDAD SIN CONCESIONES',
-                        style: TextStyle(
-                          color: AppColors.primaryBlue,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                        ),
-                      ),
-                      SizedBox(height: 12),
-                      Text(
-                        'Tu información está en buenas manos.',
-                        style: TextStyle(
-                          fontSize: 32,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      SizedBox(height: 12),
-                      Text(
-                        'Protegemos cada transacción y cada dato con estándares de seguridad de nivel bancario.',
-                        style: TextStyle(color: Colors.white70, fontSize: 15),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 30),
-                const _CheckItem(
-                  delay: Duration(milliseconds: 250),
-                  title: 'Sesiones protegidas',
-                  subtitle: 'Tokens seguros JWT y HttpOnly',
-                ),
-                const _CheckItem(
-                  delay: Duration(milliseconds: 400),
-                  title: 'Accesos por roles',
-                  subtitle: 'Cada usuario ve únicamente lo que necesita',
-                ),
-                const _CheckItem(
-                  delay: Duration(milliseconds: 550),
-                  title: 'Trazabilidad completa',
-                  subtitle: 'Registro auditable de cada operación',
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
         ],
       ),
     );
@@ -237,9 +243,7 @@ class _PulseRings extends StatelessWidget {
         builder: (context, t, _) {
           return Stack(
             alignment: Alignment.center,
-            children: [
-              for (var i = 0; i < 3; i++) _ring((t + i / 3) % 1.0),
-            ],
+            children: [for (var i = 0; i < 3; i++) _ring((t + i / 3) % 1.0)],
           );
         },
       ),

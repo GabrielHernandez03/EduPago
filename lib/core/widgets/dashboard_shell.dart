@@ -614,16 +614,14 @@ class _DashboardShellState extends State<DashboardShell>
   /// El asset usa la misma ruta que el anterior: no requiere cambiar imports.
   Widget _brandMark() {
     return SizedBox(
-      width: 52,
-      height: 52,
+      width: 70,
+      height: 70,
       child: Image.asset(
         'assets/images/logo_edupago.png',
-        width: 52,
-        height: 52,
+        width: 70,
+        height: 70,
         fit: BoxFit.contain,
         alignment: Alignment.center,
-        filterQuality: FilterQuality.high,
-        isAntiAlias: true,
         semanticLabel: 'Logo de EduPago',
         errorBuilder: (context, error, stackTrace) => DecoratedBox(
           decoration: BoxDecoration(
@@ -633,7 +631,7 @@ class _DashboardShellState extends State<DashboardShell>
           child: const Icon(
             Icons.school_rounded,
             color: Colors.white,
-            size: 30,
+            size: 70,
           ),
         ),
       ),
