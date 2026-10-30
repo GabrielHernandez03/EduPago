@@ -8,6 +8,7 @@ import '../../data/account_status_service.dart';
 import '../widgets/edit_profile_dialog.dart';
 import '../widgets/report_payment_dialog.dart';
 import '../widgets/representative_payments_section.dart';
+import '../widgets/representative_calendar_section.dart';
 import '../../../../core/services/notification_service.dart';
 import '../../../../core/widgets/dashboard_shell.dart';
 import '../../../../core/widgets/skeleton_loader.dart';
@@ -447,6 +448,11 @@ class _RepresentativeDashboardScreenState
       'Pagos',
     ),
     DashboardNavItem(
+      Icons.calendar_month_outlined,
+      Icons.calendar_month_rounded,
+      'Calendario',
+    ),
+    DashboardNavItem(
       Icons.description_outlined,
       Icons.description_rounded,
       'Documentos',
@@ -560,6 +566,19 @@ class _RepresentativeDashboardScreenState
         focusReference: _paymentNotificationReference,
         notificationSequence: _paymentNotificationVersion,
         onReportPayment: () => _showReportPaymentModal(context),
+      );
+    }
+
+    if (_selectedNavIndex == 2) {
+      return RepresentativeCalendarSection(
+        representativeId: _repDbId,
+        students: _students,
+        onOpenPayment: (paymentId) => setState(() {
+          _selectedNavIndex = 1;
+          _paymentNotificationId = paymentId;
+          _paymentNotificationReference = null;
+          _paymentNotificationVersion++;
+        }),
       );
     }
 
@@ -691,21 +710,36 @@ class _RepresentativeDashboardScreenState
   Widget _cornerWaves(Widget content, {Color color = AppColors.primaryBlue}) =>
       content;
 
-  // Figuras curvas discretas en la esquina superior derecha. Solo para
-  // Estudiante, Solvencia familiar y Próximo pago. No intercepta los clics.
+  // Ondas en la esquina superior derecha para Estudiante, Solvencia y
+  // Próximo pago. En hover crecen solo un 13 %, sin mover el contenido.
+  // Los accesos rápidos utilizan un diseño independiente, sin ondas.
   Widget _featureCornerCurves(Widget child, {required Color color}) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(15),
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: IgnorePointer(
-              child: CustomPaint(painter: _FeatureCornerCurvesPainter(color)),
-            ),
+    return HoverBuilder(
+      builder: (context, hovered) {
+        final reduceMotion = MediaQuery.of(context).disableAnimations;
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(15),
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween<double>(end: hovered ? 1.13 : 1.0),
+                    duration: reduceMotion
+                        ? Duration.zero
+                        : const Duration(milliseconds: 330),
+                    curve: Curves.easeOutCubic,
+                    builder: (context, scale, _) => CustomPaint(
+                      painter: _FeatureCornerCurvesPainter(color, scale: scale),
+                    ),
+                  ),
+                ),
+              ),
+              child,
+            ],
           ),
-          child,
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -1422,99 +1456,93 @@ class _RepresentativeDashboardScreenState
               ),
             ],
           ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(15),
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: CustomPaint(
-                      painter: _FeatureCornerCurvesPainter(state),
+          child: _featureCornerCurves(
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 22),
+              // El icono y el bloque de textos se centran como un solo grupo
+              // dentro del área disponible, tanto horizontal como verticalmente.
+              child: Center(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 54,
+                      height: 54,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [state.withValues(alpha: 0.88), state],
+                        ),
+                      ),
+                      child: Icon(
+                        unknown
+                            ? Icons.help_outline_rounded
+                            : solvent
+                            ? Icons.check_rounded
+                            : Icons.schedule_rounded,
+                        size: 30,
+                        color: Colors.white,
+                      ),
                     ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 26,
-                    vertical: 22,
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 54,
-                        height: 54,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [state.withValues(alpha: 0.88), state],
+                    const SizedBox(width: 17),
+                    Flexible(
+                      fit: FlexFit.loose,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Solvencia familiar',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: state,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
-                        ),
-                        child: Icon(
-                          unknown
-                              ? Icons.help_outline_rounded
-                              : solvent
-                              ? Icons.check_rounded
-                              : Icons.schedule_rounded,
-                          size: 30,
-                          color: Colors.white,
+                          const SizedBox(height: 5),
+                          Text(
+                            status,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: state,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            detail,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textMuted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (unknown)
+                      IconButton(
+                        tooltip: 'Volver a consultar solvencia',
+                        onPressed: _updateFinancialSummary,
+                        icon: const Icon(
+                          Icons.refresh_rounded,
+                          color: AppColors.primaryBlue,
                         ),
                       ),
-                      const SizedBox(width: 17),
-                      Expanded(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Solvencia familiar',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: state,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 5),
-                            Text(
-                              status,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: state,
-                                fontSize: 20,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              detail,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: AppColors.textMuted,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (unknown)
-                        IconButton(
-                          tooltip: 'Volver a consultar solvencia',
-                          onPressed: _updateFinancialSummary,
-                          icon: const Icon(
-                            Icons.refresh_rounded,
-                            color: AppColors.primaryBlue,
-                          ),
-                        ),
-                    ],
-                  ),
+                  ],
                 ),
-              ],
+              ),
             ),
+            color: state,
           ),
         ),
       ),
@@ -1522,6 +1550,8 @@ class _RepresentativeDashboardScreenState
     );
   }
 
+  // Accesos rápidos: cuatro tarjetas con personalidad visual propia.
+  // Mantienen las mismas rutas y acciones del dashboard; solo cambia el UI.
   Widget _buildQuickActions() {
     return ResponsiveGrid(
       wideCols: 4,
@@ -1530,115 +1560,267 @@ class _RepresentativeDashboardScreenState
       wideBreak: 970,
       mediumBreak: 510,
       gap: _colGap,
-      hoverLift: 0,
       items: [
         _quickAction(
           Icons.credit_card_rounded,
           'Pagar mensualidad',
           'Reporta tu pago de forma segura',
-          AppColors.primaryBlue,
-          const Color(0xFFE5EFFF),
+          const Color(0xFF008B62), // verde: pagos
+          const Color(0xFFE4F6ED),
+          const Color(0xFFF2FBF7),
           () => _showReportPaymentModal(context),
         ),
         _quickAction(
           Icons.receipt_long_rounded,
           'Ver estado de cuenta',
           'Consulta tus cuotas y saldos',
-          AppColors.violet,
-          AppColors.lavender,
+          const Color(0xFF1663E9), // azul: estado de cuenta
+          const Color(0xFFE3EDFF),
+          const Color(0xFFF2F7FF),
           () => _scrollTo(_accountSectionKey),
         ),
         _quickAction(
           Icons.description_outlined,
           'Documentos',
           'Consulta tus trámites digitales',
-          const Color(0xFF069B67),
-          AppColors.mint,
+          const Color(0xFFDE2626), // rojo: documentos
+          const Color(0xFFFFE7E7),
+          const Color(0xFFFFF6F6),
           () => _scrollTo(_documentsSectionKey),
         ),
         _quickAction(
           Icons.headset_mic_rounded,
           'Soporte',
           'Estamos aquí para ayudarte',
-          AppColors.violet,
-          AppColors.lavender,
+          const Color(0xFF7028DE), // morado: soporte
+          const Color(0xFFF0E7FF),
+          const Color(0xFFF9F6FF),
           _showSupportDialog,
         ),
       ],
     );
   }
 
+  /// Acceso rápido compacto: la tarjeta completa conserva la acción original.
+  /// El hover general resalta el bloque y la flecha tiene su propio hover,
+  /// sin crear un segundo botón ni afectar la navegación por teclado.
   Widget _quickAction(
     IconData icon,
     String title,
     String subtitle,
     Color accent,
     Color tint,
+    Color background,
     VoidCallback action,
   ) {
-    return _dashboardHover(
-      Material(
-        color: Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: AppColors.cardBorder),
-        ),
-        child: InkWell(
-          onTap: action,
-          borderRadius: BorderRadius.circular(16),
-          child: _cornerWaves(
-            ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 160),
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    CircleAvatar(
-                      radius: 28,
-                      backgroundColor: tint,
-                      child: Icon(icon, color: accent, size: 27),
-                    ),
-                    const SizedBox(height: 18),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            title,
-                            maxLines: 2,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w800,
-                              color: AppColors.darkNavy,
+    return HoverBuilder(
+      builder: (context, hovered) {
+        final reduceMotion = MediaQuery.disableAnimationsOf(context);
+        final duration = reduceMotion
+            ? Duration.zero
+            : const Duration(milliseconds: 240);
+
+        return AnimatedContainer(
+          duration: duration,
+          curve: Curves.easeOutCubic,
+          transform: Matrix4.translationValues(
+            0,
+            hovered && !reduceMotion ? -2 : 0,
+            0,
+          ),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color.lerp(Colors.white, background, 0.76)!, background],
+            ),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: accent.withValues(alpha: hovered ? 0.33 : 0.13),
+              width: 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: accent.withValues(alpha: hovered ? 0.105 : 0.035),
+                blurRadius: hovered ? 20 : 13,
+                offset: Offset(0, hovered ? 7 : 4),
+              ),
+            ],
+          ),
+          child: Material(
+            type: MaterialType.transparency,
+            borderRadius: BorderRadius.circular(18),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: action,
+              mouseCursor: SystemMouseCursors.click,
+              borderRadius: BorderRadius.circular(18),
+              hoverColor: Colors.transparent,
+              highlightColor: accent.withValues(alpha: 0.035),
+              splashColor: accent.withValues(alpha: 0.08),
+              child: Semantics(
+                button: true,
+                label: '$title. $subtitle',
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 17, 20, 14),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AnimatedScale(
+                        scale: hovered && !reduceMotion ? 1.04 : 1.0,
+                        duration: duration,
+                        curve: Curves.easeOutCubic,
+                        child: Container(
+                          width: 54,
+                          height: 54,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: tint,
+                            borderRadius: BorderRadius.circular(17),
+                            border: Border.all(
+                              color: accent.withValues(alpha: 0.075),
                             ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: accent.withValues(
+                                  alpha: hovered ? 0.14 : 0.08,
+                                ),
+                                blurRadius: hovered ? 14 : 9,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Icon(icon, size: 27, color: accent),
+                        ),
+                      ),
+                      const SizedBox(height: 11),
+                      Text(
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          height: 1.22,
+                          color: AppColors.darkNavy,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      // Mantiene las barras alineadas aunque el subtítulo
+                      // tenga una o dos líneas en escritorio.
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: 34),
+                        child: Text(
+                          subtitle,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            height: 1.35,
+                            color: AppColors.textMuted,
                           ),
                         ),
-                        const Icon(
-                          Icons.chevron_right_rounded,
-                          color: AppColors.textMuted,
-                          size: 20,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textMuted,
-                        height: 1.35,
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          // Línea de acento puramente decorativa.
+                          ExcludeSemantics(
+                            child: Container(
+                              width: 78,
+                              height: 4,
+                              alignment: Alignment.centerLeft,
+                              decoration: BoxDecoration(
+                                color: accent.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(99),
+                              ),
+                              child: AnimatedContainer(
+                                width: hovered ? 58 : 42,
+                                height: 4,
+                                duration: duration,
+                                curve: Curves.easeOutCubic,
+                                decoration: BoxDecoration(
+                                  color: accent,
+                                  borderRadius: BorderRadius.circular(99),
+                                ),
+                              ),
+                            ),
+                          ),
+                          // La flecha reacciona tanto al hover de la tarjeta
+                          // como al mouse directamente encima de ella.
+                          ExcludeSemantics(
+                            child: HoverBuilder(
+                              builder: (context, arrowHovered) {
+                                return AnimatedScale(
+                                  scale: arrowHovered && !reduceMotion
+                                      ? 1.08
+                                      : 1.0,
+                                  duration: duration,
+                                  curve: Curves.easeOutBack,
+                                  child: AnimatedContainer(
+                                    duration: duration,
+                                    curve: Curves.easeOutCubic,
+                                    width: 44,
+                                    height: 44,
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: arrowHovered
+                                          ? accent
+                                          : (hovered
+                                                ? accent.withValues(alpha: 0.21)
+                                                : tint),
+                                      border: Border.all(
+                                        color: accent.withValues(
+                                          alpha: arrowHovered ? 0.65 : 0.0,
+                                        ),
+                                      ),
+                                      boxShadow: arrowHovered
+                                          ? [
+                                              BoxShadow(
+                                                color: accent.withValues(
+                                                  alpha: 0.25,
+                                                ),
+                                                blurRadius: 12,
+                                                offset: const Offset(0, 4),
+                                              ),
+                                            ]
+                                          : const [],
+                                    ),
+                                    child: AnimatedSlide(
+                                      duration: duration,
+                                      curve: Curves.easeOutCubic,
+                                      offset: arrowHovered
+                                          ? const Offset(0.15, 0)
+                                          : (hovered
+                                                ? const Offset(0.06, 0)
+                                                : Offset.zero),
+                                      child: Icon(
+                                        Icons.arrow_forward_rounded,
+                                        size: 21,
+                                        color: arrowHovered
+                                            ? Colors.white
+                                            : accent,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-            color: accent,
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -1650,14 +1832,27 @@ class _RepresentativeDashboardScreenState
             children: [
               _buildNextPaymentCard(availableWidth: c.maxWidth),
               const SizedBox(height: _stackGap),
-              _buildProtectionCard(),
+              _buildCalendarPreviewCard(),
             ],
           );
-        return _twoColumnRow(
-          main: _buildNextPaymentCard(
-            availableWidth: _mainColumnWidth(c.maxWidth),
+        // Ambas tarjetas comparten altura visual. El mini calendario conserva
+        // su diseño compacto y ocupa el alto del bloque «Próximo pago».
+        // IntrinsicHeight toma el alto natural de la tarjeta más alta; no
+        // fija píxeles y respeta los tamaños de texto y el diseño responsive.
+        return IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                flex: _mainFlex,
+                child: _buildNextPaymentCard(
+                  availableWidth: _mainColumnWidth(c.maxWidth),
+                ),
+              ),
+              const SizedBox(width: _colGap),
+              Expanded(flex: _sideFlex, child: _buildCalendarPreviewCard()),
+            ],
           ),
-          side: _buildProtectionCard(),
         );
       },
     );
@@ -1685,77 +1880,16 @@ class _RepresentativeDashboardScreenState
     );
   }
 
-  Widget _buildProtectionCard() {
-    return _dashboardHover(
-      Container(
-        padding: const EdgeInsets.all(28),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.cardBorder),
-        ),
-        child: _cornerWaves(
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Center(
-                child: Stack(
-                  alignment: Alignment.bottomRight,
-                  children: [
-                    const Icon(
-                      Icons.article_outlined,
-                      size: 75,
-                      color: AppColors.primaryBlue,
-                    ),
-                    CircleAvatar(
-                      radius: 16,
-                      backgroundColor: AppColors.primaryBlue,
-                      child: const Icon(
-                        Icons.check_rounded,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'Tu información está protegida',
-                style: TextStyle(
-                  color: AppColors.darkNavy,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'Tu información escolar y financiera se consulta desde tu cuenta.',
-                style: TextStyle(
-                  fontSize: 13,
-                  height: 1.55,
-                  color: AppColors.textMuted,
-                ),
-              ),
-              const SizedBox(height: 14),
-              TextButton.icon(
-                onPressed: _showSecurityDialog,
-                style: TextButton.styleFrom(
-                  foregroundColor: AppColors.primaryDark,
-                  minimumSize: const Size(44, 44),
-                  padding: EdgeInsets.zero,
-                ),
-                icon: const Icon(Icons.shield_outlined, size: 18),
-                label: const Text(
-                  'Más información',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+  // Resumen del calendario en el lugar de la antigua tarjeta de seguridad.
+  // La tarjeta completa abre la pestaña Calendario; sus eventos son reales.
+  Widget _buildCalendarPreviewCard() {
+    return RepresentativeCalendarPreview(
+      representativeId: _repDbId,
+      students: _students,
+      onOpenCalendar: () {
+        if (!mounted) return;
+        setState(() => _selectedNavIndex = 2);
+      },
     );
   }
 
@@ -3236,13 +3370,21 @@ class _FamilyMarkPainter extends CustomPainter {
 // El color se parametriza para respetar el estado de solvencia.
 class _FeatureCornerCurvesPainter extends CustomPainter {
   final Color color;
-  const _FeatureCornerCurvesPainter(this.color);
+  final double scale;
+  const _FeatureCornerCurvesPainter(this.color, {this.scale = 1.0});
 
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width;
     final h = size.height;
     if (w <= 0 || h <= 0) return;
+
+    // Se ancla en la esquina superior derecha: al aumentar de 1 a 1.13,
+    // las ondas avanzan suavemente hacia abajo y hacia la izquierda.
+    canvas.save();
+    canvas.translate(w, 0);
+    canvas.scale(scale, scale);
+    canvas.translate(-w, 0);
 
     final outer = Path()
       ..moveTo(w - 210, 0)
@@ -3264,9 +3406,10 @@ class _FeatureCornerCurvesPainter extends CustomPainter {
       ..lineTo(w, 0)
       ..close();
     canvas.drawPath(inner, Paint()..color = color.withValues(alpha: 0.055));
+    canvas.restore();
   }
 
   @override
   bool shouldRepaint(covariant _FeatureCornerCurvesPainter oldDelegate) =>
-      oldDelegate.color != color;
+      oldDelegate.color != color || oldDelegate.scale != scale;
 }

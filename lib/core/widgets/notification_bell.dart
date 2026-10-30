@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../services/notification_service.dart';
@@ -24,22 +25,35 @@ class NotificationBell extends StatefulWidget {
 }
 
 class _NotificationBellState extends State<NotificationBell>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   late final NotificationService _service;
+  // El panel y la campana tienen controladores independientes para que abrir
+  // las notificaciones no interrumpa la animación de aviso.
   late final AnimationController _anim;
+  late final AnimationController _bellAnim;
   final Object _tapGroup = Object();
-  final GlobalKey _buttonKey =
-      GlobalKey(); // conserva el botón al quitar/poner el Tooltip
+  final GlobalKey _buttonKey = GlobalKey();
 
-  // Posición de la campana en coordenadas del Overlay. Se calcula a mano (sin
-  // CompositedTransformFollower): desde Flutter 3.38 esa combinación lanza
-  // aserciones en modo debug si algo dentro del panel (p. ej. un Tooltip)
-  // consulta su posición durante el layout.
+  static const Color _amber = Color(0xFFB45309);
+  static const Color _amberLight = Color(0xFFFFF7ED);
+  static const Color _amberBorder = Color(0xFFFCD34D);
+  static const Duration _hoverDuration = Duration(milliseconds: 180);
+
+  // Posición de la campana con respecto al Overlay.
   Rect _anchor = Rect.zero;
   Size _overlaySize = Size.zero;
 
-  OverlayEntry? _entry; // panel abierto
-  OverlayEntry? _closingEntry; // panel animando su cierre
+  OverlayEntry? _entry;
+  OverlayEntry? _closingEntry;
+
+  bool _hovered = false;
+  bool _ringing = false;
+  bool _checkedInitialUnread = false;
+  bool _pendingRing = false;
+  bool _initialDelayElapsed = false;
+  Timer? _initialDelayTimer;
+
+  static const Duration _initialRingDelay = Duration(seconds: 3);
 
   @override
   void initState() {
@@ -49,24 +63,65 @@ class _NotificationBellState extends State<NotificationBell>
       vsync: this,
       duration: const Duration(milliseconds: 300),
     );
+    _bellAnim = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2600),
+    );
+    // El aviso solo puede sonar a partir de los 5 segundos de abrir el panel,
+    // independientemente de si el dashboard ya terminó su carga inicial.
+    _initialDelayTimer = Timer(_initialRingDelay, () {
+      if (!mounted) return;
+      _initialDelayElapsed = true;
+      if (_pendingRing) _requestRing();
+    });
     _service = NotificationService()..onNew = _onNew;
+    _service.addListener(_onServiceChanged);
+    // Se invoca al entrar al dashboard tras login; no hace falta alterar el
+    // flujo de autenticación de LoginScreen.
     _service.start();
+  }
+
+  void _requestRing() {
+    if (!mounted) return;
+    if (!_initialDelayElapsed) {
+      // Varias notificaciones durante los 5 segundos producen un solo aviso.
+      _pendingRing = true;
+      return;
+    }
+    _pendingRing = false;
+    _ringBell();
+  }
+
+  // La primera carga puede tardar; esperamos a que Supabase devuelva el
+  // estado real, evitando que una campana sin notificaciones se anime.
+  void _onServiceChanged() {
+    if (_checkedInitialUnread || _service.loading || _service.hasError) return;
+    _checkedInitialUnread = true;
+    if (_service.unreadCount == 0) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _requestRing();
+    });
   }
 
   @override
   void dispose() {
+    _initialDelayTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _entry?.remove();
     _entry = null;
     _closingEntry?.remove();
     _closingEntry = null;
-    _anim.dispose();
+    _service.removeListener(_onServiceChanged);
     _service.dispose();
+    _anim.dispose();
+    _bellAnim.dispose();
     super.dispose();
   }
 
+  // También anima la campana si entra una notificación mediante Realtime.
   void _onNew(AppNotification n) {
     if (!mounted) return;
+    _requestRing();
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 5),
@@ -80,10 +135,24 @@ class _NotificationBellState extends State<NotificationBell>
     );
   }
 
+  Future<void> _ringBell() async {
+    if (!mounted || _ringing) return;
+    // Respeta la configuración de accesibilidad del usuario.
+    // El icono y el contador siguen indicando las no leídas sin animación.
+    if (MediaQuery.disableAnimationsOf(context)) return;
+    setState(() => _ringing = true);
+    try {
+      await _bellAnim.forward(from: 0);
+    } catch (_) {
+      // El controlador se puede cancelar al abandonar la pantalla.
+    } finally {
+      if (mounted) setState(() => _ringing = false);
+    }
+  }
+
   void _toggle() => _entry == null ? _open() : _close();
 
-  /// Mide la campana respecto al Overlay. Se llama fuera del layout (al abrir
-  /// y después de un frame cuando cambia el tamaño de la ventana).
+  /// Mide la campana respecto al Overlay. Se llama fuera del layout.
   void _measure() {
     final bell = context.findRenderObject();
     final overlayBox = Overlay.of(
@@ -107,19 +176,17 @@ class _NotificationBellState extends State<NotificationBell>
   }
 
   void _open() {
-    // Si quedaba un panel a medio cerrar, se quita ya.
     _closingEntry?.remove();
     _closingEntry = null;
 
     _measure();
-    _service.refresh(silent: true); // al abrir, siempre datos frescos
+    _service.refresh(silent: true);
 
     final entry = OverlayEntry(
       builder: (ctx) {
         final screen = MediaQuery.sizeOf(ctx);
         final width = math.min(380.0, screen.width - 24);
         final maxHeight = math.max(220.0, math.min(520.0, screen.height - 90));
-        // Alineado al borde derecho de la campana.
         final right = math.max(12.0, _overlaySize.width - _anchor.right);
         return Positioned(
           right: right,
@@ -140,7 +207,6 @@ class _NotificationBellState extends State<NotificationBell>
                 },
               ),
               builder: (context, child) {
-                // Misma animación que el menú de cuenta del encabezado.
                 final reversing = _anim.status == AnimationStatus.reverse;
                 final v = (reversing ? Curves.easeInCubic : Curves.easeOutCubic)
                     .transform(_anim.value.clamp(0.0, 1.0).toDouble());
@@ -173,7 +239,6 @@ class _NotificationBellState extends State<NotificationBell>
     try {
       await _anim.reverse();
     } catch (_) {}
-    // Si mientras tanto se abrió otro panel, _open() ya quitó este.
     if (identical(_closingEntry, entry)) {
       entry.remove();
       _closingEntry = null;
@@ -186,60 +251,121 @@ class _NotificationBellState extends State<NotificationBell>
       listenable: _service,
       builder: (context, _) {
         final unread = _service.unreadCount;
-        final button = InkWell(
-          key: _buttonKey,
-          onTap: _toggle,
-          borderRadius: BorderRadius.circular(8),
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border.all(color: AppColors.cardBorder),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(
-                  Icons.notifications_none,
-                  size: 18,
-                  color: AppColors.darkNavy,
-                ),
-              ),
-              if (unread > 0)
-                Positioned(
-                  right: -5,
-                  top: -5,
-                  child: Container(
-                    constraints: const BoxConstraints(
-                      minWidth: 16,
-                      minHeight: 16,
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.redAccent,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.white, width: 1.5),
-                    ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      unread > 9 ? '9+' : '$unread',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
-                        height: 1.1,
+        // Solo la campana gira. Ni el badge ni el área clicable se mueven.
+        // Cuando existen no leídas, el icono sigue ámbar como recordatorio.
+        final isHighlighted = _hovered || _ringing;
+        final iconColor = (isHighlighted || unread > 0)
+            ? _amber
+            : AppColors.darkNavy;
+
+        final button = Semantics(
+          button: true,
+          label: unread == 0
+              ? 'Notificaciones, ninguna sin leer'
+              : 'Notificaciones, $unread sin leer',
+          child: MouseRegion(
+            cursor: SystemMouseCursors.click,
+            onEnter: (_) => setState(() => _hovered = true),
+            onExit: (_) => setState(() => _hovered = false),
+            child: AnimatedScale(
+              scale: _hovered ? 1.045 : 1.0,
+              duration: _hoverDuration,
+              curve: Curves.easeOutCubic,
+              child: InkWell(
+                key: _buttonKey,
+                onTap: _toggle,
+                borderRadius: BorderRadius.circular(12),
+                hoverColor: Colors.transparent,
+                splashColor: _amber.withValues(alpha: 0.10),
+                focusColor: _amberLight,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    AnimatedContainer(
+                      width: 46,
+                      height: 46,
+                      duration: _hoverDuration,
+                      curve: Curves.easeOutCubic,
+                      decoration: BoxDecoration(
+                        color: isHighlighted ? _amberLight : Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isHighlighted
+                              ? _amberBorder
+                              : AppColors.cardBorder,
+                        ),
+                        boxShadow: isHighlighted
+                            ? [
+                                BoxShadow(
+                                  color: _amber.withValues(alpha: 0.15),
+                                  blurRadius: 14,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ]
+                            : const [],
+                      ),
+                      alignment: Alignment.center,
+                      child: AnimatedBuilder(
+                        animation: _bellAnim,
+                        builder: (context, child) {
+                          final t = _bellAnim.value;
+                          // Oscilación más prolongada (2,6 s) que se
+                          // amortigua de forma progresiva hasta detenerse.
+                          final angle = _ringing
+                              ? math.sin(t * math.pi * 14) *
+                                    0.30 *
+                                    (1 - t) *
+                                    (1 - 0.35 * t)
+                              : 0.0;
+                          return Transform.rotate(
+                            alignment: Alignment.topCenter,
+                            angle: angle,
+                            child: child,
+                          );
+                        },
+                        child: Icon(
+                          Icons.notifications_none_rounded,
+                          size: 22,
+                          color: iconColor,
+                        ),
                       ),
                     ),
-                  ),
+                    if (unread > 0)
+                      Positioned(
+                        right: -5,
+                        top: -5,
+                        child: Container(
+                          constraints: const BoxConstraints(
+                            minWidth: 18,
+                            minHeight: 18,
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          decoration: BoxDecoration(
+                            color: AppColors.errorRed,
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: Colors.white, width: 1.5),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            unread > 9 ? '9+' : '$unread',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              height: 1.1,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-            ],
+              ),
+            ),
           ),
         );
 
         return TapRegion(
           groupId: _tapGroup,
-          // Con el panel desplegado no se muestra el Tooltip de la campana.
           child: _entry != null
               ? button
               : Tooltip(
