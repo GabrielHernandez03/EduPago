@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/services/bcv_service.dart';
@@ -31,6 +33,10 @@ class _RepresentativeDashboardScreenState
 
   bool _isLoading = false;
   bool _isLoadingProfile = true;
+
+  // Mantiene actualizado el saludo cuando cambia la franja horaria o el día.
+  DateTime _welcomeNow = DateTime.now();
+  Timer? _welcomeTimer;
 
   // Datos dinámicos del representante autenticado
   String _repDbId = '';
@@ -74,7 +80,21 @@ class _RepresentativeDashboardScreenState
   @override
   void initState() {
     super.initState();
+    _welcomeTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (!mounted) return;
+      final now = DateTime.now();
+      if (_greetingForHour(now.hour) != _greetingForHour(_welcomeNow.hour) ||
+          !DateUtils.isSameDay(now, _welcomeNow)) {
+        setState(() => _welcomeNow = now);
+      }
+    });
     fetchUserProfileAndStudents();
+  }
+
+  @override
+  void dispose() {
+    _welcomeTimer?.cancel();
+    super.dispose();
   }
 
   // --- CONSULTA EN VIVO DEL PERFIL DEL REPRESENTANTE ---
@@ -803,8 +823,23 @@ class _RepresentativeDashboardScreenState
         ],
       );
 
+  // Hora local del navegador/dispositivo: mañana 05–11, tarde 12–18,
+  // noche 19–04. No requiere consultas ni permisos adicionales.
+  static String _greetingForHour(int hour) {
+    if (hour >= 5 && hour < 12) return 'Buenos días';
+    if (hour >= 12 && hour < 19) return 'Buenas tardes';
+    return 'Buenas noches';
+  }
+
   Widget _buildWelcomeHero() {
-    final date = DateTime.now();
+    final date = _welcomeNow;
+    final hour = date.hour;
+    final greetingText = _greetingForHour(hour);
+    final greetingEmoji = hour >= 5 && hour < 12
+        ? '☀️'
+        : hour >= 12 && hour < 19
+        ? '🌤️'
+        : '🌙';
     final first = _fullName.trim().isEmpty
         ? 'bienvenido'
         : _fullName.trim().split(RegExp(r'\s+')).first;
@@ -814,8 +849,16 @@ class _RepresentativeDashboardScreenState
         final greeting = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              '¡Hola, $first!',
+            Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(text: '¡$greetingText, $first! '),
+                  TextSpan(
+                    text: greetingEmoji,
+                    style: TextStyle(fontSize: narrow ? 23 : 27),
+                  ),
+                ],
+              ),
               style: TextStyle(
                 fontSize: narrow ? 26 : 31,
                 fontWeight: FontWeight.w800,
@@ -842,27 +885,87 @@ class _RepresentativeDashboardScreenState
                 ? CrossAxisAlignment.start
                 : CrossAxisAlignment.end,
             children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(
-                    Icons.calendar_month_outlined,
-                    size: 17,
-                    color: AppColors.textMuted,
+              Align(
+                alignment: narrow
+                    ? Alignment.centerLeft
+                    : Alignment.centerRight,
+                child: Tooltip(
+                  message: 'Ir al calendario',
+                  child: HoverBuilder(
+                    builder: (context, hovered) {
+                      final duration = MediaQuery.disableAnimationsOf(context)
+                          ? Duration.zero
+                          : const Duration(milliseconds: 180);
+                      return Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () => setState(() {
+                            _selectedNavIndex = 2;
+                            _paymentNotificationId = null;
+                            _paymentNotificationReference = null;
+                            _paymentNotificationVersion = 0;
+                          }),
+                          mouseCursor: SystemMouseCursors.click,
+                          hoverColor: Colors.transparent,
+                          focusColor: Colors.transparent,
+                          highlightColor: Colors.transparent,
+                          splashColor: Colors.transparent,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            // Eleva ligeramente la fecha al pasar el cursor,
+                            // sin añadir fondos ni alterar su espacio en el layout.
+                            child: AnimatedSlide(
+                              offset: hovered
+                                  ? const Offset(0, -0.12)
+                                  : Offset.zero,
+                              duration: duration,
+                              curve: Curves.easeOutCubic,
+                              child: AnimatedScale(
+                                scale: hovered ? 1.045 : 1.0,
+                                alignment: narrow
+                                    ? Alignment.bottomLeft
+                                    : Alignment.bottomRight,
+                                duration: duration,
+                                curve: Curves.easeOutCubic,
+                                child: TweenAnimationBuilder<Color?>(
+                                  tween: ColorTween(
+                                    end: hovered
+                                        ? AppColors.primaryBlue
+                                        : AppColors.textMuted,
+                                  ),
+                                  duration: duration,
+                                  curve: Curves.easeOutCubic,
+                                  builder: (context, dateColor, child) => Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.calendar_month_outlined,
+                                        size: 17,
+                                        color: dateColor,
+                                      ),
+                                      const SizedBox(width: 7),
+                                      Flexible(
+                                        child: Text(
+                                          _longDate(date),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: dateColor,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                  const SizedBox(width: 7),
-                  Flexible(
-                    child: Text(
-                      _longDate(date),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                  ),
-                ],
+                ),
               ),
               const SizedBox(height: 7),
               Row(
@@ -2280,8 +2383,9 @@ class _RepresentativeDashboardScreenState
                               ),
                             ],
                           ),
+                          // Mismo icono de «Pagos» que el menú lateral.
                           child: const Icon(
-                            Icons.calendar_month_outlined,
+                            Icons.account_balance_wallet_outlined,
                             color: Colors.white,
                             size: 25,
                           ),
@@ -2300,15 +2404,59 @@ class _RepresentativeDashboardScreenState
                                 ),
                               ),
                               const SizedBox(height: 5),
-                              Text(
-                                dueText,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 12.5,
-                                  color: AppColors.textMuted,
+                              // Destaca la fecha real sin añadir otra tarjeta.
+                              // Si ya venció, se comunica visualmente en rojo.
+                              if (nextDue != null)
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.event_outlined,
+                                      size: 16,
+                                      color: hasOverdueBalance
+                                          ? AppColors.errorRed
+                                          : AppColors.primaryBlue,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Flexible(
+                                      child: Text.rich(
+                                        TextSpan(
+                                          children: [
+                                            const TextSpan(
+                                              text: 'Vencimiento: ',
+                                              style: TextStyle(
+                                                color: AppColors.textMuted,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                            TextSpan(
+                                              text: _fmtFecha(nextDue),
+                                              style: TextStyle(
+                                                color: hasOverdueBalance
+                                                    ? AppColors.errorRed
+                                                    : AppColors.primaryBlue,
+                                                fontWeight: FontWeight.w800,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(fontSize: 14),
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              else
+                                Text(
+                                  dueText,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12.5,
+                                    color: AppColors.textMuted,
+                                  ),
                                 ),
-                              ),
                             ],
                           ),
                         ),

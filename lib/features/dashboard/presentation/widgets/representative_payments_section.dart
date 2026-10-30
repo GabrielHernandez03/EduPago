@@ -1182,13 +1182,24 @@ class _RepresentativePaymentsSectionState
                       const Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            'Mis pagos',
-                            style: TextStyle(
-                              fontSize: 29,
-                              fontWeight: FontWeight.w800,
-                              color: _navy,
-                            ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.account_balance_wallet_outlined,
+                                size: 26,
+                                color: _blue,
+                              ),
+                              SizedBox(width: 10),
+                              Text(
+                                'Mis pagos',
+                                style: TextStyle(
+                                  fontSize: 29,
+                                  fontWeight: FontWeight.w800,
+                                  color: _navy,
+                                ),
+                              ),
+                            ],
                           ),
                           SizedBox(height: 7),
                           Text(
