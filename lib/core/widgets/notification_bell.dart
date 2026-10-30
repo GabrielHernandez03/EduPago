@@ -334,8 +334,9 @@ class _NotificationPanelState extends State<_NotificationPanel> {
 
   Widget _header() {
     final hasItems = _s.items.isNotEmpty;
+    final disabledOnBlue = AppColors.tint(Colors.white, 0.55);
     return Container(
-      color: const Color(0xFFF1F5F9),
+      color: AppColors.primaryBlue,
       constraints: const BoxConstraints(minHeight: 48),
       padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
       child: _confirmClear
@@ -347,18 +348,20 @@ class _NotificationPanelState extends State<_NotificationPanel> {
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
-                      color: AppColors.darkNavy,
+                      color: Colors.white,
                     ),
                   ),
                 ),
                 TextButton(
                   onPressed: () => setState(() => _confirmClear = false),
+                  style: TextButton.styleFrom(foregroundColor: Colors.white),
                   child: const Text('Cancelar', style: TextStyle(fontSize: 12)),
                 ),
                 TextButton(
                   onPressed: _clearAll,
                   style: TextButton.styleFrom(
-                    foregroundColor: Colors.redAccent,
+                    backgroundColor: Colors.white,
+                    foregroundColor: AppColors.errorRed,
                   ),
                   child: const Text(
                     'Borrar',
@@ -375,12 +378,16 @@ class _NotificationPanelState extends State<_NotificationPanel> {
                     style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.bold,
-                      color: AppColors.darkNavy,
+                      color: Colors.white,
                     ),
                   ),
                 ),
                 TextButton(
                   onPressed: _s.unreadCount == 0 ? null : _s.markAllAsRead,
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    disabledForegroundColor: disabledOnBlue,
+                  ),
                   child: const Text(
                     'Marcar todas como leídas',
                     style: TextStyle(fontSize: 11),
@@ -390,6 +397,8 @@ class _NotificationPanelState extends State<_NotificationPanel> {
                   tooltip: 'Borrar todas',
                   visualDensity: VisualDensity.compact,
                   iconSize: 18,
+                  color: Colors.white,
+                  disabledColor: disabledOnBlue,
                   onPressed: hasItems
                       ? () => setState(() => _confirmClear = true)
                       : null,

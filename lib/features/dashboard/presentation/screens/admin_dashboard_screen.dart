@@ -1068,7 +1068,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 _grid(
                   wideCols: 4,
                   narrowCols: 2,
-                  hoverLift: 3,
+                  hoverLift: 0,
                   items: [
                     _kpiRecaudado(),
                     _kpiPorCobrar(),
@@ -1286,13 +1286,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               color: Colors.white,
               size: 18,
             ),
-            leadingBg: Colors.white.withValues(alpha: 0.12),
+            leadingBg: AppColors.primaryBlue,
             title: 'Generar facturación masiva mensual',
             subtitle: 'Crea cargos para toda la matrícula',
-            bg: const Color(0xFF0F172A),
-            border: const Color(0xFF0F172A),
-            titleColor: Colors.white,
-            subColor: AppColors.onDarkMuted,
+            bg: Colors.white,
+            border: AppColors.cardBorder,
+            titleColor: AppColors.darkNavy,
+            subColor: AppColors.textMuted,
             onTap: () {
               if (_colegioId != null) {
                 showDialog(
@@ -1329,8 +1329,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             leadingBg: const Color(0xFFDBEAFE),
             title: 'Ver auditoría de transacciones',
             subtitle: 'Bitácora y trazabilidad',
-            bg: const Color(0xFFEFF6FF),
-            border: const Color(0xFFBFDBFE),
+            bg: Colors.white,
+            border: AppColors.cardBorder,
             titleColor: AppColors.darkNavy,
             subColor: AppColors.textMuted,
             onTap: () => _soon('La auditoría de transacciones'),
@@ -1347,8 +1347,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             leadingBg: const Color(0xFF16A34A),
             title: 'Simular bot de cobranza',
             subtitle: 'WhatsApp automatizado',
-            bg: const Color(0xFFF0FDF4),
-            border: const Color(0xFFBBF7D0),
+            bg: Colors.white,
+            border: AppColors.cardBorder,
             titleColor: AppColors.darkNavy,
             subColor: const Color(0xFF15803D),
             onTap: () => _soon('El simulador del bot de cobranza'),
@@ -1369,75 +1369,67 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     required Color subColor,
     required VoidCallback onTap,
   }) {
-    final dark = bg.computeLuminance() < 0.3;
-
-    return HoverLift(
-      radius: 10,
-      lift: 2,
-      child: HoverBuilder(
-        builder: (context, hovered) => InkWell(
+    return _dashboardHover(
+      Material(
+        color: Colors.transparent,
+        child: InkWell(
           onTap: onTap,
           hoverColor: Colors.transparent,
           borderRadius: BorderRadius.circular(10),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
+          child: Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: Color.lerp(
-                bg,
-                dark ? Colors.white : Colors.black,
-                hovered ? (dark ? 0.08 : 0.03) : 0,
-              )!,
+              color: bg,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: Color.lerp(
-                  border,
-                  dark ? Colors.white : AppColors.primaryBlue,
-                  hovered ? 0.25 : 0,
-                )!,
-              ),
+              border: Border.all(color: border),
             ),
-            child: Row(
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: leadingBg,
-                    borderRadius: BorderRadius.circular(9),
+            child: _cornerWaves(
+              Row(
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: leadingBg,
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: Center(child: leading),
                   ),
-                  child: Center(child: leading),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: titleColor,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: titleColor,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle,
-                        style: TextStyle(fontSize: 10, color: subColor),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle,
+                          style: TextStyle(fontSize: 10, color: subColor),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
+              color: bg.computeLuminance() < 0.3
+                  ? Colors.white
+                  : AppColors.primaryBlue,
             ),
           ),
         ),
       ),
+      radius: 10,
     );
   }
 
@@ -1452,53 +1444,58 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     Widget? topRight,
     bool accent = false,
   }) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.cardBorder),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (accent) Container(height: 3, color: AppColors.primaryBlue),
-            Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return _dashboardHover(
+      ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.cardBorder),
+          ),
+          child: _cornerWaves(
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (accent) Container(height: 3, color: AppColors.primaryBlue),
+                Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: iconBg,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Icon(icon, color: iconFg, size: 20),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: iconBg,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(icon, color: iconFg, size: 20),
+                          ),
+                          if (topRight != null) topRight,
+                        ],
                       ),
-                      if (topRight != null) topRight,
+                      const SizedBox(height: 16),
+                      Text(
+                        label,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      value,
+                      if (sub != null) ...[const SizedBox(height: 10), sub],
                     ],
                   ),
-                  const SizedBox(height: 16),
-                  Text(
-                    label,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AppColors.textMuted,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  value,
-                  if (sub != null) ...[const SizedBox(height: 10), sub],
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+            color: iconFg,
+          ),
         ),
       ),
     );
@@ -1636,6 +1633,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     // Un único menú compacto evita desbordamientos en las cuatro tarjetas KPI.
     // Las opciones de antigüedad se conservan como segunda sección del menú.
     final monthFilter = PopupMenuButton<String>(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppColors.cardBorder),
+      ),
       tooltip: 'Filtrar cuentas por cobrar por mes o vencimiento',
       initialValue: 'month:${_selectedReceivablesMonth ?? 'todos'}',
       onSelected: (key) => setState(() {
@@ -1911,6 +1913,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   Widget _buildMonthlyChartCard() {
     final rangeMenu = PopupMenuButton<int>(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppColors.cardBorder),
+      ),
       tooltip: 'Rango de meses',
       initialValue: _rangeMonths,
       onSelected: (v) => setState(() {
@@ -2642,52 +2649,104 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   Widget _buildFooterNotice() {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEFF6FF),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFBFDBFE)),
-      ),
-      child: const Row(
-        children: [
-          Icon(Icons.shield_outlined, color: AppColors.primaryBlue, size: 18),
-          SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Trazabilidad completa',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primaryBlue,
+    return _dashboardHover(
+      Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.cardBorder),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.shield_outlined, color: AppColors.primaryBlue, size: 18),
+            SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Trazabilidad completa',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primaryBlue,
+                    ),
                   ),
-                ),
-                Text(
-                  'Cada aprobación, rechazo o cambio queda registrado en la auditoría inalterable del sistema.',
-                  style: TextStyle(fontSize: 10, color: AppColors.darkNavy),
-                ),
-              ],
+                  Text(
+                    'Cada aprobación, rechazo o cambio queda registrado en la auditoría inalterable del sistema.',
+                    style: TextStyle(fontSize: 10, color: AppColors.darkNavy),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
+      radius: 12,
     );
   }
 
   //
   // Componentes de layout reutilizables
   //
+
+  // Conserva la estructura de las tarjetas existentes sin aplicar fondos
+  // decorativos. Iconos, estados y acciones no se modifican.
+  Widget _cornerWaves(Widget content, {Color color = AppColors.primaryBlue}) =>
+      content;
+
+  // Hover uniforme en tarjetas principales: solo cambia elevación/sombra y
+  // contorno; no altera el tamaño, el scroll ni las acciones de los controles.
+  Widget _dashboardHover(
+    Widget child, {
+    double radius = 16,
+    Color? hoverColor,
+  }) {
+    return HoverBuilder(
+      builder: (context, hovered) {
+        final reducedMotion = MediaQuery.of(context).disableAnimations;
+        return AnimatedContainer(
+          duration: reducedMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 155),
+          curve: Curves.easeOutCubic,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(radius),
+            boxShadow: hovered
+                ? [
+                    BoxShadow(
+                      color: (hoverColor ?? AppColors.primaryBlue).withValues(
+                        alpha: 0.065,
+                      ),
+                      blurRadius: 14,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : const [],
+          ),
+          foregroundDecoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(radius),
+            border: Border.all(
+              color: hovered
+                  ? (hoverColor ?? AppColors.primaryBlue).withValues(
+                      alpha: 0.30,
+                    )
+                  : Colors.transparent,
+            ),
+          ),
+          child: child,
+        );
+      },
+    );
+  }
+
   Widget _card({
     required Widget child,
     EdgeInsets padding = const EdgeInsets.all(20),
   }) {
-    return HoverLift(
-      radius: 16,
-      lift: 0,
-      child: Container(
+    return _dashboardHover(
+      Container(
         padding: padding,
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
@@ -2695,7 +2754,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: AppColors.cardBorder),
         ),
-        child: child,
+        child: _cornerWaves(child),
       ),
     );
   }
@@ -2713,7 +2772,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       mediumCols: narrowCols,
       narrowCols: 1,
       gap: gap,
-      hoverLift: hoverLift,
+      hoverLift: hoverLift ?? 0,
     );
   }
 }

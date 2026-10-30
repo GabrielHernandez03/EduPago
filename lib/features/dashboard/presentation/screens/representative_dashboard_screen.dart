@@ -216,7 +216,8 @@ class _RepresentativeDashboardScreenState
               // Con más de un hijo se abre la vista consolidada (total global).
               _selectedStudentIndex = _students.length > 1 ? -1 : 0;
               _selectionInitialized = true;
-            } else if (_selectedStudentIndex >= _students.length) {
+            } else if (_selectedStudentIndex >= _students.length ||
+                (_students.length == 1 && _selectedStudentIndex == -1)) {
               _selectedStudentIndex = 0;
             }
           });
@@ -607,24 +608,22 @@ class _RepresentativeDashboardScreenState
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _buildWelcomeHero(),
-                const SizedBox(height: 26),
+                const SizedBox(height: _sectionGap),
                 _buildHeroStatusRow(),
-                const SizedBox(height: 24),
+                const SizedBox(height: _sectionGap),
                 _buildQuickActions(),
-                const SizedBox(height: 24),
+                const SizedBox(height: _sectionGap),
                 _buildPaymentAndSecurityRow(),
-                const SizedBox(height: 24),
+                const SizedBox(height: _sectionGap),
                 _buildAccountAndSchoolRow(),
-                const SizedBox(height: 26),
+                const SizedBox(height: _sectionGap),
                 Container(
                   key: _documentsSectionKey,
                   child: _buildDigitalDocumentsSection(),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: _sectionGap),
                 _buildActionButtons(),
-                const SizedBox(height: 24),
-                _buildRepresentativeHeaderCard(),
-                const SizedBox(height: 24),
+                const SizedBox(height: _sectionGap),
                 _buildFooterSecurityNotice(),
                 const SizedBox(height: 20),
               ],
@@ -685,6 +684,75 @@ class _RepresentativeDashboardScreenState
       _equivalenteVes = _montoUsd * _tasaBcv;
     });
     if (_estadoCuenta == null) _updateFinancialSummary();
+  }
+
+  // Conserva la estructura de las tarjetas existentes sin aplicar fondos
+  // decorativos. Iconos, estados y acciones no se modifican.
+  Widget _cornerWaves(Widget content, {Color color = AppColors.primaryBlue}) =>
+      content;
+
+  // Figuras curvas discretas en la esquina superior derecha. Solo para
+  // Estudiante, Solvencia familiar y Próximo pago. No intercepta los clics.
+  Widget _featureCornerCurves(Widget child, {required Color color}) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(15),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: IgnorePointer(
+              child: CustomPaint(painter: _FeatureCornerCurvesPainter(color)),
+            ),
+          ),
+          child,
+        ],
+      ),
+    );
+  }
+
+  // Hover uniforme en tarjetas principales: solo cambia elevación/sombra y
+  // contorno; no altera el tamaño, el scroll ni las acciones de los controles.
+  Widget _dashboardHover(
+    Widget child, {
+    double radius = 16,
+    Color? hoverColor,
+    bool outline = true,
+  }) {
+    return HoverBuilder(
+      builder: (context, hovered) {
+        final reducedMotion = MediaQuery.of(context).disableAnimations;
+        return AnimatedContainer(
+          duration: reducedMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 155),
+          curve: Curves.easeOutCubic,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(radius),
+            boxShadow: hovered
+                ? [
+                    BoxShadow(
+                      color: (hoverColor ?? AppColors.primaryBlue).withValues(
+                        alpha: 0.065,
+                      ),
+                      blurRadius: 14,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : const [],
+          ),
+          foregroundDecoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(radius),
+            border: Border.all(
+              color: hovered && outline
+                  ? (hoverColor ?? AppColors.primaryBlue).withValues(
+                      alpha: 0.30,
+                    )
+                  : Colors.transparent,
+            ),
+          ),
+          child: child,
+        );
+      },
+    );
   }
 
   BoxDecoration _whiteCard({Color border = AppColors.cardBorder, Color? bg}) =>
@@ -806,6 +874,37 @@ class _RepresentativeDashboardScreenState
     );
   }
 
+  // --- Simetría del dashboard -------------------------------------------
+  // Todas las filas de dos tarjetas comparten la misma división (2 : 1), el
+  // mismo espacio entre columnas y la misma altura; todas las secciones
+  // verticales comparten el mismo espacio. Para dos columnas iguales (1 : 1)
+  // basta con poner _mainFlex = 1.
+  static const double _sectionGap = 24; // entre secciones (vertical)
+  static const double _colGap = 20; // entre tarjetas (horizontal)
+  static const double _stackGap =
+      20; // entre tarjetas apiladas (pantalla angosta)
+  static const int _mainFlex = 2;
+  static const int _sideFlex = 1;
+
+  double _mainColumnWidth(double rowWidth) =>
+      (rowWidth - _colGap) * _mainFlex / (_mainFlex + _sideFlex);
+
+  /// Dos tarjetas lado a lado con EXACTAMENTE la misma altura.
+  /// (IntrinsicHeight: ninguna tarjeta de estas filas puede usar
+  /// LayoutBuilder en su interior.)
+  Widget _twoColumnRow({required Widget main, required Widget side}) {
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(flex: _mainFlex, child: main),
+          const SizedBox(width: _colGap),
+          Expanded(flex: _sideFlex, child: side),
+        ],
+      ),
+    );
+  }
+
   Widget _buildHeroStatusRow() {
     return LayoutBuilder(
       builder: (context, c) {
@@ -813,18 +912,14 @@ class _RepresentativeDashboardScreenState
           return Column(
             children: [
               _buildStudentSelectorCard(),
-              const SizedBox(height: 14),
+              const SizedBox(height: _stackGap),
               _buildSolvencyStatusCard(),
             ],
           );
         }
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(flex: 7, child: _buildStudentSelectorCard()),
-            const SizedBox(width: 20),
-            Expanded(flex: 4, child: _buildSolvencyStatusCard()),
-          ],
+        return _twoColumnRow(
+          main: _buildStudentSelectorCard(),
+          side: _buildSolvencyStatusCard(),
         );
       },
     );
@@ -867,6 +962,127 @@ class _RepresentativeDashboardScreenState
     return '${_studentGrade(student)}  •  C.I. ${cedula.isEmpty ? 'No registrada' : cedula}';
   }
 
+  String _studentFullName(Map<String, dynamic> st) =>
+      '${st['nombres'] ?? ''} ${st['apellidos'] ?? ''}'.trim();
+
+  /// Avatar circular del selector: logotipo de familia o iniciales.
+  Widget _selectorAvatar({
+    required bool family,
+    required String initials,
+    double size = 66,
+  }) {
+    const bg1 = Color(0xFFEAF2FF);
+    const bg2 = Color(0xFFD3E3FF);
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [bg1, bg2],
+        ),
+        border: Border.all(color: Colors.white, width: size >= 56 ? 2.5 : 2),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primaryBlue.withValues(alpha: 0.18),
+            blurRadius: size >= 56 ? 10 : 6,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: family
+          ? _FamilyMark(size: size * 0.62, background: const Color(0xFFDDE9FF))
+          : Text(
+              initials,
+              style: TextStyle(
+                color: AppColors.primaryBlue,
+                fontSize: size >= 56 ? 20 : 13,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+    );
+  }
+
+  PopupMenuItem<int> _studentMenuItem({
+    required int value,
+    required Widget leading,
+    required String title,
+    required String subtitle,
+    bool isLast = false,
+  }) {
+    final selected = value == _selectedStudentIndex;
+    return PopupMenuItem<int>(
+      value: value,
+      padding: EdgeInsets.zero,
+      height: 56, // alto mínimo; la fila define su propio alto real
+      child: HoverBuilder(
+        builder: (context, hovered) => AnimatedContainer(
+          duration: MediaQuery.of(context).disableAnimations
+              ? Duration.zero
+              : const Duration(milliseconds: 125),
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: hovered
+                ? AppColors.primaryLight
+                : (selected
+                      ? AppColors.primaryLight.withValues(alpha: 0.65)
+                      : Colors.transparent),
+            border: isLast
+                ? null
+                : const Border(bottom: BorderSide(color: AppColors.cardBorder)),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              leading,
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: selected
+                            ? FontWeight.w800
+                            : FontWeight.w600,
+                        color: AppColors.darkNavy,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (selected)
+                const Icon(
+                  Icons.check_circle_rounded,
+                  size: 20,
+                  color: AppColors.primaryBlue,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildStudentSelectorCard() {
     final hasStudents = _students.isNotEmpty;
     final consolidated = _selectedStudentIndex == -1 && _students.length > 1;
@@ -880,48 +1096,50 @@ class _RepresentativeDashboardScreenState
         ? 'Toda mi familia'
         : (selected == null
               ? 'Sin estudiantes vinculados'
-              : '${selected['nombres'] ?? ''} ${selected['apellidos'] ?? ''}'
-                    .trim());
+              : _studentFullName(selected));
     final details = consolidated
         ? '${_students.length} estudiantes vinculados'
         : selected != null
         ? _studentDetails(selected)
         : 'Sin grado ni cédula registrados';
-    final initials = consolidated ? 'FAM' : _getInitials(name);
-    final content = Container(
-      constraints: const BoxConstraints(minHeight: 114),
+    final canChoose = _students.length > 1;
+    final initials = _getInitials(name);
+    final countLabel = consolidated
+        ? '${_students.length}'
+        : (selected == null ? '0' : '1');
+
+    final inner = Container(
+      constraints: const BoxConstraints(minHeight: 122),
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-      decoration: _whiteCard(border: AppColors.primaryBlue),
       child: Row(
         children: [
-          CircleAvatar(
-            radius: 33,
-            backgroundColor: const Color(0xFFDDE9FF),
-            child: Text(
-              initials,
-              style: const TextStyle(
-                color: AppColors.primaryBlue,
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
+          _selectorAvatar(family: consolidated, initials: initials),
           const SizedBox(width: 16),
           Expanded(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'ESTUDIANTE',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: AppColors.textMuted,
-                    letterSpacing: 0.5,
-                    fontWeight: FontWeight.bold,
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryLight.withValues(alpha: 0.9),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: const Text(
+                    'ESTUDIANTE',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      color: AppColors.primaryBlue,
+                      letterSpacing: 0.45,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
-                const SizedBox(height: 5),
+                const SizedBox(height: 10),
                 Tooltip(
                   message: name,
                   child: Text(
@@ -936,71 +1154,231 @@ class _RepresentativeDashboardScreenState
                     ),
                   ),
                 ),
-                const SizedBox(height: 6),
-                Tooltip(
-                  message: details,
-                  child: Text(
-                    details,
-                    maxLines: 1,
-                    softWrap: false,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AppColors.textMuted,
+                const SizedBox(height: 7),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Tooltip(
+                        message: details,
+                        child: Text(
+                          details,
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
+                    if (consolidated) ...[
+                      const SizedBox(width: 10),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.86),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: AppColors.primaryBlue.withValues(
+                              alpha: 0.14,
+                            ),
+                          ),
+                        ),
+                        child: const Text(
+                          'Vista familiar',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primaryBlue,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ),
           ),
-          if (hasStudents) ...[
-            const SizedBox(width: 8),
-            const Icon(
-              Icons.keyboard_arrow_down_rounded,
-              color: AppColors.textMuted,
-            ),
-          ],
+          const SizedBox(width: 12),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.88),
+                  border: Border.all(
+                    color: AppColors.primaryBlue.withValues(alpha: 0.10),
+                  ),
+                ),
+                child: Text(
+                  countLabel,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.primaryBlue,
+                  ),
+                ),
+              ),
+              if (canChoose) ...[
+                const SizedBox(height: 10),
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.92),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: AppColors.primaryBlue.withValues(alpha: 0.10),
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: AppColors.primaryBlue,
+                  ),
+                ),
+              ],
+            ],
+          ),
         ],
       ),
     );
-    if (!hasStudents) return content;
-    return PopupMenuButton<int>(
-      tooltip: 'Seleccionar estudiante',
-      onSelected: _chooseStudent,
-      position: PopupMenuPosition.under,
-      itemBuilder: (context) => [
-        if (_students.length > 1)
-          const PopupMenuItem(value: -1, child: Text('Toda mi familia')),
-        for (var i = 0; i < _students.length; i++)
-          PopupMenuItem<int>(
-            value: i,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '${_students[i]['nombres'] ?? ''} ${_students[i]['apellidos'] ?? ''}'
-                      .trim(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  _studentDetails(_students[i]),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textMuted,
+    final cardDecoration = BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: AppColors.cardBorder),
+      boxShadow: [
+        BoxShadow(
+          color: const Color(0xFF214576).withValues(alpha: 0.025),
+          blurRadius: 14,
+          offset: const Offset(0, 3),
+        ),
+      ],
+    );
+    final decoratedInner = _featureCornerCurves(
+      inner,
+      color: AppColors.primaryBlue,
+    );
+    if (!canChoose) {
+      return _dashboardHover(
+        DecoratedBox(decoration: cardDecoration, child: decoratedInner),
+      );
+    }
+
+    return Theme(
+      data: Theme.of(context).copyWith(
+        hoverColor: AppColors.backgroundLight,
+        highlightColor: AppColors.primaryLight,
+        splashColor: AppColors.primaryBlue.withValues(alpha: 0.08),
+      ),
+      child: Builder(
+        builder: (ctx) => Semantics(
+          button: true,
+          label: 'Seleccionar estudiante',
+          child: Tooltip(
+            message: 'Seleccionar estudiante',
+            child: _dashboardHover(
+              DecoratedBox(
+                decoration: cardDecoration,
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: () => _openStudentMenu(ctx),
+                    child: decoratedInner,
                   ),
                 ),
-              ],
+              ),
             ),
           ),
-      ],
-      child: content,
+        ),
+      ),
     );
+  }
+
+  /// Abre el menú de estudiantes justo debajo de la tarjeta, con su mismo
+  /// ancho. Se calcula a mano (sin LayoutBuilder) para que la tarjeta pueda
+  /// igualar su altura con la de al lado.
+  Future<void> _openStudentMenu(BuildContext ctx) async {
+    final box = ctx.findRenderObject();
+    final overlayBox = Overlay.of(ctx).context.findRenderObject();
+    if (box is! RenderBox || overlayBox is! RenderBox || !box.hasSize) return;
+
+    final origin = box.localToGlobal(Offset.zero, ancestor: overlayBox);
+    final rect = Rect.fromLTWH(
+      origin.dx,
+      origin.dy + box.size.height + 8,
+      box.size.width,
+      0,
+    );
+
+    final choice = await showMenu<int>(
+      context: ctx,
+      position: RelativeRect.fromRect(rect, Offset.zero & overlayBox.size),
+      color: Colors.white,
+      surfaceTintColor: Colors.transparent,
+      elevation: 6,
+      shadowColor: const Color(0xFF1B4785).withValues(alpha: 0.22),
+      clipBehavior: Clip.antiAlias,
+      menuPadding: EdgeInsets.zero,
+      constraints: BoxConstraints.tightFor(width: box.size.width),
+      // Mismo radio y borde neutro que el resto de las tarjetas.
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppColors.cardBorder),
+      ),
+      items: [
+        // Etiqueta discreta, igual que el "ESTUDIANTE" de la tarjeta.
+        PopupMenuItem<int>(
+          enabled: false,
+          padding: EdgeInsets.zero,
+          height: 40,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: Color(0xFFE8EEF8))),
+            ),
+            child: const Text(
+              'SELECCIONAR ESTUDIANTE',
+              style: TextStyle(
+                fontSize: 11,
+                color: AppColors.textMuted,
+                letterSpacing: 0.5,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+        _studentMenuItem(
+          value: -1,
+          leading: _selectorAvatar(family: true, initials: '', size: 42),
+          title: 'Toda mi familia',
+          subtitle: '${_students.length} estudiantes vinculados',
+        ),
+        for (var i = 0; i < _students.length; i++)
+          _studentMenuItem(
+            value: i,
+            isLast: i == _students.length - 1,
+            leading: _selectorAvatar(
+              family: false,
+              initials: _getInitials(_studentFullName(_students[i])),
+              size: 42,
+            ),
+            title: _studentFullName(_students[i]),
+            subtitle: _studentDetails(_students[i]),
+          ),
+      ],
+    );
+    if (choice != null && mounted) _chooseStudent(choice);
   }
 
   Widget _buildSolvencyStatusCard() {
@@ -1021,142 +1399,126 @@ class _RepresentativeDashboardScreenState
         : solvent
         ? 'Sin deudas pendientes'
         : 'Saldo familiar: ${_fmtUsd(_deudaFamiliarUsd)}';
-    final backgroundStart = unknown
-        ? const Color(0xFFF7F9FC)
-        : solvent
-        ? const Color(0xFFF3FCF7)
-        : const Color(0xFFFFF9F0);
-    final backgroundEnd = unknown
-        ? const Color(0xFFEDF2F9)
-        : solvent
-        ? const Color(0xFFE0F5E9)
-        : const Color(0xFFFFEED8);
     final outline = unknown
         ? const Color(0xFFD5DFEF)
         : solvent
         ? const Color(0xFFB8E4CC)
         : const Color(0xFFF1D5A7);
-    return Semantics(
-      liveRegion: true,
-      label: 'Solvencia familiar: $status. $detail',
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 114),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [backgroundStart, backgroundEnd],
-          ),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: outline),
-          boxShadow: [
-            BoxShadow(
-              color: state.withValues(alpha: 0.045),
-              blurRadius: 22,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(15),
-          child: Stack(
-            children: [
-              Positioned(
-                right: -38,
-                top: -48,
-                child: Container(
-                  width: 146,
-                  height: 146,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: state.withValues(alpha: 0.045),
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 26,
-                  vertical: 22,
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 54,
-                      height: 54,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [state.withValues(alpha: 0.88), state],
-                        ),
-                      ),
-                      child: Icon(
-                        unknown
-                            ? Icons.help_outline_rounded
-                            : solvent
-                            ? Icons.check_rounded
-                            : Icons.schedule_rounded,
-                        size: 30,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(width: 17),
-                    Expanded(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Solvencia familiar',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: state,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 5),
-                          Text(
-                            status,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: state,
-                              fontSize: 20,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            detail,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: AppColors.textMuted,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (unknown)
-                      IconButton(
-                        tooltip: 'Volver a consultar solvencia',
-                        onPressed: _updateFinancialSummary,
-                        icon: const Icon(
-                          Icons.refresh_rounded,
-                          color: AppColors.primaryBlue,
-                        ),
-                      ),
-                  ],
-                ),
+    return _dashboardHover(
+      Semantics(
+        liveRegion: true,
+        label: 'Solvencia familiar: $status. $detail',
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 114),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: outline),
+            boxShadow: [
+              BoxShadow(
+                color: state.withValues(alpha: 0.025),
+                blurRadius: 12,
+                offset: const Offset(0, 3),
               ),
             ],
           ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(15),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: CustomPaint(
+                      painter: _FeatureCornerCurvesPainter(state),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 26,
+                    vertical: 22,
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 54,
+                        height: 54,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [state.withValues(alpha: 0.88), state],
+                          ),
+                        ),
+                        child: Icon(
+                          unknown
+                              ? Icons.help_outline_rounded
+                              : solvent
+                              ? Icons.check_rounded
+                              : Icons.schedule_rounded,
+                          size: 30,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(width: 17),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Solvencia familiar',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: state,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 5),
+                            Text(
+                              status,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: state,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              detail,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppColors.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (unknown)
+                        IconButton(
+                          tooltip: 'Volver a consultar solvencia',
+                          onPressed: _updateFinancialSummary,
+                          icon: const Icon(
+                            Icons.refresh_rounded,
+                            color: AppColors.primaryBlue,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
+      hoverColor: state,
     );
   }
 
@@ -1167,8 +1529,8 @@ class _RepresentativeDashboardScreenState
       narrowCols: 1,
       wideBreak: 970,
       mediumBreak: 510,
-      gap: 18,
-      hoverLift: 2,
+      gap: _colGap,
+      hoverLift: 0,
       items: [
         _quickAction(
           Icons.credit_card_rounded,
@@ -1214,61 +1576,66 @@ class _RepresentativeDashboardScreenState
     Color tint,
     VoidCallback action,
   ) {
-    return Material(
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: const BorderSide(color: AppColors.cardBorder),
-      ),
-      child: InkWell(
-        onTap: action,
-        borderRadius: BorderRadius.circular(16),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 160),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                CircleAvatar(
-                  radius: 28,
-                  backgroundColor: tint,
-                  child: Icon(icon, color: accent, size: 27),
-                ),
-                const SizedBox(height: 18),
-                Row(
+    return _dashboardHover(
+      Material(
+        color: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppColors.cardBorder),
+        ),
+        child: InkWell(
+          onTap: action,
+          borderRadius: BorderRadius.circular(16),
+          child: _cornerWaves(
+            ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 160),
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Text(
-                        title,
-                        maxLines: 2,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.darkNavy,
-                        ),
-                      ),
+                    CircleAvatar(
+                      radius: 28,
+                      backgroundColor: tint,
+                      child: Icon(icon, color: accent, size: 27),
                     ),
-                    const Icon(
-                      Icons.chevron_right_rounded,
-                      color: AppColors.textMuted,
-                      size: 20,
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            title,
+                            maxLines: 2,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.darkNavy,
+                            ),
+                          ),
+                        ),
+                        const Icon(
+                          Icons.chevron_right_rounded,
+                          color: AppColors.textMuted,
+                          size: 20,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                        height: 1.35,
+                      ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 5),
-                Text(
-                  subtitle,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textMuted,
-                    height: 1.35,
-                  ),
-                ),
-              ],
+              ),
             ),
+            color: accent,
           ),
         ),
       ),
@@ -1281,18 +1648,16 @@ class _RepresentativeDashboardScreenState
         if (c.maxWidth < 820)
           return Column(
             children: [
-              _buildNextPaymentCard(),
-              const SizedBox(height: 18),
+              _buildNextPaymentCard(availableWidth: c.maxWidth),
+              const SizedBox(height: _stackGap),
               _buildProtectionCard(),
             ],
           );
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(flex: 7, child: _buildNextPaymentCard()),
-            const SizedBox(width: 20),
-            Expanded(flex: 3, child: _buildProtectionCard()),
-          ],
+        return _twoColumnRow(
+          main: _buildNextPaymentCard(
+            availableWidth: _mainColumnWidth(c.maxWidth),
+          ),
+          side: _buildProtectionCard(),
         );
       },
     );
@@ -1311,150 +1676,196 @@ class _RepresentativeDashboardScreenState
           return Column(
             children: [
               account,
-              const SizedBox(height: 18),
+              const SizedBox(height: _stackGap),
               _buildInstitutionCard(),
             ],
           );
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(flex: 7, child: account),
-            const SizedBox(width: 20),
-            Expanded(flex: 3, child: _buildInstitutionCard()),
-          ],
-        );
+        return _twoColumnRow(main: account, side: _buildInstitutionCard());
       },
     );
   }
 
   Widget _buildProtectionCard() {
-    return Container(
-      padding: const EdgeInsets.all(28),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Colors.white, Color(0xFFEBF4FF)],
+    return _dashboardHover(
+      Container(
+        padding: const EdgeInsets.all(28),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.cardBorder),
         ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFD5E5FC)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Center(
-            child: Stack(
-              alignment: Alignment.bottomRight,
-              children: [
-                const Icon(
-                  Icons.article_outlined,
-                  size: 75,
-                  color: AppColors.primaryBlue,
+        child: _cornerWaves(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Center(
+                child: Stack(
+                  alignment: Alignment.bottomRight,
+                  children: [
+                    const Icon(
+                      Icons.article_outlined,
+                      size: 75,
+                      color: AppColors.primaryBlue,
+                    ),
+                    CircleAvatar(
+                      radius: 16,
+                      backgroundColor: AppColors.primaryBlue,
+                      child: const Icon(
+                        Icons.check_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                  ],
                 ),
-                CircleAvatar(
-                  radius: 16,
-                  backgroundColor: AppColors.primaryBlue,
-                  child: const Icon(
-                    Icons.check_rounded,
-                    color: Colors.white,
-                    size: 20,
-                  ),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'Tu información está protegida',
+                style: TextStyle(
+                  color: AppColors.darkNavy,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'Tu información escolar y financiera se consulta desde tu cuenta.',
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1.55,
+                  color: AppColors.textMuted,
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextButton.icon(
+                onPressed: _showSecurityDialog,
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.primaryDark,
+                  minimumSize: const Size(44, 44),
+                  padding: EdgeInsets.zero,
+                ),
+                icon: const Icon(Icons.shield_outlined, size: 18),
+                label: const Text(
+                  'Más información',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 20),
-          const Text(
-            'Tu información está protegida',
-            style: TextStyle(
-              color: AppColors.darkNavy,
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            'Tu información escolar y financiera se consulta desde tu cuenta.',
-            style: TextStyle(
-              fontSize: 13,
-              height: 1.55,
-              color: AppColors.textMuted,
-            ),
-          ),
-          const SizedBox(height: 14),
-          TextButton.icon(
-            onPressed: _showSecurityDialog,
-            style: TextButton.styleFrom(
-              foregroundColor: AppColors.primaryDark,
-              minimumSize: const Size(44, 44),
-              padding: EdgeInsets.zero,
-            ),
-            icon: const Icon(Icons.shield_outlined, size: 18),
-            label: const Text(
-              'Más información',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
 
+  // Espacio reservado para la futura ficha institucional del colegio.
+  // No mostramos datos de contacto ni horarios hasta que estén disponibles.
   Widget _buildInstitutionCard() {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFFF6F5FF), Color(0xFFEFF2FF)],
+    return _dashboardHover(
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(28),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.cardBorder),
         ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE0E0FF)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const CircleAvatar(
-            radius: 23,
-            backgroundColor: Colors.white,
-            child: Icon(
-              Icons.school_rounded,
-              color: AppColors.violet,
-              size: 25,
-            ),
-          ),
-          const SizedBox(width: 13),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _schoolName.isEmpty
-                      ? 'Tu colegio, siempre contigo'
-                      : _schoolName,
-                  maxLines: 3,
-                  style: const TextStyle(
-                    color: AppColors.darkNavy,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Stack(
+                clipBehavior: Clip.none,
+                alignment: Alignment.bottomRight,
+                children: [
+                  const Icon(
+                    Icons.school_outlined,
+                    size: 75,
+                    color: AppColors.violet,
                   ),
-                ),
-                const SizedBox(height: 9),
-                const Text(
-                  'Consulta tus mensualidades, documentos y la información de tu familia en un solo lugar.',
-                  style: TextStyle(
-                    fontSize: 12,
-                    height: 1.6,
-                    color: AppColors.textMuted,
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: AppColors.violet,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                    child: const Icon(
+                      Icons.info_outline_rounded,
+                      color: Colors.white,
+                      size: 18,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+            const SizedBox(height: 20),
+            const Text(
+              'Información del colegio',
+              style: TextStyle(
+                color: AppColors.darkNavy,
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            if (_schoolName.trim().isNotEmpty) ...[
+              const SizedBox(height: 5),
+              Text(
+                _schoolName,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppColors.violet,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+            const SizedBox(height: 10),
+            const Text(
+              'Pronto podrás consultar horarios de atención, '
+              'datos de contacto y comunicados de tu colegio desde aquí.',
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.55,
+                color: AppColors.textMuted,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF2EEFF),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFE7DEFF)),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.schedule_rounded,
+                    size: 16,
+                    color: AppColors.violet,
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    'Próximamente',
+                    style: TextStyle(
+                      color: AppColors.violet,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
+      hoverColor: AppColors.violet,
     );
   }
 
@@ -1494,98 +1905,8 @@ class _RepresentativeDashboardScreenState
     );
   }
 
-  Widget _buildRepresentativeHeaderCard() {
-    return LayoutBuilder(
-      builder: (context, c) {
-        final compact = c.maxWidth < 560;
-
-        final info = Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'REPRESENTANTE',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textMuted,
-                letterSpacing: 0.5,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              _fullName,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: compact ? 16 : 18,
-                fontWeight: FontWeight.bold,
-                color: AppColors.darkNavy,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              '$_cedula • $_familyName${_email.isNotEmpty ? ' • $_email' : ''}',
-              maxLines: compact ? 3 : 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
-            ),
-          ],
-        );
-
-        // Botón tonal (no outline): se distingue de una etiqueta estática.
-        final editButton = ElevatedButton.icon(
-          onPressed: () => _showEditProfileModal(context),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.primaryLight,
-            foregroundColor: AppColors.primaryDark,
-            elevation: 0,
-            minimumSize: const Size(AppSizes.minTarget, AppSizes.control),
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            side: const BorderSide(color: AppColors.primaryBlue),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppSizes.radiusControl),
-            ),
-          ),
-          icon: const Icon(Icons.edit_outlined, size: 18),
-          label: const Text(
-            'Editar perfil',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-          ),
-        );
-
-        return Container(
-          padding: EdgeInsets.all(compact ? 16 : 20),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppColors.cardBorder),
-          ),
-          child: compact
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [Expanded(child: info)],
-                    ),
-                    const SizedBox(height: 14),
-                    editButton,
-                  ],
-                )
-              : Row(
-                  children: [
-                    Expanded(child: info),
-                    const SizedBox(width: 12),
-                    editButton,
-                  ],
-                ),
-        );
-      },
-    );
-  }
-
   // --- TARJETA DE SALDOS DINÁMICOS EN MULTIMONEDA (HU7) ---
-  Widget _buildNextPaymentCard() {
+  Widget _buildNextPaymentCard({double availableWidth = 1000}) {
     final hasAccount = _estadoCuenta != null;
     final balanceDue = hasAccount && _montoUsd > kToleranciaSaldoUsd;
     final String? selectedId =
@@ -1599,16 +1920,107 @@ class _RepresentativeDashboardScreenState
     final dueText = nextDue == null
         ? (balanceDue
               ? 'Consulta el detalle de tus cuotas'
-              : 'No tienes cuotas pendientes')
+              : hasAccount
+              ? 'No tienes cuotas pendientes'
+              : 'Vencimiento no disponible')
         : 'Vencimiento: ${_fmtFecha(nextDue)}';
     final canReport =
         hasAccount &&
         (_deudaFamiliarUsd - (_estadoCuenta?.enRevisionUsd ?? 0)) >
             kToleranciaSaldoUsd;
 
-    return LayoutBuilder(
-      builder: (context, c) {
-        final compact = c.maxWidth < 600;
+    // Estado de la selección visible (familia completa o estudiante individual).
+    // Una cuota vencida tiene prioridad sobre un pago aún en revisión.
+    final today = DateUtils.dateOnly(DateTime.now());
+    final hasOverdueBalance =
+        balanceDue &&
+        (cuotas?.any((cuota) {
+              final due = cuota.fechaVencimiento;
+              return due != null && DateUtils.dateOnly(due).isBefore(today);
+            }) ??
+            false);
+    final reviewCoversBalance =
+        balanceDue &&
+        selectedId == null &&
+        (_estadoCuenta?.enRevisionUsd ?? 0) > kToleranciaSaldoUsd &&
+        (_estadoCuenta?.enRevisionUsd ?? 0) + kToleranciaSaldoUsd >= _montoUsd;
+
+    final String paymentStatus;
+    final Color paymentStatusColor;
+    final IconData paymentStatusIcon;
+    if (!hasAccount || _estadoCuentaError) {
+      paymentStatus = 'SIN INFORMACIÓN';
+      paymentStatusColor = AppColors.textMuted;
+      paymentStatusIcon = Icons.help_outline_rounded;
+    } else if (!balanceDue) {
+      paymentStatus = 'SOLVENTE';
+      paymentStatusColor = AppColors.successGreen;
+      paymentStatusIcon = Icons.check_circle_outline_rounded;
+    } else if (hasOverdueBalance) {
+      paymentStatus = 'VENCIDO';
+      paymentStatusColor = AppColors.errorRed;
+      paymentStatusIcon = Icons.error_outline_rounded;
+    } else if (reviewCoversBalance) {
+      paymentStatus = 'EN REVISIÓN';
+      paymentStatusColor = AppColors.primaryBlue;
+      paymentStatusIcon = Icons.hourglass_top_rounded;
+    } else {
+      paymentStatus = 'PENDIENTE';
+      paymentStatusColor = AppColors.warningAmber;
+      paymentStatusIcon = Icons.schedule_rounded;
+    }
+
+    // Solo se presenta un estado cuando la consulta financiera es válida.
+    final showPaymentStatus = hasAccount && !_estadoCuentaError;
+
+    // Fondos pastel 100 % opacos: cada estado conserva su propia identidad.
+    final Color paymentStatusBackground = switch (paymentStatus) {
+      'SOLVENTE' => const Color(0xFFDDF5E8),
+      'VENCIDO' => const Color(0xFFFDE5E5),
+      'EN REVISIÓN' => const Color(0xFFE4EEFF),
+      'PENDIENTE' => const Color(0xFFFFE8CF),
+      _ => Colors.white,
+    };
+
+    final statusBadge = Semantics(
+      label: 'Estado del pago: $paymentStatus',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+        decoration: BoxDecoration(
+          color: paymentStatusBackground,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: switch (paymentStatus) {
+              'SOLVENTE' => const Color(0xFFA5E2BF),
+              'VENCIDO' => const Color(0xFFF4B4B4),
+              'EN REVISIÓN' => const Color(0xFFB5CEFF),
+              'PENDIENTE' => const Color(0xFFF3CB9A),
+              _ => AppColors.cardBorder,
+            },
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(paymentStatusIcon, size: 15, color: paymentStatusColor),
+            const SizedBox(width: 6),
+            Text(
+              paymentStatus,
+              style: TextStyle(
+                color: paymentStatusColor,
+                fontWeight: FontWeight.w800,
+                fontSize: 11.5,
+                letterSpacing: 0.2,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    return Builder(
+      builder: (context) {
+        final compact = availableWidth < 600;
         final actions = Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1628,7 +2040,7 @@ class _RepresentativeDashboardScreenState
                 minimumSize: const Size.fromHeight(46),
                 elevation: 0,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(11),
+                  borderRadius: BorderRadius.circular(12),
                 ),
               ),
             ),
@@ -1645,176 +2057,177 @@ class _RepresentativeDashboardScreenState
                 side: const BorderSide(color: Color(0xFF88B0FF)),
                 minimumSize: const Size.fromHeight(46),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(11),
+                  borderRadius: BorderRadius.circular(12),
                 ),
               ),
             ),
           ],
         );
-        final summary = Column(
+
+        final amountSummary = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              children: [
-                const CircleAvatar(
-                  radius: 26,
-                  backgroundColor: AppColors.primaryBlue,
-                  child: Icon(
-                    Icons.calendar_month_outlined,
-                    size: 26,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Próximo pago',
-                        style: TextStyle(
-                          fontSize: 18,
-                          color: AppColors.darkNavy,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        dueText,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textMuted,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+            const Text(
+              'Saldo pendiente',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textMuted,
+              ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 7),
             Text(
               hasAccount ? '${_fmtUsd(_montoUsd)} USD' : 'Saldo no disponible',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: compact ? 30 : 34,
-                letterSpacing: -0.6,
-                color: AppColors.darkNavy,
+                fontSize: compact ? 29 : 34,
+                letterSpacing: -0.8,
                 fontWeight: FontWeight.w900,
+                color: AppColors.darkNavy,
               ),
             ),
-            const SizedBox(height: 5),
+            const SizedBox(height: 7),
             Text(
               hasAccount && _tasaBcv > 0
-                  ? 'Equivalente en bolívares: Bs. ${_fmtVes(_equivalenteVes)}'
+                  ? 'Equivalente: Bs. ${_fmtVes(_equivalenteVes)}'
                   : 'Equivalente en bolívares no disponible',
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
-            ),
-            const SizedBox(height: 14),
-            Wrap(
-              spacing: 14,
-              runSpacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 11,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF0F6FF),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.calendar_today_outlined,
-                        size: 17,
-                        color: AppColors.primaryBlue,
-                      ),
-                      const SizedBox(width: 8),
-                      Flexible(
-                        child: Text(
-                          'Tasa BCV: $_tasaFechaLabel',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: AppColors.textMuted,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Text(
-                  _tasaBcv > 0
-                      ? '1 USD = Bs. $_tasaBcvStr'
-                      : 'Tasa por consultar',
-                  style: const TextStyle(
-                    color: AppColors.textMuted,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
+              style: const TextStyle(
+                fontSize: 12.5,
+                color: AppColors.textMuted,
+              ),
             ),
           ],
         );
-        return Container(
-          padding: EdgeInsets.all(compact ? 20 : 28),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Colors.white, Color(0xFFF2F7FF)],
-            ),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFC9DEFF)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Align(
-                alignment: Alignment.centerRight,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 13,
-                    vertical: 7,
-                  ),
-                  decoration: BoxDecoration(
-                    color: balanceDue
-                        ? const Color(0xFFFFF2E4)
-                        : AppColors.mint,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    !hasAccount
-                        ? 'Por verificar'
-                        : balanceDue
-                        ? 'Por pagar'
-                        : 'Al día',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: balanceDue
-                          ? AppColors.warningAmber
-                          : AppColors.successGreen,
-                    ),
-                  ),
+
+        return _dashboardHover(
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.cardBorder),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF214576).withValues(alpha: 0.025),
+                  blurRadius: 14,
+                  offset: const Offset(0, 3),
                 ),
-              ),
-              const SizedBox(height: 4),
-              if (compact) ...[
-                summary,
-                const SizedBox(height: 18),
-                actions,
-              ] else
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+              ],
+            ),
+            child: _featureCornerCurves(
+              Padding(
+                padding: EdgeInsets.all(compact ? 20 : 28),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(flex: 5, child: summary),
-                    const SizedBox(width: 18),
-                    Expanded(flex: 3, child: actions),
+                    if (compact && showPaymentStatus) ...[
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: statusBadge,
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    Row(
+                      children: [
+                        Container(
+                          width: 54,
+                          height: 54,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: AppColors.primaryBlue,
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.primaryBlue.withValues(
+                                  alpha: 0.12,
+                                ),
+                                blurRadius: 10,
+                                offset: const Offset(0, 3),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.calendar_month_outlined,
+                            color: Colors.white,
+                            size: 25,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Próximo pago',
+                                style: TextStyle(
+                                  fontSize: 19,
+                                  fontWeight: FontWeight.w800,
+                                  color: AppColors.darkNavy,
+                                ),
+                              ),
+                              const SizedBox(height: 5),
+                              Text(
+                                dueText,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12.5,
+                                  color: AppColors.textMuted,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (!compact && showPaymentStatus) ...[
+                          const SizedBox(width: 12),
+                          statusBadge,
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 22),
+                    if (compact) ...[
+                      amountSummary,
+                      const SizedBox(height: 20),
+                      actions,
+                    ] else
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Expanded(flex: 5, child: amountSummary),
+                          const SizedBox(width: 20),
+                          Expanded(flex: 3, child: actions),
+                        ],
+                      ),
+                    const SizedBox(height: 18),
+                    const Divider(height: 1, color: AppColors.cardBorder),
+                    const SizedBox(height: 12),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.currency_exchange_rounded,
+                          size: 16,
+                          color: AppColors.primaryBlue,
+                        ),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Text(
+                            _tasaBcv > 0
+                                ? 'Tasa BCV: 1 USD = Bs. $_tasaBcvStr · $_tasaFechaLabel'
+                                : 'Tasa BCV no disponible',
+                            style: const TextStyle(
+                              color: AppColors.textMuted,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
-            ],
+              ),
+              color: AppColors.primaryBlue,
+            ),
           ),
         );
       },
@@ -1923,6 +2336,8 @@ class _RepresentativeDashboardScreenState
   }
 
   // --- ESTADO DE CUENTA DESGLOSADO (cuota por cuota, de la más antigua) ---
+  // Se mantiene el orden y la fuente de datos originales. La nueva distribución
+  // prioriza el saldo, el vencimiento y el progreso de cada mensualidad.
   Widget _buildEstadoCuentaDetalle() {
     final estado = _estadoCuenta;
     if (estado == null) return const SizedBox.shrink();
@@ -1938,180 +2353,358 @@ class _RepresentativeDashboardScreenState
         st['id'].toString():
             (st['nombres']?.toString().split(' ').first ?? 'Estudiante'),
     };
+    final total = pendientes.length;
 
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.cardBorder),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.receipt_long_outlined,
-                color: AppColors.primaryBlue,
-                size: 20,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  consolidado
-                      ? 'Estado de cuenta desglosado (familia)'
-                      : 'Estado de cuenta desglosado',
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.darkNavy,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'De la cuota más antigua a la más reciente. Cada pago aprobado se aplica en ese orden.',
-            style: TextStyle(fontSize: 12, color: AppColors.textMuted),
-          ),
-          const SizedBox(height: 14),
-          if (estado.creditoUsd > kToleranciaSaldoUsd)
-            _buildInfoStrip(
-              Icons.savings_outlined,
-              AppColors.tint(AppColors.successGreen),
-              AppColors.tint(AppColors.successGreen, 0.4),
-              AppColors.successGreen,
-              'Saldo a favor: ${_fmtUsd(estado.creditoUsd)}. Se aplicará automáticamente a tu próxima cuota.',
-            ),
-          if (estado.enRevisionUsd > kToleranciaSaldoUsd)
-            _buildInfoStrip(
-              Icons.hourglass_top,
-              AppColors.primaryLight,
-              AppColors.tint(AppColors.primaryBlue, 0.4),
-              AppColors.primaryBlue,
-              'Tienes ${_fmtUsd(estado.enRevisionUsd)} en pagos pendientes de revisión. Se aplicarán a las cuotas más antiguas cuando el colegio los apruebe.',
-            ),
-          if (pendientes.isEmpty)
-            const Text(
-              'No hay cuotas pendientes.',
-              style: TextStyle(fontSize: 12, color: AppColors.textMuted),
-            )
-          else
-            ...pendientes.map(
-              (c) => _buildCuotaRow(
-                c,
-                alumno: consolidado ? nombres[c.estudianteId] : null,
-              ),
-            ),
-          if (estado.cuotasPagadas > 0) ...[
-            const SizedBox(height: 4),
-            Text(
-              '${estado.cuotasPagadas} ${estado.cuotasPagadas == 1 ? 'cuota pagada' : 'cuotas pagadas'} en total.',
-              style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCuotaRow(CuotaEstadoCuenta c, {String? alumno}) {
-    final (Color accent, IconData chipIcon) = switch (c.estado) {
-      'VENCIDO' => (AppColors.errorRed, Icons.error_outline),
-      'PARCIAL' => (AppColors.warningAmber, Icons.timelapse),
-      _ => (AppColors.primaryBlue, Icons.schedule),
-    };
-    final String titulo = c.periodo.isNotEmpty ? c.periodo : c.concepto;
-    final String sub = [
-      if (alumno != null) alumno,
-      if (c.concepto.isNotEmpty && c.periodo.isNotEmpty) c.concepto,
-      'Vence ${_fmtFecha(c.fechaVencimiento)}',
-    ].join(' • ');
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.cardBorder),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return _dashboardHover(
+      Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.cardBorder),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Text(
-                  titulo,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.darkNavy,
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryLight,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.receipt_long_outlined,
+                    color: AppColors.primaryBlue,
+                    size: 21,
                   ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  sub,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textMuted,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Estado de cuenta',
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.darkNavy,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        consolidado
+                            ? 'Desglose de toda tu familia'
+                            : 'Desglose del estudiante seleccionado',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 11,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryLight,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '$total ${total == 1 ? 'pendiente' : 'pendientes'}',
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.primaryBlue,
+                    ),
                   ),
                 ),
               ],
             ),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                _fmtUsd(c.saldoUsd),
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.darkNavy,
-                ),
+            const SizedBox(height: 12),
+            const Text(
+              'Los pagos aprobados se aplican a la deuda o cuota más reciente',
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.45,
+                color: AppColors.textMuted,
               ),
-              if (c.aplicadoUsd > kToleranciaSaldoUsd)
-                Text(
-                  'Abonado ${_fmtUsd(c.aplicadoUsd)} de ${_fmtUsd(c.montoUsd)}',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: AppColors.textMuted,
-                  ),
-                ),
-              const SizedBox(height: 4),
+            ),
+            const SizedBox(height: 16),
+            if (estado.creditoUsd > kToleranciaSaldoUsd)
+              _buildInfoStrip(
+                Icons.savings_outlined,
+                AppColors.tint(AppColors.successGreen),
+                AppColors.tint(AppColors.successGreen, 0.4),
+                AppColors.successGreen,
+                'Saldo a favor: ${_fmtUsd(estado.creditoUsd)}. Se aplicará automáticamente a tu próxima cuota.',
+              ),
+            if (estado.enRevisionUsd > kToleranciaSaldoUsd)
+              _buildInfoStrip(
+                Icons.hourglass_top,
+                AppColors.primaryLight,
+                AppColors.tint(AppColors.primaryBlue, 0.4),
+                AppColors.primaryBlue,
+                'Tienes ${_fmtUsd(estado.enRevisionUsd)} en pagos pendientes de revisión. Se actualizará su estado de cuenta cuando el colegio los apruebe.',
+              ),
+            if (pendientes.isEmpty)
               Container(
+                width: double.infinity,
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
+                  vertical: 20,
+                  horizontal: 14,
                 ),
                 decoration: BoxDecoration(
-                  color: AppColors.tint(accent),
-                  borderRadius: BorderRadius.circular(20),
+                  color: const Color(0xFFF8FAFD),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.cardBorder),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
+                child: const Column(
                   children: [
-                    Icon(chipIcon, size: 14, color: accent),
-                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.check_circle_outline_rounded,
+                      color: AppColors.successGreen,
+                      size: 28,
+                    ),
+                    SizedBox(height: 8),
                     Text(
-                      c.estado,
-                      style: const TextStyle(
-                        fontSize: 12,
+                      'No hay cuotas pendientes',
+                      style: TextStyle(
+                        fontSize: 13,
                         fontWeight: FontWeight.w700,
                         color: AppColors.darkNavy,
                       ),
                     ),
                   ],
                 ),
+              )
+            else
+              ...pendientes.map(
+                (c) => _buildCuotaRow(
+                  c,
+                  alumno: consolidado ? nombres[c.estudianteId] : null,
+                ),
+              ),
+            if (estado.cuotasPagadas > 0) ...[
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  const Icon(
+                    Icons.check_circle_outline_rounded,
+                    size: 16,
+                    color: AppColors.successGreen,
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      '${estado.cuotasPagadas} ${estado.cuotasPagadas == 1 ? 'cuota pagada' : 'cuotas pagadas'} en total.',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCuotaRow(CuotaEstadoCuenta c, {String? alumno}) {
+    final (Color accent, IconData chipIcon) = switch (c.estado) {
+      'VENCIDO' => (AppColors.errorRed, Icons.error_outline_rounded),
+      'PARCIAL' => (AppColors.warningAmber, Icons.pie_chart_outline_rounded),
+      _ => (AppColors.primaryBlue, Icons.schedule_rounded),
+    };
+    final String titulo = c.periodo.isNotEmpty ? c.periodo : c.concepto;
+    final String detalle = [
+      if (alumno != null && alumno.trim().isNotEmpty) alumno,
+      if (c.concepto.isNotEmpty && c.periodo.isNotEmpty) c.concepto,
+    ].join(' • ');
+    final double abonado = c.aplicadoUsd.clamp(0.0, double.infinity).toDouble();
+    final double total = c.montoUsd;
+    final double porcentaje = total > 0
+        ? (abonado / total).clamp(0.0, 1.0).toDouble()
+        : 0.0;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: HoverBuilder(
+        builder: (context, hovered) => AnimatedContainer(
+          duration: MediaQuery.of(context).disableAnimations
+              ? Duration.zero
+              : const Duration(milliseconds: 150),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.fromLTRB(15, 14, 15, 13),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(
+              color: hovered
+                  ? accent.withValues(alpha: 0.48)
+                  : AppColors.cardBorder,
+            ),
+            boxShadow: hovered
+                ? [
+                    BoxShadow(
+                      color: accent.withValues(alpha: 0.065),
+                      blurRadius: 12,
+                      offset: const Offset(0, 3),
+                    ),
+                  ]
+                : const [],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 4,
+                    height: 41,
+                    decoration: BoxDecoration(
+                      color: accent,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          titulo,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.darkNavy,
+                          ),
+                        ),
+                        if (detalle.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            detalle,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textMuted,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 7),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.event_outlined,
+                              size: 14,
+                              color: AppColors.textMuted,
+                            ),
+                            const SizedBox(width: 5),
+                            Flexible(
+                              child: Text(
+                                'Vence ${_fmtFecha(c.fechaVencimiento)}',
+                                style: const TextStyle(
+                                  fontSize: 11.5,
+                                  color: AppColors.textMuted,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      const Text(
+                        'Saldo pendiente',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        _fmtUsd(c.saldoUsd),
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.darkNavy,
+                        ),
+                      ),
+                      const SizedBox(height: 7),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 9,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.tint(accent),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(chipIcon, size: 13, color: accent),
+                            const SizedBox(width: 5),
+                            Text(
+                              c.estado,
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800,
+                                color: accent,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Container(height: 1, color: AppColors.cardBorder),
+              const SizedBox(height: 12),
+              Text(
+                'Abonado ${_fmtUsd(abonado)} de ${_fmtUsd(total)}',
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  color: AppColors.textMuted,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: LinearProgressIndicator(
+                  value: porcentaje,
+                  minHeight: 6,
+                  backgroundColor: const Color(0xFFE9EFF8),
+                  valueColor: const AlwaysStoppedAnimation<Color>(
+                    AppColors.successGreen,
+                  ),
+                ),
               ),
             ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -2162,245 +2755,307 @@ class _RepresentativeDashboardScreenState
     );
   }
 
+  // Documentación académica: tarjetas informativas mientras los trámites no
+  // estén publicados. Se evita mostrar botones de descarga sin acción real.
   Widget _buildDigitalDocumentsSection() {
     final activeStudentFirstName =
         _students.isNotEmpty &&
             _selectedStudentIndex >= 0 &&
             _selectedStudentIndex < _students.length
-        ? (_students[_selectedStudentIndex]['nombres']?.toString().split(
-                ' ',
-              )[0] ??
-              'estudiante')
-        : 'la familia';
+        ? (_students[_selectedStudentIndex]['nombres']
+                  ?.toString()
+                  .trim()
+                  .split(RegExp(r'\s+'))
+                  .firstOrNull ??
+              'tu estudiante')
+        : 'tu familia';
+    final canCheckSolvency = _estadoCuenta != null;
+    final blocked = canCheckSolvency && !_isSolventeFamiliar;
+    final accessStatus = !canCheckSolvency
+        ? 'Solvencia por verificar'
+        : blocked
+        ? 'Requiere solvencia'
+        : 'Por publicar';
+    final accessIcon = !canCheckSolvency
+        ? Icons.help_outline_rounded
+        : blocked
+        ? Icons.lock_outline_rounded
+        : Icons.schedule_rounded;
+    final accessBg = !canCheckSolvency
+        ? const Color(0xFFF1F5F9)
+        : blocked
+        ? const Color(0xFFFFF3E2)
+        : const Color(0xFFEAF2FF);
+    final accessFg = !canCheckSolvency
+        ? const Color(0xFF475569)
+        : blocked
+        ? const Color(0xFF995100)
+        : AppColors.primaryDark;
 
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.cardBorder),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEFF6FF),
-                  borderRadius: BorderRadius.circular(10),
+    return _dashboardHover(
+      Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.cardBorder),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEAF2FF),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.folder_copy_outlined,
+                    size: 22,
+                    color: AppColors.primaryBlue,
+                  ),
                 ),
-                child: const Icon(
-                  Icons.description_outlined,
-                  color: AppColors.primaryBlue,
-                  size: 20,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Documentos académicos',
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.darkNavy,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        'Trámites y documentos de $activeStudentFirstName',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'PORTAL ACADÉMICO',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.primaryBlue,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                    const Text(
-                      'Trámites Digitales y Documentación Académica',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.darkNavy,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Documentos asociados a $activeStudentFirstName',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                  ],
+              ],
+            ),
+            const SizedBox(height: 18),
+            ResponsiveGrid(
+              wideCols: 3,
+              mediumCols: 2,
+              narrowCols: 1,
+              wideBreak: 720,
+              mediumBreak: 440,
+              gap: 12,
+              hoverLift: 0,
+              hoverRadius: 14,
+              items: [
+                SizedBox(
+                  height: 226,
+                  child: _buildDocCard(
+                    icon: Icons.calendar_month_outlined,
+                    iconColor: AppColors.primaryBlue,
+                    iconBackground: const Color(0xFFEAF2FF),
+                    title: 'Plan de evaluación y horarios',
+                    description:
+                        'Actividades, evaluaciones y horarios escolares.',
+                    status: 'En preparación',
+                    statusIcon: Icons.schedule_rounded,
+                    statusBackground: const Color(0xFFEAF2FF),
+                    statusColor: AppColors.primaryDark,
+                  ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          // 3 columnas en escritorio, 2 en tablet, 1 en teléfono
-          ResponsiveGrid(
-            wideCols: 3,
-            mediumCols: 2,
-            narrowCols: 1,
-            wideBreak: 720,
-            mediumBreak: 440,
-            gap: 12,
-            hoverLift: 2,
-            hoverRadius: 12,
-            items: [
-              _buildDocCard(
-                badgeText: 'PDF',
-                badgeColor: const Color(0xFFFEE2E2),
-                badgeTextColor: const Color(0xFFDC2626),
-                title: 'Plan de Evaluación y Horarios',
-                subtitle: 'Disponible cuando el colegio lo publique',
-                statusTagText: 'En preparación',
-                statusTagBg: const Color(0xFFDCFCE7),
-                statusTagTextColor: const Color(0xFF166534),
-                buttonText: 'Próximamente',
-                buttonIcon: Icons.download_outlined,
-                isLocked: true,
-              ),
-              _buildDocCard(
-                badgeText: 'PDF',
-                badgeColor: const Color(0xFFF1F5F9),
-                badgeTextColor: AppColors.textMuted,
-                title: 'Boletín Digital de Calificaciones',
-                subtitle: 'Disponible cuando el colegio lo publique',
-                statusTagText: _isSolventeFamiliar
-                    ? 'Pendiente de publicación'
-                    : 'Bloqueado: saldo pendiente',
-                statusTagBg: const Color(0xFFFEF3C7),
-                statusTagTextColor: const Color(0xFFB45309),
-                buttonText: 'No disponible',
-                buttonIcon: Icons.lock_outline,
-                isLocked: true,
-              ),
-              _buildDocCard(
-                badgeText: 'PDF',
-                badgeColor: const Color(0xFFF1F5F9),
-                badgeTextColor: AppColors.textMuted,
-                title: 'Planilla de Reinscripción y Reserva',
-                subtitle: 'Se habilitará desde el colegio',
-                statusTagText: _isSolventeFamiliar
-                    ? 'En preparación'
-                    : 'Requiere solvencia activa',
-                statusTagBg: _isSolventeFamiliar
-                    ? const Color(0xFFDCFCE7)
-                    : const Color(0xFFFEE2E2),
-                statusTagTextColor: _isSolventeFamiliar
-                    ? const Color(0xFF166534)
-                    : const Color(0xFFDC2626),
-                buttonText: _isSolventeFamiliar ? 'Próximamente' : 'Bloqueado',
-                buttonIcon: _isSolventeFamiliar
-                    ? Icons.download_outlined
-                    : Icons.lock_outline,
-                isLocked: true,
-              ),
-            ],
-          ),
-        ],
+                SizedBox(
+                  height: 226,
+                  child: _buildDocCard(
+                    icon: Icons.school_outlined,
+                    iconColor: const Color(0xFF6D45C8),
+                    iconBackground: const Color(0xFFF0EDFF),
+                    title: 'Boletín de calificaciones',
+                    description:
+                        'Consulta de las calificaciones del estudiante.',
+                    status: accessStatus,
+                    statusIcon: accessIcon,
+                    statusBackground: accessBg,
+                    statusColor: accessFg,
+                  ),
+                ),
+                SizedBox(
+                  height: 226,
+                  child: _buildDocCard(
+                    icon: Icons.assignment_outlined,
+                    iconColor: const Color(0xFF087E64),
+                    iconBackground: const Color(0xFFE7F7F1),
+                    title: 'Reinscripción y reserva',
+                    description:
+                        'Documentación para el próximo período escolar.',
+                    status: accessStatus,
+                    statusIcon: accessIcon,
+                    statusBackground: accessBg,
+                    statusColor: accessFg,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            const Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.info_outline_rounded,
+                  color: AppColors.textMuted,
+                  size: 16,
+                ),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Estos documentos se habilitarán cuando el colegio los publique.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textMuted,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildDocCard({
-    required String badgeText,
-    required Color badgeColor,
-    required Color badgeTextColor,
+    required IconData icon,
+    required Color iconColor,
+    required Color iconBackground,
     required String title,
-    required String subtitle,
-    required String statusTagText,
-    required Color statusTagBg,
-    required Color statusTagTextColor,
-    required String buttonText,
-    required IconData buttonIcon,
-    required bool isLocked,
+    required String description,
+    required String status,
+    required IconData statusIcon,
+    required Color statusBackground,
+    required Color statusColor,
   }) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.cardBorder),
+    return _dashboardHover(
+      Container(
+        constraints: const BoxConstraints(minHeight: 188),
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.cardBorder),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.max,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 43,
+                  height: 43,
+                  decoration: BoxDecoration(
+                    color: iconBackground,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(icon, size: 22, color: iconColor),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF3F6FB),
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                  child: const Text(
+                    'PDF',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      color: AppColors.textMuted,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 13),
+            // Same vertical slots on every card, even when titles wrap.
+            SizedBox(
+              height: 36,
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.darkNavy,
+                    height: 1.25,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            SizedBox(
+              height: 38,
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: Text(
+                  description,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textMuted,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            ),
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: statusBackground,
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(statusIcon, size: 15, color: statusColor),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      status,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: statusColor,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: badgeColor,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              badgeText,
-              style: TextStyle(
-                color: badgeTextColor,
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            title,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 13,
-              color: AppColors.darkNavy,
-            ),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
-          ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: statusTagBg,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              statusTagText,
-              style: TextStyle(
-                color: statusTagTextColor,
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed:
-                  null, // Se conectará a la generación real de documentos.
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.darkNavy,
-                disabledForegroundColor: AppColors.textMuted,
-                side: BorderSide(
-                  color: isLocked ? Colors.transparent : AppColors.cardBorder,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              icon: Icon(buttonIcon, size: 14),
-              label: Text(
-                buttonText,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+      radius: 14,
     );
   }
 
@@ -2410,9 +3065,9 @@ class _RepresentativeDashboardScreenState
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: const Color(0xFFEFF6FF),
+            color: Colors.white,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFBFDBFE)),
+            border: Border.all(color: AppColors.cardBorder),
           ),
           child: const Row(
             children: [
@@ -2470,4 +3125,148 @@ class _RepresentativeDashboardScreenState
       ],
     );
   }
+}
+
+/// Logotipo de familia: un adulto detrás de dos hijos. Se dibuja en
+/// vectores, así que se ve nítido a cualquier tamaño.
+class _FamilyMark extends StatelessWidget {
+  final double size;
+
+  /// Color del fondo sobre el que se dibuja (separa al niño de los adultos).
+  final Color background;
+
+  const _FamilyMark({required this.size, required this.background});
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: 'Un adulto con dos hijos',
+      child: CustomPaint(
+        size: Size.square(size),
+        painter: _FamilyMarkPainter(background: background),
+      ),
+    );
+  }
+}
+
+class _FamilyMarkPainter extends CustomPainter {
+  final Color background;
+  const _FamilyMarkPainter({required this.background});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.width;
+    final adult = Paint()..color = AppColors.primaryBlue;
+    final child = Paint()
+      ..color = Color.lerp(AppColors.primaryBlue, Colors.white, 0.38)!;
+    final gap = Paint()
+      ..color = background
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = s * 0.05;
+
+    void person({
+      required double cx,
+      required double headY,
+      required double headR,
+      required double bodyTop,
+      required double bodyBottom,
+      required double bodyHalfW,
+      required Paint paint,
+      bool outline = false,
+    }) {
+      final body = RRect.fromRectAndCorners(
+        Rect.fromLTRB(
+          (cx - bodyHalfW) * s,
+          bodyTop * s,
+          (cx + bodyHalfW) * s,
+          bodyBottom * s,
+        ),
+        topLeft: Radius.circular(bodyHalfW * s * 0.95),
+        topRight: Radius.circular(bodyHalfW * s * 0.95),
+        bottomLeft: Radius.circular(bodyHalfW * s * 0.35),
+        bottomRight: Radius.circular(bodyHalfW * s * 0.35),
+      );
+      final head = Offset(cx * s, headY * s);
+      if (outline) {
+        canvas.drawRRect(body, gap);
+        canvas.drawCircle(head, headR * s, gap);
+      }
+      canvas.drawRRect(body, paint);
+      canvas.drawCircle(head, headR * s, paint);
+    }
+
+    // Adulto en el centro, detrás de los hijos.
+    person(
+      cx: 0.50,
+      headY: 0.20,
+      headR: 0.125,
+      bodyTop: 0.38,
+      bodyBottom: 0.95,
+      bodyHalfW: 0.18,
+      paint: adult,
+    );
+    // Dos niños más pequeños en primer plano, separados del adulto.
+    person(
+      cx: 0.23,
+      headY: 0.50,
+      headR: 0.091,
+      bodyTop: 0.64,
+      bodyBottom: 0.96,
+      bodyHalfW: 0.115,
+      paint: child,
+      outline: true,
+    );
+    person(
+      cx: 0.77,
+      headY: 0.50,
+      headR: 0.091,
+      bodyTop: 0.64,
+      bodyBottom: 0.96,
+      bodyHalfW: 0.115,
+      paint: child,
+      outline: true,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_FamilyMarkPainter old) => old.background != background;
+}
+
+// Tres capas orgánicas muy tenues, limitadas a la esquina superior derecha.
+// El color se parametriza para respetar el estado de solvencia.
+class _FeatureCornerCurvesPainter extends CustomPainter {
+  final Color color;
+  const _FeatureCornerCurvesPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    if (w <= 0 || h <= 0) return;
+
+    final outer = Path()
+      ..moveTo(w - 210, 0)
+      ..cubicTo(w - 165, 55, w - 118, 127, w, 96)
+      ..lineTo(w, 0)
+      ..close();
+    canvas.drawPath(outer, Paint()..color = color.withValues(alpha: 0.060));
+
+    final mid = Path()
+      ..moveTo(w - 138, 0)
+      ..cubicTo(w - 111, 44, w - 66, 85, w, 60)
+      ..lineTo(w, 0)
+      ..close();
+    canvas.drawPath(mid, Paint()..color = color.withValues(alpha: 0.055));
+
+    final inner = Path()
+      ..moveTo(w - 68, 0)
+      ..cubicTo(w - 48, 28, w - 24, 44, w, 35)
+      ..lineTo(w, 0)
+      ..close();
+    canvas.drawPath(inner, Paint()..color = color.withValues(alpha: 0.055));
+  }
+
+  @override
+  bool shouldRepaint(covariant _FeatureCornerCurvesPainter oldDelegate) =>
+      oldDelegate.color != color;
 }

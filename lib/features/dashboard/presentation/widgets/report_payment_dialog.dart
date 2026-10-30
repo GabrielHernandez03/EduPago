@@ -43,11 +43,12 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       _selectedMethod == 'Pago Móvil' ||
       _selectedMethod == 'Transferencia Bancaria';
   bool get _needsBank => _isVes;
-  final TextEditingController _otherBankController = TextEditingController();
-  String? _stepError;
-  String get _originBankValue => _selectedOriginBank == 'Otro banco'
-      ? _otherBankController.text.trim()
-      : (_selectedOriginBank ?? '');
+  String? _stepError; // Solo para errores generales no asociados a un campo.
+  String? _bankError;
+  String? _dateError;
+  String? _amountError;
+  String? _proofError;
+  String get _originBankValue => _selectedOriginBank ?? '';
 
   final SupabaseClient _supabase = Supabase.instance.client;
   final BcvService _bcvService = BcvService();
@@ -72,8 +73,15 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
   // La cuenta destino no se elige: se muestra exclusivamente la configurada para el método.
   final TextEditingController _refController = TextEditingController();
   final TextEditingController _montoController = TextEditingController();
+  final TextEditingController _usdAmountController = TextEditingController();
+  // Pago Móvil y Transferencia se registran en VES, pero se puede ingresar
+  // el monto tanto en bolívares como en dólares.
+  bool _amountInUsd = true;
+  bool _amountEditedByUser = false;
   DateTime _selectedDate = DateTime.now();
   bool _isRefValid = false;
+  // Una referencia rechazada por el servidor debe corregirse antes de reintentar.
+  bool _referenceRejectedByServer = false;
   String? _refErrorMessage;
 
   // Paso 3: Comprobante
@@ -81,20 +89,11 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
   Uint8List? _attachedFileBytes;
   String _generatedReportCode = '';
 
-  final List<String> _banks = [
-    'Banesco',
-    'Mercantil',
-    'Provincial',
-    'Banco de Venezuela',
-    'BNC',
-    'BFC',
-    'Bancaribe',
-    'Bancamiga',
-    'Banco Exterior',
-    'Banco del Tesoro',
-    'Banco Plaza',
-    'Otro banco',
-  ];
+  // Buscador del banco: desplegable animado en escritorio y panel inferior
+  // en móvil. La búsqueda no modifica el banco seleccionado hasta confirmarlo.
+  bool _bankDropdownOpen = false;
+  final TextEditingController _bankSearchController = TextEditingController();
+  final FocusNode _bankSearchFocus = FocusNode();
 
   final List<String> _destinationAccounts = [
     'Mercantil 4872',
@@ -126,6 +125,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
   void initState() {
     super.initState();
     _currentTasaBcv = widget.tasaBcv > 0 ? widget.tasaBcv : 0.0;
+    _updateMontoField(widget.amountUsd);
     _initDataAndRate();
   }
 
@@ -133,7 +133,9 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
   void dispose() {
     _refController.dispose();
     _montoController.dispose();
-    _otherBankController.dispose();
+    _usdAmountController.dispose();
+    _bankSearchController.dispose();
+    _bankSearchFocus.dispose();
     super.dispose();
   }
 
@@ -141,32 +143,82 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     try {
       final bcvData = await _bcvService.getLatestBcvRate();
       if (mounted && bcvData.rate > 0) {
-        setState(() => _currentTasaBcv = bcvData.rate);
+        setState(() {
+          _currentTasaBcv = bcvData.rate;
+          if (_amountError ==
+              'No hay tasa BCV disponible para registrar este pago.') {
+            _amountError = null;
+          }
+          if (_isVes) {
+            // Si aún no escribió nada, actualizamos el monto sugerido.
+            // Si ya escribió, respetamos la moneda elegida y solo
+            // recalculamos el otro campo, nunca pisamos el campo activo.
+            if (!_amountEditedByUser) {
+              _updateMontoField(widget.amountUsd);
+            } else if (_amountInUsd) {
+              _syncConvertedAmount();
+            } else {
+              _syncUsdFromVes();
+            }
+          }
+        });
       }
     } catch (e) {
       debugPrint('Error obteniendo tasa BCV en diálogo: $e');
     }
-
-    // El monto sugerido (deuda familiar menos pagos en revisión) lo calcula
-    // quien abre el diálogo. El representante puede cambiarlo libremente.
-    final double initialUsd = widget.amountUsd;
-
-    if (mounted) {
-      // setState: refresca también el "equivalente" y las tarjetas del paso 2.
-      setState(() => _updateMontoField(initialUsd));
-    }
   }
 
   void _updateMontoField(double usdAmount) {
-    final bool isBs =
-        _selectedMethod == 'Pago Móvil' ||
-        _selectedMethod == 'Transferencia Bancaria';
-    if (isBs) {
-      final double totalVes = usdAmount * _currentTasaBcv;
-      _montoController.text = totalVes.toStringAsFixed(2).replaceAll('.', ',');
+    _usdAmountController.text = usdAmount
+        .toStringAsFixed(2)
+        .replaceAll('.', ',');
+    if (_isVes) {
+      // El monto real del pago se mantiene en Bs., independientemente de
+      // la moneda que el usuario use como entrada.
+      _syncConvertedAmount();
     } else {
       _montoController.text = usdAmount.toStringAsFixed(2).replaceAll('.', ',');
     }
+  }
+
+  void _syncConvertedAmount() {
+    final usd =
+        double.tryParse(
+          _usdAmountController.text.trim().replaceAll(',', '.'),
+        ) ??
+        0.0;
+    final ves = _hasRate && usd.isFinite && usd > 0
+        ? usd * _currentTasaBcv
+        : 0.0;
+    _montoController.text = ves.toStringAsFixed(2).replaceAll('.', ',');
+  }
+
+  void _syncUsdFromVes() {
+    final ves =
+        double.tryParse(_montoController.text.trim().replaceAll(',', '.')) ??
+        0.0;
+    if (!_hasRate) {
+      _usdAmountController.clear();
+      return;
+    }
+    final usd = ves.isFinite && ves > 0 ? ves / _currentTasaBcv : 0.0;
+    _usdAmountController.text = usd.toStringAsFixed(2).replaceAll('.', ',');
+  }
+
+  void _setAmountInputCurrency(bool inUsd) {
+    if (!_isVes || _amountInUsd == inUsd) return;
+    setState(() {
+      // Conserva el valor del pago ya calculado en bolívares al cambiar
+      // de moneda y convierte únicamente el campo de entrada nuevo.
+      if (inUsd) {
+        _syncUsdFromVes();
+      } else {
+        _syncConvertedAmount();
+      }
+      _amountInUsd = inUsd;
+      _amountError = null;
+      _stepError = null;
+    });
   }
 
   void _onRefChanged(String val) {
@@ -180,6 +232,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
               : RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]*$').hasMatch(reference));
       _stepError = null;
       _refErrorMessage = null;
+      _referenceRejectedByServer = false;
     });
   }
 
@@ -200,8 +253,12 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
         );
       },
     );
-    if (picked != null && picked != _selectedDate) {
-      setState(() => _selectedDate = picked);
+    if (picked != null) {
+      setState(() {
+        _selectedDate = picked;
+        _dateError = null;
+        _stepError = null;
+      });
     }
   }
 
@@ -227,11 +284,11 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       final bytes = await file.readAsBytes();
 
       if (bytes.isEmpty) {
-        msg('El archivo llegó vacío.');
+        setState(() => _proofError = 'El archivo está vacío. Adjunta otro.');
         return;
       }
       if (bytes.length > 5 * 1024 * 1024) {
-        msg('El archivo supera los 5 MB.');
+        setState(() => _proofError = 'El comprobante no puede superar 5 MB.');
         return;
       }
 
@@ -252,15 +309,21 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
               bytes.length > 4 &&
               String.fromCharCodes(bytes.take(5)) == '%PDF-');
       if (!valid) {
-        msg('El archivo debe ser un JPG, PNG o PDF válido.');
+        setState(
+          () => _proofError = 'Selecciona un archivo JPG, PNG o PDF válido.',
+        );
         return;
       }
       setState(() {
         _attachedFileName = file.name;
         _attachedFileBytes = bytes;
+        _proofError = null;
       });
     } catch (e, st) {
       debugPrint('Error al seleccionar archivo: $e\n$st');
+      setState(
+        () => _proofError = 'No se pudo adjuntar el archivo. Intenta de nuevo.',
+      );
       msg('No se pudo adjuntar: $e');
     }
   }
@@ -268,29 +331,65 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
   /// La unicidad de la referencia la valida el servidor (reportar_pago), que
   /// compara contra TODOS los pagos del colegio por método + banco de origen.
   /// El cliente no puede (ni debe) consultar pagos de otras familias.
-  String? _validateTransaction() {
-    if (_needsBank && _originBankValue.length < 3)
-      return 'Indica el banco de origen del pago.';
-    if (!_isRefValid)
-      return _selectedMethod == 'Efectivo USD'
-          ? 'Escribe el número real del recibo de caja (mínimo 4 caracteres).'
-          : 'Introduce una referencia válida de 4 a 80 caracteres.';
-    final monto =
-        double.tryParse(_montoController.text.trim().replaceAll(',', '.')) ?? 0;
-    if (!monto.isFinite || monto <= 0)
-      return 'Ingresa un monto mayor que cero.';
-    if (_isVes && !_hasRate)
-      return 'No hay una tasa BCV válida para pagos en bolívares.';
-    if (_selectedDate.isAfter(DateTime.now()))
-      return 'La fecha no puede ser futura.';
-    return null;
+  // Valida todos los campos a la vez, no solamente el primero.
+  // Cada mensaje se presenta junto al control que debe corregirse.
+  bool _validateTransactionFields() {
+    final reference = _refController.text.trim();
+    final referenceValid =
+        reference.length >= 4 &&
+        reference.length <= 80 &&
+        (_isVes
+            ? RegExp(r'^[0-9]+$').hasMatch(reference)
+            : RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]*$').hasMatch(reference));
+    final monto = _typedAmount;
+    final textEntered = _isVes && _amountInUsd
+        ? _usdAmountController.text.trim()
+        : _montoController.text.trim();
+    final numberEntered = double.tryParse(textEntered.replaceAll(',', '.'));
+
+    final bankError = _needsBank && _originBankValue.trim().isEmpty
+        ? 'Selecciona el banco desde el que realizaste el pago.'
+        : null;
+    final referenceError = _referenceRejectedByServer
+        ? (_refErrorMessage ?? 'Corrige esta referencia para continuar.')
+        : !referenceValid
+        ? (_isCash
+              ? 'Introduce el número del recibo (mínimo 4 caracteres).'
+              : _isVes
+              ? 'La referencia debe contener entre 4 y 80 dígitos.'
+              : 'Introduce un código de 4 a 80 caracteres válido.')
+        : null;
+    final dateError = _selectedDate.isAfter(DateTime.now())
+        ? 'La fecha del pago no puede ser futura.'
+        : null;
+    final amountError = _isVes && !_hasRate
+        ? 'No hay tasa BCV disponible para registrar este pago.'
+        : (numberEntered == null ||
+              !numberEntered.isFinite ||
+              numberEntered <= 0 ||
+              !monto.isFinite ||
+              monto <= 0)
+        ? 'Introduce un monto válido mayor que cero.'
+        : null;
+
+    setState(() {
+      _bankError = bankError;
+      _refErrorMessage = referenceError;
+      _dateError = dateError;
+      _amountError = amountError;
+      _isRefValid = referenceValid && !_referenceRejectedByServer;
+      _stepError = null;
+    });
+
+    return bankError == null &&
+        referenceError == null &&
+        dateError == null &&
+        amountError == null;
   }
 
   Future<bool> _validateReferenceUniqueness() async {
-    final message = _validateTransaction();
-    if (message == null) return true;
-    if (mounted) setState(() => _stepError = message);
-    return false;
+    // La unicidad real se verifica al registrar el pago en el servidor.
+    return _validateTransactionFields();
   }
 
   String _mensajeErrorReporte(String raw) {
@@ -310,6 +409,13 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     if (raw.contains('TASA_INVALIDA')) {
       return 'No se pudo determinar la tasa BCV. Intenta de nuevo.';
     }
+    if (raw.contains('BANCO_ORIGEN_INVALIDO') ||
+        raw.contains('BANCO_INVALIDO')) {
+      return 'El banco de origen no es válido. Selecciona uno de la lista.';
+    }
+    if (raw.contains('COMPROBANTE_INVALIDO')) {
+      return 'El comprobante no es válido. Adjunta otro archivo.';
+    }
     return 'Error al enviar el reporte: $raw';
   }
 
@@ -323,21 +429,17 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
     }
 
-    final transactionError = _validateTransaction();
-    if (transactionError != null) {
-      setState(() {
-        _currentStep = 2;
-        _stepError = transactionError;
-      });
-      aviso(transactionError);
+    if (!_validateTransactionFields()) {
+      setState(() => _currentStep = 2);
       return;
     }
     if (_attachedFileBytes == null || _attachedFileName == null) {
-      aviso(
-        _selectedMethod == 'Efectivo USD'
+      setState(() {
+        _currentStep = 3;
+        _proofError = _isCash
             ? 'Adjunta el recibo oficial emitido por caja.'
-            : 'Adjunta el comprobante de la transacción.',
-      );
+            : 'Adjunta el comprobante de la transacción.';
+      });
       return;
     }
 
@@ -346,20 +448,21 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
         _selectedMethod == 'Transferencia Bancaria';
     final double montoIngresado =
         double.tryParse(_montoController.text.replaceAll(',', '.')) ?? 0.0;
-    if (montoIngresado <= 0) {
-      aviso('Ingresa un monto válido mayor a cero.');
-      return;
-    }
-    if (isBs && !_hasRate) {
-      aviso(
-        'No se pudo obtener la tasa BCV. Intenta de nuevo en unos minutos.',
-      );
+    // Control defensivo por si la tasa cambió durante la operación.
+    if (montoIngresado <= 0 || (isBs && !_hasRate)) {
+      setState(() {
+        _currentStep = 2;
+        _amountError = isBs && !_hasRate
+            ? 'No hay tasa BCV disponible para registrar este pago.'
+            : 'Introduce un monto válido mayor que cero.';
+      });
       return;
     }
 
     setState(() => _isSubmitting = true);
     String? uploadedPath;
     bool pagoRegistrado = false;
+    bool uploadAttempted = false;
 
     try {
       final user = _supabase.auth.currentUser;
@@ -398,6 +501,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       final String safeRef = refStr.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
       final String storagePath =
           '$repId/${DateTime.now().millisecondsSinceEpoch}_$safeRef.$fileExt';
+      uploadAttempted = true;
       await _supabase.storage
           .from('comprobantes')
           .uploadBinary(storagePath, _attachedFileBytes!);
@@ -450,19 +554,46 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       final String raw = e is PostgrestException
           ? e.message
           : (e is _ReporteException ? e.message : '$e');
-      final bool duplicada = raw.contains('REFERENCIA_DUPLICADA');
+      final errorMessage = _mensajeErrorReporte(raw);
+      final upper = raw.toUpperCase();
+      final referenceError =
+          upper.contains('REFERENCIA_DUPLICADA') ||
+          upper.contains('REFERENCIA_INVALIDA');
+      final dateError = upper.contains('FECHA_INVALIDA');
+      final amountError =
+          upper.contains('MONTO_INVALIDO') || upper.contains('TASA_INVALIDA');
+      final bankError =
+          upper.contains('BANCO_ORIGEN_INVALIDO') ||
+          upper.contains('BANCO_INVALIDO');
+      final proofError =
+          upper.contains('COMPROBANTE_INVALIDO') ||
+          (uploadAttempted && uploadedPath == null);
+      final associatedFieldError =
+          referenceError || dateError || amountError || bankError || proofError;
 
       if (mounted) {
         setState(() {
           _isSubmitting = false;
-          if (duplicada) {
-            _refErrorMessage = _mensajeErrorReporte(raw);
+          if (referenceError) {
+            _refErrorMessage = errorMessage;
+            _referenceRejectedByServer = true;
             _isRefValid = false;
-            _currentStep = 2; // vuelve al paso de la referencia
+          }
+          if (dateError) _dateError = errorMessage;
+          if (amountError) _amountError = errorMessage;
+          if (bankError) _bankError = errorMessage;
+          if (proofError) {
+            _proofError = uploadAttempted && uploadedPath == null
+                ? 'No se pudo subir el comprobante. Comprueba tu conexión e inténtalo de nuevo.'
+                : errorMessage;
+          }
+          if (associatedFieldError) {
+            _currentStep = proofError ? 3 : 2;
           }
         });
       }
-      aviso(_mensajeErrorReporte(raw), color: Colors.redAccent);
+      // Errores sin un campo concreto (sesión, red, permisos, etc.).
+      if (!associatedFieldError) aviso(errorMessage, color: Colors.redAccent);
     }
   }
 
@@ -567,11 +698,11 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     return Dialog(
       backgroundColor: Colors.white,
       surfaceTintColor: Colors.transparent,
-      insetPadding: const EdgeInsets.all(12),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       clipBehavior: Clip.antiAlias,
       child: SizedBox(
-        width: 820,
+        width: 900,
         child: ConstrainedBox(
           constraints: BoxConstraints(maxHeight: maxHeight),
           child: AnimatedSize(
@@ -595,10 +726,10 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
                   child: SingleChildScrollView(
                     physics: const ClampingScrollPhysics(),
                     padding: EdgeInsets.fromLTRB(
-                      compact ? 16 : 22,
-                      16,
-                      compact ? 16 : 22,
-                      16,
+                      compact ? 14 : 20,
+                      compact ? 14 : 16,
+                      compact ? 14 : 20,
+                      compact ? 14 : 16,
                     ),
                     child: body,
                   ),
@@ -618,12 +749,12 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
 
   Widget _buildHeader() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 14, 10, 10),
+      padding: const EdgeInsets.fromLTRB(20, 12, 12, 10),
       child: Row(
         children: [
           Container(
-            width: 40,
-            height: 40,
+            width: 42,
+            height: 42,
             decoration: BoxDecoration(
               color: AppColors.primaryLight,
               borderRadius: BorderRadius.circular(10),
@@ -642,7 +773,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
                 const Text(
                   'Reportar pago',
                   style: TextStyle(
-                    fontSize: 18,
+                    fontSize: 19,
                     fontWeight: FontWeight.w800,
                     color: AppColors.darkNavy,
                   ),
@@ -753,7 +884,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
   Widget _buildStepLine(int afterStep, bool compact) {
     final bool isCompleted = _isSubmitted || _currentStep > afterStep;
     return Container(
-      width: compact ? 22 : 34,
+      width: compact ? 16 : 32,
       height: 2,
       margin: const EdgeInsets.symmetric(horizontal: 8),
       color: isCompleted ? AppColors.successGreen : AppColors.cardBorder,
@@ -767,7 +898,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       Text(
         title,
         style: const TextStyle(
-          fontSize: 18,
+          fontSize: 17,
           fontWeight: FontWeight.w800,
           color: AppColors.darkNavy,
         ),
@@ -785,69 +916,47 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
   // PASO 1 · MÉTODO
   // ===========================================================================
   Widget _buildStep1Widget() {
-    final methods = <Widget>[
-      _buildMethodCard(
-        'Pago Móvil',
-        'VES',
-        'Conversión BCV automática',
-        Icons.smartphone,
-      ),
-      _buildMethodCard(
-        'Zelle',
-        'USD',
-        'Monto directo en dólares',
-        Icons.mail_outline,
-      ),
-      _buildMethodCard(
-        'Transferencia Bancaria',
-        'VES',
-        'Conversión BCV automática',
-        Icons.account_balance_outlined,
-      ),
-      _buildMethodCard(
-        'Efectivo USD',
-        'USD',
-        'Entrega directa en caja',
-        Icons.payments_outlined,
-      ),
+    const methods = [
+      ('Pago Móvil', 'VES', 'Conversión BCV\nautomática'),
+      ('Transferencia Bancaria', 'VES', 'Conversión BCV\nautomática'),
+      ('Zelle', 'USD', 'Monto directo\nen dólares'),
+      ('Efectivo USD', 'USD', 'Entrega directa\nen caja'),
     ];
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _stepTitle(
-          '¿Cómo realizaste el pago?',
-          'Selecciona la moneda y el método utilizado.',
+          'Selecciona el método de pago',
+          'Elige la opción con la que realizaste tu pago.',
         ),
         LayoutBuilder(
-          builder: (context, c) {
-            if (c.maxWidth < 500) {
-              return Column(
-                children: [
-                  for (var i = 0; i < methods.length; i++) ...[
-                    SizedBox(height: 72, child: methods[i]),
-                    if (i < methods.length - 1) const SizedBox(height: 10),
-                  ],
-                ],
-              );
-            }
-            return Column(
+          builder: (context, bounds) {
+            final w = bounds.maxWidth;
+            // Las cuatro tarjetas caben sin comprimir textos en escritorio.
+            final columns = w >= 760 ? 4 : (w >= 450 ? 2 : 1);
+            final horizontalTile = columns == 1;
+            const spacing = 10.0;
+            final itemWidth = (w - (columns - 1) * spacing) / columns;
+            // El alto contempla logo, título, moneda y dos líneas de ayuda.
+            final cardHeight = columns == 4
+                ? 174.0
+                : (columns == 2 ? 158.0 : 80.0);
+            return Wrap(
+              spacing: spacing,
+              runSpacing: spacing,
               children: [
-                Row(
-                  children: [
-                    Expanded(child: SizedBox(height: 80, child: methods[0])),
-                    const SizedBox(width: 12),
-                    Expanded(child: SizedBox(height: 80, child: methods[1])),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(child: SizedBox(height: 80, child: methods[2])),
-                    const SizedBox(width: 12),
-                    Expanded(child: SizedBox(height: 80, child: methods[3])),
-                  ],
-                ),
+                for (final item in methods)
+                  SizedBox(
+                    width: itemWidth,
+                    height: cardHeight,
+                    child: _buildMethodCard(
+                      item.$1,
+                      item.$2,
+                      item.$3,
+                      compactTile: horizontalTile,
+                    ),
+                  ),
               ],
             );
           },
@@ -863,185 +972,184 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
   Widget _buildMethodGuide() {
     final color = _methodColor;
     final dark = _methodDark;
-    final line = AppColors.tint(color, 0.22);
-
-    final String title = switch (_selectedMethod) {
+    final heading = switch (_selectedMethod) {
       'Pago Móvil' => 'Pago Móvil en bolívares',
-      'Zelle' => 'Zelle en dólares',
       'Transferencia Bancaria' => 'Transferencia en bolívares',
+      'Zelle' => 'Zelle en dólares',
       _ => 'Efectivo en dólares',
     };
-    final String subtitle = switch (_selectedMethod) {
-      'Zelle' => 'El monto se registra directamente en USD.',
-      'Efectivo USD' =>
-        'Se paga en la caja del colegio. Conserva tu recibo numerado.',
-      _ =>
-        _hasRate
-            ? 'El equivalente en bolívares se calcula con la tasa BCV vigente.'
-            : 'La tasa BCV no está disponible por ahora.',
+    final description = switch (_selectedMethod) {
+      'Pago Móvil' =>
+        'El monto en bolívares se calcula con la tasa BCV vigente.',
+      'Transferencia Bancaria' =>
+        'Transfiere a la cuenta del colegio y conserva el comprobante.',
+      'Zelle' =>
+        'Guarda el código de confirmación para comprobar tu transferencia.',
+      _ => 'El colegio entrega un recibo numerado como constancia del pago.',
     };
-    final List<String> steps = switch (_selectedMethod) {
+    final messages = switch (_selectedMethod) {
       'Pago Móvil' => [
-        'Paga desde tu banco al Pago Móvil del colegio.',
+        'Realiza el Pago Móvil al colegio.',
         'Anota la referencia y el banco de origen.',
         'Adjunta la captura del comprobante.',
       ],
       'Transferencia Bancaria' => [
-        'Transfiere a la cuenta bancaria del colegio.',
-        'Anota la referencia y el banco de origen.',
-        'Adjunta el comprobante de la transferencia.',
+        'Realiza la transferencia a la cuenta del colegio.',
+        'Conserva la referencia y el banco de origen.',
+        'Adjunta el comprobante bancario.',
       ],
       'Zelle' => [
-        'Envía el pago a la cuenta Zelle del colegio.',
-        'Copia el código de confirmación de la operación.',
-        'Adjunta la captura de la confirmación.',
+        'Envía el monto a la cuenta Zelle del colegio.',
+        'Guarda el código de confirmación.',
+        'Adjunta la captura con los datos del pago.',
       ],
       _ => [
         'Entrega el efectivo en la caja del colegio.',
-        'Solicita un recibo oficial numerado.',
-        'Ten a mano el número y una foto del recibo.',
+        'Solicita el recibo oficial numerado.',
+        'Adjunta una foto legible del recibo.',
       ],
     };
+    const stepIcons = [
+      Icons.account_balance_outlined,
+      Icons.receipt_long_outlined,
+      Icons.camera_alt_outlined,
+    ];
 
-    Widget step(int i) => Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    Widget instruction(int i, bool wide) => Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         CircleAvatar(
-          radius: 12,
-          backgroundColor: AppColors.tint(color, 0.22),
+          radius: 18,
+          backgroundColor: AppColors.tint(color, 0.18),
           child: Text(
             '${i + 1}',
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              color: AppColors.darkNavy,
-            ),
+            style: TextStyle(fontWeight: FontWeight.w800, color: dark),
           ),
         ),
         const SizedBox(width: 10),
+        Icon(stepIcons[i], size: 24, color: dark),
+        const SizedBox(width: 10),
         Expanded(
-          child: Padding(
-            padding: const EdgeInsets.only(top: 3),
-            child: Text(
-              steps[i],
-              style: const TextStyle(
-                fontSize: 13,
-                height: 1.35,
-                color: AppColors.darkNavy,
-              ),
+          child: Text(
+            messages[i],
+            style: const TextStyle(
+              fontSize: 12.5,
+              height: 1.35,
+              color: AppColors.darkNavy,
             ),
           ),
         ),
       ],
     );
 
-    final bool rateBad = _isVes && !_hasRate;
-
-    final Widget? ratePill = (_isVes && _hasRate)
-        ? Container(
-            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: line),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.currency_exchange_rounded, size: 14, color: dark),
-                const SizedBox(width: 6),
-                Text(
-                  'Tasa BCV: 1 USD = Bs. ${_fmt2(_currentTasaBcv)}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: dark,
-                  ),
-                ),
-              ],
-            ),
-          )
-        : null;
-
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: AppColors.tint(color, 0.07),
-        borderRadius: BorderRadius.circular(AppSizes.radiusCard),
-        border: Border.all(color: AppColors.tint(color, 0.4), width: 1.2),
+        border: Border.all(color: AppColors.tint(color, 0.38)),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: LayoutBuilder(
-        builder: (_, c) {
-          final bool wide = c.maxWidth >= 560;
+        builder: (context, constraints) {
+          final wide = constraints.maxWidth >= 700;
+          final pills = _isVes
+              ? Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 9,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border.all(color: AppColors.tint(color, 0.35)),
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.currency_exchange_rounded,
+                        size: 17,
+                        color: dark,
+                      ),
+                      const SizedBox(width: 7),
+                      Text(
+                        _hasRate
+                            ? 'Tasa BCV: 1 USD = Bs. ${_fmt2(_currentTasaBcv)}'
+                            : 'Tasa BCV no disponible',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: dark,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : const SizedBox.shrink();
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Row(
                 children: [
-                  Container(
-                    width: 34,
-                    height: 34,
-                    decoration: BoxDecoration(
-                      color: color,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(_methodIcon, color: Colors.white, size: 18),
-                  ),
-                  const SizedBox(width: 12),
+                  _methodLogo(_selectedMethod, size: 44),
+                  const SizedBox(width: 13),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          title,
+                          heading,
                           style: const TextStyle(
-                            fontSize: 15,
+                            fontSize: 17,
                             fontWeight: FontWeight.w800,
                             color: AppColors.darkNavy,
                           ),
                         ),
+                        const SizedBox(height: 3),
                         Text(
-                          subtitle,
-                          style: TextStyle(
+                          description,
+                          style: const TextStyle(
                             fontSize: 12.5,
-                            color: rateBad
-                                ? AppColors.errorRed
-                                : AppColors.textMuted,
+                            color: AppColors.textMuted,
                           ),
                         ),
                       ],
                     ),
                   ),
-                  if (wide && ratePill != null) ...[
-                    const SizedBox(width: 12),
-                    ratePill,
-                  ],
+                  if (wide && _isVes) ...[const SizedBox(width: 12), pills],
                 ],
               ),
-              if (!wide && ratePill != null) ...[
+              if (!wide && _isVes) ...[
                 const SizedBox(height: 10),
-                Align(alignment: Alignment.centerLeft, child: ratePill),
+                Align(alignment: Alignment.centerLeft, child: pills),
               ],
-              const SizedBox(height: 12),
-              c.maxWidth >= 520
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        for (var i = 0; i < steps.length; i++) ...[
-                          Expanded(child: step(i)),
-                          if (i < steps.length - 1) const SizedBox(width: 14),
-                        ],
-                      ],
-                    )
-                  : Column(
-                      children: [
-                        for (var i = 0; i < steps.length; i++) ...[
-                          step(i),
-                          if (i < steps.length - 1) const SizedBox(height: 8),
-                        ],
-                      ],
-                    ),
+              const SizedBox(height: 11),
+              if (constraints.maxWidth >= 700)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (var i = 0; i < 3; i++) ...[
+                      Expanded(child: instruction(i, true)),
+                      if (i < 2)
+                        Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 14),
+                          height: 46,
+                          width: 1,
+                          color: AppColors.cardBorder,
+                        ),
+                    ],
+                  ],
+                )
+              else
+                Column(
+                  children: [
+                    for (var i = 0; i < 3; i++) ...[
+                      instruction(i, false),
+                      if (i < 2) const SizedBox(height: 13),
+                    ],
+                  ],
+                ),
             ],
           );
         },
@@ -1049,162 +1157,223 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     );
   }
 
+  /// Logo auténtico en los métodos que tienen asset; alternativa visual en otros.
+  Widget _methodLogo(String method, {double size = 68}) {
+    final String? asset = switch (method) {
+      'Pago Móvil' => 'assets/images/logo_pago_movil.png',
+      'Transferencia Bancaria' =>
+        'assets/images/logo_transferencia_bancaria.png',
+      'Zelle' => 'assets/images/logo_zelle.png',
+      'Efectivo USD' => 'assets/images/logo_efectivo.png',
+      _ => null,
+    };
+    final cash = method == 'Efectivo USD';
+    final color = method == 'Zelle'
+        ? const Color(0xFF741DCC)
+        : cash
+        ? const Color(0xFF008760)
+        : AppColors.primaryBlue;
+    final icon = method == 'Transferencia Bancaria'
+        ? Icons.account_balance_rounded
+        : cash
+        ? Icons.payments_rounded
+        : Icons.account_balance_wallet_outlined;
+    return Container(
+      width: size,
+      height: size,
+      padding: EdgeInsets.all(asset == null ? size * 0.20 : size * 0.11),
+      decoration: BoxDecoration(
+        color: cash
+            ? const Color(0xFFDCF5E8)
+            : method == 'Zelle'
+            ? const Color(0xFFF3E9FF)
+            : const Color(0xFFEAF2FF),
+        borderRadius: BorderRadius.circular(15),
+      ),
+      child: asset == null
+          ? Icon(icon, color: color, size: size * 0.6)
+          : Image.asset(
+              asset,
+              fit: BoxFit.contain,
+              semanticLabel: method,
+              errorBuilder: (_, __, ___) =>
+                  Icon(icon, color: color, size: size * 0.6),
+            ),
+    );
+  }
+
   Widget _buildMethodCard(
     String title,
     String badge,
-    String subtitle,
-    IconData icon,
-  ) {
+    String subtitle, {
+    bool compactTile = false,
+  }) {
     final selected = _selectedMethod == title;
     final displayTitle = switch (title) {
       'Efectivo USD' => 'Efectivo',
       'Transferencia Bancaria' => 'Transferencia',
       _ => title,
     };
-    final asset = title == 'Pago Móvil'
-        ? 'assets/images/logo_pago_movil.png'
-        : title == 'Zelle'
-        ? 'assets/images/logo_zelle.png'
-        : null;
-    final cash = title == 'Efectivo USD';
+
+    void select() {
+      setState(() {
+        _selectedMethod = title;
+        _selectedOriginBank = null;
+        _bankDropdownOpen = false;
+        _bankSearchController.clear();
+        _refController.clear();
+        _isRefValid = false;
+        _referenceRejectedByServer = false;
+        _stepError = null;
+        _bankError = null;
+        _refErrorMessage = null;
+        _dateError = null;
+        _amountError = null;
+        _proofError = null;
+        _attachedFileBytes = null;
+        _attachedFileName = null;
+        _amountEditedByUser = false;
+        _updateMontoField(widget.amountUsd);
+      });
+    }
+
+    final badgeWidget = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEAF2FF),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        badge,
+        style: const TextStyle(
+          color: AppColors.primaryBlue,
+          fontWeight: FontWeight.w800,
+          fontSize: 12,
+        ),
+      ),
+    );
+
     return Semantics(
       button: true,
       selected: selected,
       label: '$displayTitle, moneda $badge',
-      excludeSemantics: true,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () {
-          setState(() {
-            _selectedMethod = title;
-            _selectedOriginBank = null;
-            _otherBankController.clear();
-            _refController.clear();
-            _isRefValid = false;
-            _stepError = null;
-            _refErrorMessage = null;
-            _attachedFileBytes = null;
-            _attachedFileName = null;
-            _updateMontoField(widget.amountUsd);
-          });
-        },
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.primaryLight : Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: selected ? AppColors.primaryBlue : AppColors.cardBorder,
-              width: selected ? 1.6 : 1.0,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: select,
+          borderRadius: BorderRadius.circular(16),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            padding: EdgeInsets.all(compactTile ? 10 : 11),
+            decoration: BoxDecoration(
+              color: selected ? const Color(0xFFF0F6FF) : Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: selected ? AppColors.primaryBlue : AppColors.cardBorder,
+                width: selected ? 2 : 1,
+              ),
+              boxShadow: selected
+                  ? [
+                      BoxShadow(
+                        color: AppColors.primaryBlue.withValues(alpha: 0.08),
+                        blurRadius: 12,
+                      ),
+                    ]
+                  : null,
             ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 52,
-                height: 52,
-                alignment: Alignment.center,
-                padding: EdgeInsets.all(asset == null ? 8 : 6),
-                decoration: BoxDecoration(
-                  color: cash
-                      ? const Color(0xFFE4F6ED)
-                      : selected
-                      ? const Color(0xFFDCEAFF)
-                      : const Color(0xFFF1F5F9),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: asset != null
-                    ? Image.asset(
-                        asset,
-                        width: 40,
-                        height: 40,
-                        fit: BoxFit.contain,
-                        errorBuilder: (_, __, ___) =>
-                            Icon(icon, color: AppColors.primaryBlue, size: 28),
-                      )
-                    : Icon(
-                        cash ? Icons.payments_rounded : icon,
-                        color: cash
-                            ? const Color(0xFF047857)
-                            : AppColors.primaryBlue,
-                        size: 28,
-                      ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            displayTitle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 14.5,
-                              color: AppColors.darkNavy,
+            child: compactTile
+                ? Row(
+                    children: [
+                      _methodLogo(title, size: 51),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              displayTitle,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14,
+                                color: AppColors.darkNavy,
+                              ),
                             ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.tint(AppColors.primaryBlue),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            badge,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w800,
-                              color: AppColors.primaryDark,
+                            const SizedBox(height: 3),
+                            Text(
+                              badge,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppColors.primaryBlue,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
-                          ),
+                          ],
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textMuted,
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 160),
-                width: 22,
-                height: 22,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: selected ? AppColors.primaryBlue : Colors.white,
-                  border: Border.all(
-                    color: selected
-                        ? AppColors.primaryBlue
-                        : const Color(0xFF94A3B8),
-                    width: 1.4,
+                      Icon(
+                        selected
+                            ? Icons.check_circle_rounded
+                            : Icons.radio_button_unchecked_rounded,
+                        color: selected
+                            ? AppColors.primaryBlue
+                            : const Color(0xFF9AABC2),
+                        size: 23,
+                      ),
+                    ],
+                  )
+                : Stack(
+                    children: [
+                      Align(
+                        alignment: Alignment.topRight,
+                        child: Icon(
+                          selected
+                              ? Icons.check_circle_rounded
+                              : Icons.radio_button_unchecked_rounded,
+                          color: selected
+                              ? AppColors.primaryBlue
+                              : const Color(0xFF9AABC2),
+                          size: 24,
+                        ),
+                      ),
+                      Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _methodLogo(title, size: 52),
+                            const SizedBox(height: 7),
+                            Text(
+                              displayTitle,
+                              textAlign: TextAlign.center,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800,
+                                color: AppColors.darkNavy,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            badgeWidget,
+                            const SizedBox(height: 4),
+                            Text(
+                              subtitle,
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 11.5,
+                                height: 1.18,
+                                color: AppColors.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                child: selected
-                    ? const Icon(Icons.check, color: Colors.white, size: 15)
-                    : null,
-              ),
-            ],
           ),
         ),
       ),
@@ -1461,27 +1630,64 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     );
   }
 
-  Widget _field(String label, Widget field, {String? helper}) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        label,
-        style: const TextStyle(
-          fontSize: 12.5,
-          fontWeight: FontWeight.w700,
-          color: AppColors.darkNavy,
+  Widget _field(String label, Widget field, {String? helper, String? error}) =>
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            height: 18,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.darkNavy,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          field,
+          if (error != null) _fieldError(error),
+          if (helper != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              helper,
+              style: const TextStyle(
+                fontSize: 11.5,
+                color: AppColors.textMuted,
+              ),
+            ),
+          ],
+        ],
+      );
+
+  Widget _fieldError(String error) => Padding(
+    padding: const EdgeInsets.only(top: 5),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(
+          Icons.error_outline_rounded,
+          size: 15,
+          color: AppColors.errorRed,
         ),
-      ),
-      const SizedBox(height: 6),
-      field,
-      if (helper != null) ...[
-        const SizedBox(height: 4),
-        Text(
-          helper,
-          style: const TextStyle(fontSize: 11.5, color: AppColors.textMuted),
+        const SizedBox(width: 5),
+        Expanded(
+          child: Text(
+            error,
+            style: const TextStyle(
+              fontSize: 11.5,
+              height: 1.3,
+              fontWeight: FontWeight.w600,
+              color: AppColors.errorRed,
+            ),
+          ),
         ),
       ],
-    ],
+    ),
   );
 
   /// Dos campos por fila en pantallas anchas, apilados en estrechas.
@@ -1501,39 +1707,266 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
           ),
   );
 
+  // Abre el selector. En móviles se presenta una hoja inferior, igual a
+  // las aplicaciones bancarias; en escritorio se despliega debajo del campo.
+  Future<void> _openOriginBankSelector() async {
+    if (MediaQuery.sizeOf(context).width < 650) {
+      FocusScope.of(context).unfocus();
+      final result = await showModalBottomSheet<_OriginBankOption>(
+        context: context,
+        isScrollControlled: true,
+        sheetAnimationStyle: const AnimationStyle(
+          duration: Duration.zero,
+          reverseDuration: Duration.zero,
+        ),
+        useSafeArea: true,
+        backgroundColor: Colors.white,
+        barrierColor: Colors.black54,
+        clipBehavior: Clip.antiAlias,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        ),
+        constraints: const BoxConstraints(maxWidth: 680),
+        // Flutter anima el panel al aparecer y al bajar para cerrarse.
+        builder: (sheetContext) {
+          final mq = MediaQuery.of(sheetContext);
+          final availableHeight =
+              mq.size.height - mq.viewInsets.bottom - mq.padding.top - 16;
+          final preferredHeight = mq.size.height * 0.70;
+          final sheetHeight = preferredHeight < availableHeight
+              ? preferredHeight
+              : availableHeight;
+          return Padding(
+            padding: EdgeInsets.only(bottom: mq.viewInsets.bottom),
+            child: SizedBox(
+              height: sheetHeight.clamp(240.0, 670.0).toDouble(),
+              child: _OriginBankSheet(selectedValue: _selectedOriginBank),
+            ),
+          );
+        },
+      );
+      if (result != null && mounted) _selectOriginBank(result);
+      return;
+    }
+
+    setState(() {
+      _bankDropdownOpen = !_bankDropdownOpen;
+      _bankSearchController.clear();
+    });
+    if (_bankDropdownOpen) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _bankDropdownOpen) _bankSearchFocus.requestFocus();
+      });
+    } else {
+      _bankSearchFocus.unfocus();
+    }
+  }
+
+  void _selectOriginBank(_OriginBankOption bank) {
+    _bankSearchFocus.unfocus();
+    setState(() {
+      _selectedOriginBank = bank.value;
+      _bankDropdownOpen = false;
+      _bankSearchController.clear();
+      _bankError = null;
+      _stepError = null;
+    });
+  }
+
+  Widget _buildOriginBankSelector() {
+    _OriginBankOption? selected;
+    for (final bank in _originBankOptions) {
+      if (bank.value == _selectedOriginBank) {
+        selected = bank;
+        break;
+      }
+    }
+    final matches = _filterOriginBanks(_bankSearchController.text);
+    final isCompact = MediaQuery.sizeOf(context).width < 650;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Semantics(
+          button: true,
+          label: selected == null
+              ? 'Seleccionar banco de origen'
+              : 'Banco de origen: ${selected.name}',
+          child: Material(
+            color: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppSizes.radiusControl),
+              side: BorderSide(
+                color: _bankError != null
+                    ? AppColors.errorRed
+                    : _bankDropdownOpen
+                    ? AppColors.primaryBlue
+                    : AppColors.cardBorder,
+                width: _bankError != null || _bankDropdownOpen ? 1.5 : 1,
+              ),
+            ),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(AppSizes.radiusControl),
+              onTap: _openOriginBankSelector,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: AppSizes.control),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 13,
+                    vertical: 11,
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.account_balance_outlined,
+                        color: AppColors.textMuted,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          selected == null
+                              ? 'Buscar banco de origen'
+                              : selected.code.isEmpty
+                              ? selected.name
+                              : '${selected.code} - ${selected.value}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: selected == null
+                                ? AppColors.textMuted
+                                : AppColors.darkNavy,
+                            fontWeight: selected == null
+                                ? FontWeight.w400
+                                : FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(
+                        _bankDropdownOpen && !isCompact
+                            ? Icons.keyboard_arrow_up_rounded
+                            : Icons.keyboard_arrow_down_rounded,
+                        color: AppColors.primaryBlue,
+                        size: 22,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (!isCompact)
+          ClipRect(
+            child: !_bankDropdownOpen
+                ? const SizedBox(width: double.infinity, height: 0)
+                : Container(
+                    margin: const EdgeInsets.only(top: 7),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(13),
+                      border: Border.all(color: AppColors.cardBorder),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.08),
+                          blurRadius: 16,
+                          offset: const Offset(0, 5),
+                        ),
+                      ],
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: TextField(
+                            controller: _bankSearchController,
+                            focusNode: _bankSearchFocus,
+                            onChanged: (_) => setState(() {}),
+                            textInputAction: TextInputAction.search,
+                            decoration:
+                                _inputDecoration(
+                                  'Buscar por banco o código (ej. 0105)',
+                                ).copyWith(
+                                  prefixIcon: const Icon(
+                                    Icons.search_rounded,
+                                    color: AppColors.primaryBlue,
+                                  ),
+                                  suffixIcon: _bankSearchController.text.isEmpty
+                                      ? null
+                                      : IconButton(
+                                          tooltip: 'Limpiar búsqueda',
+                                          icon: const Icon(Icons.close_rounded),
+                                          onPressed: () => setState(
+                                            _bankSearchController.clear,
+                                          ),
+                                        ),
+                                ),
+                          ),
+                        ),
+                        const Divider(height: 1, color: AppColors.cardBorder),
+                        SizedBox(
+                          height: 265,
+                          child: _buildOriginBankResults(
+                            matches,
+                            onSelected: _selectOriginBank,
+                            selectedValue: _selectedOriginBank,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+          ),
+      ],
+    );
+  }
+
+  Widget _amountCurrencyOption(String label, bool inUsd) {
+    final selected = _amountInUsd == inUsd;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: 'Ingresar monto en ${inUsd ? 'dólares' : 'bolívares'}',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _setAmountInputCurrency(inUsd),
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 36, minWidth: 47),
+            alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+            decoration: BoxDecoration(
+              color: selected ? AppColors.primaryBlue : Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: selected ? AppColors.primaryBlue : AppColors.cardBorder,
+              ),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: selected ? Colors.white : AppColors.darkNavy,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildTransactionForm() {
     const inputText = TextStyle(fontSize: 14, color: AppColors.darkNavy);
 
     final bank = _field(
       'Banco de origen *',
-      DropdownButtonFormField<String>(
-        value: _selectedOriginBank,
-        isExpanded: true,
-        style: inputText,
-        hint: const Text(
-          'Seleccionar banco',
-          style: TextStyle(fontSize: 14, color: AppColors.textMuted),
-        ),
-        decoration: _inputDecoration('Banco emisor'),
-        items: _banks
-            .map((b) => DropdownMenuItem(value: b, child: Text(b)))
-            .toList(),
-        onChanged: (val) => setState(() {
-          _selectedOriginBank = val;
-          if (val != 'Otro banco') _otherBankController.clear();
-          _stepError = null;
-        }),
-      ),
-    );
-
-    final otherBank = _field(
-      'Nombre del banco *',
-      TextField(
-        controller: _otherBankController,
-        style: inputText,
-        onChanged: (_) => setState(() => _stepError = null),
-        decoration: _inputDecoration('Ej. Banco Plaza'),
-      ),
+      _buildOriginBankSelector(),
+      error: _bankError,
     );
 
     final reference = _field(
@@ -1550,86 +1983,272 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
         buildCounter:
             (_, {required currentLength, required isFocused, maxLength}) =>
                 null,
-        decoration: _inputDecoration(_refHint).copyWith(
-          errorText: _refErrorMessage,
-          suffixIcon: _isRefValid
-              ? const Icon(
-                  Icons.check_circle_rounded,
-                  color: AppColors.successGreen,
-                  size: 20,
-                )
-              : null,
-        ),
+        decoration:
+            _inputDecoration(
+              _refHint,
+              hasError: _refErrorMessage != null,
+            ).copyWith(
+              suffixIcon: _isRefValid && _refErrorMessage == null
+                  ? const Icon(
+                      Icons.check_circle_rounded,
+                      color: AppColors.successGreen,
+                      size: 20,
+                    )
+                  : null,
+            ),
       ),
       helper: _refErrorMessage == null ? _refHelper : null,
+      error: _refErrorMessage,
     );
 
-    final date = _field(
-      'Fecha del pago *',
-      InkWell(
-        onTap: () => _selectDate(context),
-        borderRadius: BorderRadius.circular(AppSizes.radiusControl),
-        child: Container(
-          height: AppSizes.control,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(AppSizes.radiusControl),
-            border: Border.all(color: AppColors.cardBorder),
-          ),
-          child: Row(
-            children: [
-              const Icon(
-                Icons.calendar_month_outlined,
-                size: 18,
-                color: AppColors.textMuted,
+    // Fecha y monto comparten un encabezado de la misma altura.
+    // De este modo, los dos controles comienzan exactamente en la misma línea.
+    final date = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          height: _isVes ? 36 : 18,
+          child: const Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Fecha del pago *',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: AppColors.darkNavy,
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  _fmtDate(_selectedDate),
-                  maxLines: 1,
-                  style: inputText,
-                ),
-              ),
-            ],
+            ),
           ),
         ),
-      ),
+        const SizedBox(height: 6),
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => _selectDate(context),
+            borderRadius: BorderRadius.circular(AppSizes.radiusControl),
+            child: Container(
+              height: AppSizes.control,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(AppSizes.radiusControl),
+                border: Border.all(
+                  color: _dateError != null
+                      ? AppColors.errorRed
+                      : AppColors.cardBorder,
+                  width: _dateError == null ? 1 : 1.5,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.calendar_month_outlined,
+                    size: 18,
+                    color: _dateError != null
+                        ? AppColors.errorRed
+                        : AppColors.textMuted,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _fmtDate(_selectedDate),
+                      maxLines: 1,
+                      style: inputText,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (_dateError != null) _fieldError(_dateError!),
+      ],
     );
 
-    final amount = _field(
-      'Monto (${_isVes ? 'VES' : 'USD'}) *',
-      TextField(
-        controller: _montoController,
-        style: inputText,
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        inputFormatters: [
-          TextInputFormatter.withFunction(
-            (oldValue, newValue) =>
-                RegExp(r'^\d{0,10}([.,]\d{0,2})?$').hasMatch(newValue.text)
-                ? newValue
-                : oldValue,
-          ),
-        ],
-        onChanged: (_) => setState(() => _stepError = null),
-        decoration: _inputDecoration(_isVes ? 'Bs. 0,00' : 'USD 0,00'),
-      ),
+    final amountFormatter = TextInputFormatter.withFunction(
+      (oldValue, newValue) =>
+          RegExp(r'^\d{0,10}([.,]\d{0,2})?$').hasMatch(newValue.text)
+          ? newValue
+          : oldValue,
     );
+
+    // Pago Móvil y Transferencia: el usuario elige la moneda para introducir
+    // el importe, pero el monto enviado al servidor siempre es en bolívares.
+    final amount = _isVes
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                height: 36,
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Monto del pago *',
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.darkNavy,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    _amountCurrencyOption('Bs.', false),
+                    const SizedBox(width: 5),
+                    _amountCurrencyOption('USD', true),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              SizedBox(
+                height: AppSizes.control,
+                child: TextField(
+                  key: ValueKey(_amountInUsd ? 'monto-usd' : 'monto-bs'),
+                  controller: _amountInUsd
+                      ? _usdAmountController
+                      : _montoController,
+                  style: inputText,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  inputFormatters: [amountFormatter],
+                  onChanged: (_) => setState(() {
+                    _amountEditedByUser = true;
+                    if (_amountInUsd) {
+                      _syncConvertedAmount();
+                    } else {
+                      _syncUsdFromVes();
+                    }
+                    _amountError = null;
+                    _stepError = null;
+                  }),
+                  decoration:
+                      _inputDecoration(
+                        _amountInUsd ? 'USD 0,00' : 'Bs. 0,00',
+                        hasError: _amountError != null,
+                      ).copyWith(
+                        prefixIconConstraints: const BoxConstraints(
+                          minHeight: AppSizes.control,
+                          minWidth: 42,
+                        ),
+                        prefixIcon: Icon(
+                          _amountInUsd
+                              ? Icons.attach_money_rounded
+                              : Icons.currency_exchange_rounded,
+                          size: 19,
+                          color: _amountError != null
+                              ? AppColors.errorRed
+                              : AppColors.primaryBlue,
+                        ),
+                      ),
+                ),
+              ),
+              if (_amountError != null) _fieldError(_amountError!),
+            ],
+          )
+        : _field(
+            'Monto (USD) *',
+            SizedBox(
+              height: AppSizes.control,
+              child: TextField(
+                controller: _montoController,
+                style: inputText,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                inputFormatters: [amountFormatter],
+                onChanged: (_) => setState(() {
+                  _amountError = null;
+                  _stepError = null;
+                }),
+                decoration: _inputDecoration(
+                  'USD 0,00',
+                  hasError: _amountError != null,
+                ),
+              ),
+            ),
+            error: _amountError,
+          );
+
+    final conversion = _isVes
+        ? Container(
+            margin: const EdgeInsets.only(top: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: AppColors.primaryLight,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.cardBorder),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.currency_exchange_rounded,
+                  color: AppColors.primaryBlue,
+                  size: 22,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _amountInUsd
+                            ? 'Total a registrar en bolívares'
+                            : 'Equivalente aproximado en dólares',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        !_hasRate
+                            ? 'Tasa BCV no disponible'
+                            : _amountInUsd
+                            ? 'Bs. ${_fmt2(_typedAmount)}'
+                            : 'USD ${_fmt2(_vesToUsd(_typedAmount))}',
+                        style: TextStyle(
+                          fontSize: 19,
+                          fontWeight: FontWeight.w800,
+                          color: _hasRate
+                              ? AppColors.darkNavy
+                              : AppColors.errorRed,
+                        ),
+                      ),
+                      if (_hasRate) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          '1 USD = Bs. ${_fmt2(_currentTasaBcv)} · Tasa BCV',
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                        if (!_amountInUsd)
+                          Text(
+                            'Se registrarán Bs. ${_fmt2(_typedAmount)}.',
+                            style: const TextStyle(
+                              fontSize: 11.5,
+                              color: AppColors.textMuted,
+                            ),
+                          ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          )
+        : const SizedBox.shrink();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (_needsBank) ...[
-          if (_selectedOriginBank == 'Otro banco')
-            _formRow(bank, otherBank)
-          else
-            bank,
-          const SizedBox(height: 14),
-        ],
+        if (_needsBank) ...[bank, const SizedBox(height: 14)],
         reference,
         const SizedBox(height: 14),
         _formRow(date, amount),
+        if (_isVes) conversion,
         ..._buildAmountHints(),
         if (_stepError != null) ...[
           const SizedBox(height: 14),
@@ -1691,22 +2310,15 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
   );
 
   List<Widget> _buildAmountHints() {
-    const green = Color(0xFF047857);
     final typed = _typedAmount;
     final suggested = _suggestedAmount;
     return [
-      if (_isVes)
-        _hasRate
-            ? _hint(
-                'Equivalente estimado: USD ${_fmt2(typed / _currentTasaBcv)}',
-                green,
-                Icons.currency_exchange_rounded,
-              )
-            : _hint(
-                'No hay tasa BCV disponible.',
-                AppColors.errorRed,
-                Icons.error_outline,
-              ),
+      if (_isVes && !_hasRate)
+        _hint(
+          'No hay tasa BCV disponible.',
+          AppColors.errorRed,
+          Icons.error_outline,
+        ),
       if (typed > 0 && suggested > 0 && (typed - suggested).abs() > 0.009)
         _hint(
           typed < suggested
@@ -1723,41 +2335,46 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
   // ===========================================================================
   Widget _buildStep3Widget() {
     final info = _isCash
-        ? 'Adjunta el recibo oficial con número, fecha, monto y sello de caja.'
+        ? 'Adjunta el recibo numerado con fecha, monto y sello de caja.'
         : _isZelle
-        ? 'La constancia debe mostrar remitente, destinatario, confirmación, fecha y monto.'
+        ? 'Verifica que se distingan la confirmación, remitente, fecha y monto.'
         : 'Asegúrate de que se vean la referencia, fecha, monto y bancos.';
 
     final upload = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        _stepTitle(
+          _isCash ? 'Adjunta el recibo de caja' : 'Adjunta el comprobante',
+          info,
+        ),
         _buildUploadZone(),
+        if (_proofError != null) _fieldError(_proofError!),
         const SizedBox(height: 12),
         _buildProofChecklist(),
       ],
     );
     final summary = _buildSummaryCard();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _stepTitle(_isCash ? 'Recibo de caja' : 'Adjunta el comprobante', info),
-        LayoutBuilder(
-          builder: (_, c) => c.maxWidth >= 640
-              ? Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(flex: 11, child: upload),
-                    const SizedBox(width: 20),
-                    Expanded(flex: 10, child: summary),
-                  ],
-                )
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [summary, const SizedBox(height: 16), upload],
-                ),
-        ),
-      ],
+    return LayoutBuilder(
+      builder: (_, bounds) {
+        final wide = bounds.maxWidth >= 710;
+        if (!wide) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [upload, const SizedBox(height: 16), summary],
+          );
+        }
+        return IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(flex: 12, child: upload),
+              const SizedBox(width: 24),
+              Expanded(flex: 10, child: summary),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -1767,48 +2384,53 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     final name = _attachedFileName ?? '';
     final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
     final isImage = ext == 'png' || ext == 'jpg' || ext == 'jpeg';
-    final color = has ? AppColors.successGreen : AppColors.primaryBlue;
+    final color = _proofError != null
+        ? AppColors.errorRed
+        : has
+        ? AppColors.successGreen
+        : AppColors.primaryBlue;
 
-    final Widget content = has
+    final content = has
         ? Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (isImage)
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(10),
                   child: Image.memory(
                     bytes,
-                    height: 110,
+                    height: 104,
                     fit: BoxFit.contain,
                     errorBuilder: (_, __, ___) => const Icon(
                       Icons.image_outlined,
-                      size: 44,
+                      size: 48,
                       color: AppColors.textMuted,
                     ),
                   ),
                 )
               else
                 const Icon(
-                  Icons.picture_as_pdf_outlined,
-                  size: 52,
+                  Icons.picture_as_pdf_rounded,
+                  size: 58,
                   color: AppColors.errorRed,
                 ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
               Text(
                 name,
-                textAlign: TextAlign.center,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
                 style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w800,
                   color: AppColors.darkNavy,
                 ),
               ),
+              const SizedBox(height: 3),
               Text(
                 _fmtSize(bytes.length),
                 style: const TextStyle(
-                  fontSize: 12,
+                  fontSize: 12.5,
                   color: AppColors.textMuted,
                 ),
               ),
@@ -1816,28 +2438,24 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
               Wrap(
                 alignment: WrapAlignment.center,
                 spacing: 8,
+                runSpacing: 6,
                 children: [
                   OutlinedButton.icon(
                     onPressed: _pickComprobanteFile,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.darkNavy,
-                      minimumSize: const Size(0, AppSizes.minTarget),
-                      side: const BorderSide(color: AppColors.cardBorder),
-                    ),
                     icon: const Icon(Icons.swap_horiz_rounded, size: 18),
-                    label: const Text('Cambiar'),
+                    label: const Text('Cambiar archivo'),
                   ),
                   TextButton.icon(
                     onPressed: () => setState(() {
                       _attachedFileBytes = null;
                       _attachedFileName = null;
+                      _proofError = null;
                     }),
+                    icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                    label: const Text('Quitar'),
                     style: TextButton.styleFrom(
                       foregroundColor: AppColors.errorRed,
-                      minimumSize: const Size(0, AppSizes.minTarget),
                     ),
-                    icon: const Icon(Icons.delete_outline, size: 18),
-                    label: const Text('Quitar'),
                   ),
                 ],
               ),
@@ -1847,69 +2465,76 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: AppColors.tint(AppColors.primaryBlue),
+                width: 62,
+                height: 62,
+                decoration: const BoxDecoration(
                   shape: BoxShape.circle,
+                  color: Color(0xFFDCEAFF),
                 ),
                 child: const Icon(
                   Icons.cloud_upload_outlined,
-                  size: 30,
+                  size: 35,
                   color: AppColors.primaryBlue,
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 9),
               Text(
-                _isCash ? 'Adjuntar recibo de caja' : 'Adjuntar comprobante',
+                _isCash
+                    ? 'Adjunta tu recibo de caja'
+                    : 'Adjunta tu comprobante',
                 style: const TextStyle(
-                  fontSize: 14.5,
+                  fontSize: 16,
                   fontWeight: FontWeight.w800,
                   color: AppColors.darkNavy,
                 ),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 5),
               const Text(
                 'JPG, PNG o PDF · Máximo 5 MB',
                 style: TextStyle(fontSize: 12.5, color: AppColors.textMuted),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 11),
               Container(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
+                  horizontal: 20,
                   vertical: 10,
                 ),
                 decoration: BoxDecoration(
                   color: AppColors.primaryBlue,
-                  borderRadius: BorderRadius.circular(AppSizes.radiusControl),
+                  borderRadius: BorderRadius.circular(11),
                 ),
                 child: const Text(
                   'Seleccionar archivo',
                   style: TextStyle(
                     color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
                   ),
                 ),
+              ),
+              const SizedBox(height: 9),
+              const Text(
+                'Haz clic aquí para buscar tu archivo',
+                style: TextStyle(fontSize: 12.5, color: AppColors.textMuted),
               ),
             ],
           );
 
     return Semantics(
       button: !has,
-      label: has ? 'Comprobante adjunto: $name' : 'Adjuntar comprobante',
+      label: has ? 'Comprobante adjunto: $name' : 'Seleccionar comprobante',
       child: Material(
-        color: has ? const Color(0xFFF0FDF4) : AppColors.primaryLight,
+        color: has ? const Color(0xFFF0FDF4) : const Color(0xFFF8FBFF),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppSizes.radiusCard),
-          side: BorderSide(color: AppColors.tint(color, 0.5), width: 1.5),
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: AppColors.tint(color, 0.5), width: 1.4),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: has ? null : _pickComprobanteFile,
           child: Container(
             width: double.infinity,
-            constraints: const BoxConstraints(minHeight: 190),
+            constraints: const BoxConstraints(minHeight: 242),
             padding: const EdgeInsets.all(16),
             alignment: Alignment.center,
             child: content,
@@ -1923,42 +2548,49 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
   Widget _buildProofChecklist() {
     final List<String> items = switch (_selectedMethod) {
       'Zelle' => ['Remitente', 'Destinatario', 'Confirmación', 'Fecha y monto'],
-      'Efectivo USD' => ['N.º de recibo', 'Fecha', 'Monto', 'Sello de caja'],
+      'Efectivo USD' => ['N.º de recibo', 'Fecha', 'Monto', 'Sello'],
       _ => ['Referencia', 'Fecha', 'Monto', 'Bancos'],
     };
-    return Wrap(
-      spacing: 8,
-      runSpacing: 6,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        const Text(
-          'Debe verse:',
-          style: TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textMuted,
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F8FD),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 12,
+        runSpacing: 8,
+        children: [
+          const Text(
+            'Debe verse:',
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w800,
+              color: AppColors.darkNavy,
+            ),
           ),
-        ),
-        for (final i in items)
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons.check_circle_outline,
-                size: 15,
-                color: AppColors.successGreen,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                i,
-                style: const TextStyle(
-                  fontSize: 12.5,
-                  color: AppColors.darkNavy,
+          for (final item in items)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.check_circle_rounded,
+                  size: 17,
+                  color: AppColors.successGreen,
                 ),
-              ),
-            ],
-          ),
-      ],
+                const SizedBox(width: 5),
+                Text(
+                  item,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    color: AppColors.darkNavy,
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
     );
   }
 
@@ -1968,9 +2600,9 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.backgroundLight,
-        borderRadius: BorderRadius.circular(AppSizes.radiusCard),
-        border: Border.all(color: AppColors.cardBorder),
+        color: const Color(0xFFF8FAFE),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.cardBorder, width: 1.2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1978,12 +2610,12 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
           const Text(
             'Resumen del reporte',
             style: TextStyle(
-              fontSize: 14,
+              fontSize: 17,
               fontWeight: FontWeight.w800,
               color: AppColors.darkNavy,
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 13),
           _buildSummaryRow('Método', _selectedMethod),
           if (_needsBank) ...[
             const SizedBox(height: 8),
@@ -2006,7 +2638,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
           const SizedBox(height: 8),
           _buildSummaryRow('Fecha', _fmtDate(_selectedDate)),
           const Padding(
-            padding: EdgeInsets.symmetric(vertical: 10),
+            padding: EdgeInsets.symmetric(vertical: 7),
             child: Divider(height: 1, color: AppColors.cardBorder),
           ),
           _buildSummaryRow('Monto', _money(typed), emphasis: true),
@@ -2023,11 +2655,11 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
             ),
           ],
           const Padding(
-            padding: EdgeInsets.symmetric(vertical: 10),
+            padding: EdgeInsets.symmetric(vertical: 7),
             child: Divider(height: 1, color: AppColors.cardBorder),
           ),
           _buildSummaryRow('Cuenta', _familyDisplay),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
@@ -2045,7 +2677,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'La aprobación y la aplicación a las cuotas ocurren después de la conciliación.',
+                    'La aprobación y la aplicación a las cuotas se realizan después de la conciliación.',
                     style: TextStyle(
                       fontSize: 12,
                       height: 1.35,
@@ -2249,9 +2881,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       );
     } else {
       next = ElevatedButton(
-        onPressed: (_isSubmitting || _attachedFileBytes == null)
-            ? null
-            : _submitReport,
+        onPressed: _isSubmitting ? null : _submitReport,
         style: primaryStyle,
         child: _isSubmitting
             ? const SizedBox(
@@ -2291,7 +2921,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     );
   }
 
-  InputDecoration _inputDecoration(String hint) {
+  InputDecoration _inputDecoration(String hint, {bool hasError = false}) {
     return InputDecoration(
       hintText: hint,
       hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 14),
@@ -2306,11 +2936,17 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(AppSizes.radiusControl),
-        borderSide: const BorderSide(color: AppColors.cardBorder),
+        borderSide: BorderSide(
+          color: hasError ? AppColors.errorRed : AppColors.cardBorder,
+          width: hasError ? 1.5 : 1,
+        ),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(AppSizes.radiusControl),
-        borderSide: const BorderSide(color: AppColors.primaryBlue, width: 1.5),
+        borderSide: BorderSide(
+          color: hasError ? AppColors.errorRed : AppColors.primaryBlue,
+          width: 1.5,
+        ),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(AppSizes.radiusControl),
@@ -2320,6 +2956,289 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
         borderRadius: BorderRadius.circular(AppSizes.radiusControl),
         borderSide: const BorderSide(color: AppColors.errorRed, width: 1.5),
       ),
+    );
+  }
+}
+
+// Bancos mostrados en el selector (código, nombre visible, valor persistido).
+// Listado ordenado por código bancario ascendente.
+class _OriginBankOption {
+  final String code;
+  final String name;
+  final String value;
+  const _OriginBankOption(this.code, this.name, this.value);
+}
+
+const List<_OriginBankOption> _originBankOptions = [
+  _OriginBankOption(
+    '0102',
+    'Banco de Venezuela, S.A.C.A., Banco Universal',
+    'Banco de Venezuela',
+  ),
+  _OriginBankOption(
+    '0104',
+    'Venezolano de Crédito, S.A., Banco Universal',
+    'Venezolano de Crédito',
+  ),
+  _OriginBankOption(
+    '0105',
+    'Banco Mercantil, C.A., Banco Universal',
+    'Mercantil',
+  ),
+  _OriginBankOption(
+    '0108',
+    'Banco Provincial, S.A., Banco Universal',
+    'Provincial',
+  ),
+  _OriginBankOption(
+    '0114',
+    'Banco del Caribe, C.A., Banco Universal',
+    'Bancaribe',
+  ),
+  _OriginBankOption(
+    '0115',
+    'Banco Exterior, C.A., Banco Universal',
+    'Banco Exterior',
+  ),
+  _OriginBankOption(
+    '0128',
+    'Banco Caroní, C.A., Banco Universal',
+    'Banco Caroní',
+  ),
+  _OriginBankOption('0134', 'Banesco Banco Universal, C.A.', 'Banesco'),
+  _OriginBankOption(
+    '0137',
+    'Banco Sofitasa, Banco Universal, C.A.',
+    'Sofitasa',
+  ),
+  _OriginBankOption('0138', 'Banco Plaza, C.A.', 'Banco Plaza'),
+  _OriginBankOption(
+    '0146',
+    'Banco de la Gente Emprendedora, Bangente, C.A.',
+    'Bangente',
+  ),
+  _OriginBankOption(
+    '0151',
+    'BFC Banco Fondo Común, C.A., Banco Universal',
+    'BFC',
+  ),
+  _OriginBankOption('0156', '100% Banco, Banco Comercial, C.A.', '100% Banco'),
+  _OriginBankOption('0157', 'Del Sur Banco Universal, C.A.', 'Del Sur'),
+  _OriginBankOption(
+    '0163',
+    'Banco del Tesoro, C.A., Banco Universal',
+    'Banco del Tesoro',
+  ),
+  _OriginBankOption(
+    '0166',
+    'Banco Agrícola de Venezuela, C.A., Banco Universal',
+    'Banco Agrícola de Venezuela',
+  ),
+  _OriginBankOption(
+    '0168',
+    'Bancrecer, S.A., Banco de Desarrollo',
+    'Bancrecer',
+  ),
+  _OriginBankOption('0169', 'R4, Banco Microfinanciero, C.A.', 'R4'),
+  _OriginBankOption(
+    '0171',
+    'Banco Activo, C.A., Banco Comercial',
+    'Banco Activo',
+  ),
+  _OriginBankOption('0172', 'Bancamiga, Banco Universal', 'Bancamiga'),
+  _OriginBankOption('0174', 'Banplus Banco Comercial, C.A.', 'Banplus'),
+  _OriginBankOption(
+    '0175',
+    'Banco Digital de los Trabajadores',
+    'Banco Digital de los Trabajadores',
+  ),
+  _OriginBankOption(
+    '0177',
+    'Banco de la Fuerza Armada Nacional Bolivariana, Banco Universal, C.A.',
+    'BANFANB',
+  ),
+  _OriginBankOption('0178', 'N58 Banco Digital', 'N58'),
+  _OriginBankOption(
+    '0191',
+    'Banco Nacional de Crédito, C.A., Banco Universal',
+    'BNC',
+  ),
+];
+
+String _normalizeBankSearch(String term) => term
+    .trim()
+    .toLowerCase()
+    .replaceAll(RegExp(r'[áàâä]'), 'a')
+    .replaceAll(RegExp(r'[éèêë]'), 'e')
+    .replaceAll(RegExp(r'[íìîï]'), 'i')
+    .replaceAll(RegExp(r'[óòôö]'), 'o')
+    .replaceAll(RegExp(r'[úùûü]'), 'u');
+
+List<_OriginBankOption> _filterOriginBanks(String query) {
+  final search = _normalizeBankSearch(query);
+  if (search.isEmpty) return _originBankOptions;
+  return _originBankOptions.where((bank) {
+    return _normalizeBankSearch(
+      '${bank.code} ${bank.name} ${bank.value}',
+    ).contains(search);
+  }).toList();
+}
+
+Widget _buildOriginBankResults(
+  List<_OriginBankOption> banks, {
+  required ValueChanged<_OriginBankOption> onSelected,
+  String? selectedValue,
+}) {
+  if (banks.isEmpty) {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(20),
+        child: Text(
+          'No se encontraron bancos. Prueba con otro nombre o código.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+        ),
+      ),
+    );
+  }
+  return ListView.separated(
+    primary: false,
+    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+    padding: EdgeInsets.zero,
+    itemCount: banks.length,
+    separatorBuilder: (_, __) => const Divider(
+      height: 1,
+      indent: 16,
+      endIndent: 16,
+      color: AppColors.cardBorder,
+    ),
+    itemBuilder: (context, i) {
+      final bank = banks[i];
+      final selected = bank.value == selectedValue;
+      final label = bank.code.isEmpty
+          ? bank.name
+          : '${bank.code} - ${bank.name}';
+      return Semantics(
+        button: true,
+        selected: selected,
+        child: InkWell(
+          onTap: () => onSelected(bank),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 56),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 15,
+                        height: 1.35,
+                        fontWeight: selected
+                            ? FontWeight.w700
+                            : FontWeight.w400,
+                        color: AppColors.darkNavy,
+                      ),
+                    ),
+                  ),
+                  if (selected) ...[
+                    const SizedBox(width: 8),
+                    const Icon(
+                      Icons.check_circle_rounded,
+                      size: 19,
+                      color: AppColors.primaryBlue,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
+
+/// Selector inferior para dispositivos móviles: filtro y listado con scroll.
+class _OriginBankSheet extends StatefulWidget {
+  final String? selectedValue;
+  const _OriginBankSheet({this.selectedValue});
+
+  @override
+  State<_OriginBankSheet> createState() => _OriginBankSheetState();
+}
+
+class _OriginBankSheetState extends State<_OriginBankSheet> {
+  final TextEditingController _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final banks = _filterOriginBanks(_search.text);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Center(
+          child: Container(
+            height: 4,
+            width: 38,
+            margin: const EdgeInsets.only(top: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFD1D5DB),
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        ),
+        // Igual que en la referencia: buscador limpio arriba del listado.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(22, 12, 22, 7),
+          child: Semantics(
+            label: 'Buscar banco de origen por nombre o código',
+            child: TextField(
+              controller: _search,
+              onChanged: (_) => setState(() {}),
+              textInputAction: TextInputAction.search,
+              style: const TextStyle(fontSize: 16, color: AppColors.darkNavy),
+              decoration: InputDecoration(
+                hintText: 'Buscar...',
+                hintStyle: const TextStyle(
+                  fontSize: 16,
+                  color: AppColors.textMuted,
+                ),
+                suffixIcon: _search.text.isEmpty
+                    ? const Icon(
+                        Icons.search_rounded,
+                        color: AppColors.primaryBlue,
+                        size: 27,
+                      )
+                    : IconButton(
+                        tooltip: 'Limpiar búsqueda',
+                        icon: const Icon(Icons.close_rounded),
+                        onPressed: () => setState(_search.clear),
+                      ),
+                contentPadding: const EdgeInsets.symmetric(vertical: 15),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+              ),
+            ),
+          ),
+        ),
+        const Divider(height: 1, color: AppColors.cardBorder),
+        Expanded(
+          child: _buildOriginBankResults(
+            banks,
+            onSelected: (bank) => Navigator.of(context).pop(bank),
+            selectedValue: widget.selectedValue,
+          ),
+        ),
+      ],
     );
   }
 }
