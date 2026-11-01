@@ -54,7 +54,6 @@ class DashboardNavItem {
 }
 
 const Color _navy = AppColors.sidebarBottom;
-const Color _navySurface = AppColors.sidebarTop;
 const Color _navActive = AppColors.primaryBlue;
 const Color _danger = Color(0xFFDC2626);
 const Duration _hoverDuration = Duration(milliseconds: 150);
@@ -83,18 +82,18 @@ const double _fadeSpan = 0.50;
 
 /// Resorte amortiguado normalizado a la duración de la animación.
 ///   [damping]  0.5 = muy elástico · 0.6 = elegante · 0.8 = casi sin rebote
-///   [settle]   cuánto queda de oscilación al terminar (0.001 = invisible)
-/// La frecuencia se deduce de [settle], así que la animación SIEMPRE termina
+///   El asentamiento se mantiene fijo en 0.001 (oscilación invisible).
+/// La frecuencia se deduce del asentamiento, así que la animación SIEMPRE termina
 /// asentada al llegar a t = 1, sin importar el amortiguamiento que elijas.
 /// Sobrepaso aprox.: 0.5 → 16 % · 0.6 → 9.5 % · 0.7 → 4.6 % · 0.8 → 1.5 %
 class _SpringCurve extends Curve {
   final double damping;
-  final double settle;
-  const _SpringCurve({this.damping = 0.6, this.settle = 0.001})
+  const _SpringCurve({this.damping = 0.6})
     : assert(damping > 0 && damping < 1);
 
   @override
   double transformInternal(double t) {
+    const settle = 0.001;
     final wn = -math.log(settle) / damping; // frecuencia natural
     final wd = wn * math.sqrt(1 - damping * damping); // frecuencia amortiguada
     final decay = math.exp(-damping * wn * t);
@@ -330,7 +329,7 @@ class _DashboardShellState extends State<DashboardShell>
     // «Reducir movimiento» y TickerMode (por ejemplo, rutas inactivas).
     final enabled =
         !MediaQuery.disableAnimationsOf(context) &&
-        TickerMode.of(context) &&
+        TickerMode.valuesOf(context).enabled &&
         (Breakpoints.isDesktop(MediaQuery.sizeOf(context).width) ||
             _drawerOpen);
     if (enabled) {

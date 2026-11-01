@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../data/reconciliation_repository.dart';
+import '../../data/supabase_reconciliation_repository.dart';
 
 class PaymentReconciliationWidget extends StatefulWidget {
   final String colegioId;
@@ -19,7 +20,9 @@ class PaymentReconciliationWidget extends StatefulWidget {
 
 class _PaymentReconciliationWidgetState
     extends State<PaymentReconciliationWidget> {
-  final SupabaseClient _supabase = Supabase.instance.client;
+  final ReconciliationRepository _repository = SupabaseReconciliationRepository();
+  int _loadVersion = 0;
+  String? _loadError;
 
   List<Map<String, dynamic>> _pendingPayments = [];
   bool _isLoading = true;
@@ -31,76 +34,62 @@ class _PaymentReconciliationWidgetState
     _fetchPayments();
   }
 
+  @override
+  void didUpdateWidget(covariant PaymentReconciliationWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.colegioId != widget.colegioId) {
+      _fetchPayments();
+    }
+  }
+
+  @override
+  void dispose() {
+    _loadVersion++;
+    super.dispose();
+  }
+
   Future<void> _fetchPayments() async {
-    setState(() => _isLoading = true);
+    final version = ++_loadVersion;
+    final colegioId = widget.colegioId;
+    final status = _filterStatus ?? 'pendiente';
+    if (!mounted) return;
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+    });
     try {
-      var query = _supabase.from('pagos').select('''
-        id,
-        colegio_id,
-        representante_id,
-        monto,
-        moneda,
-        tasa_aplicada,
-        monto_usd_equivalente,
-        metodo,
-        referencia,
-        banco_origen,
-        fecha_pago,
-        comprobante_path,
-        estado,
-        motivo_rechazo,
-        creado_at,
-        representantes (
-          nombres,
-          apellidos,
-          cedula
-        )
-      ''');
-
-      if (_filterStatus != 'todos') {
-        query = query.eq('estado', _filterStatus!);
-      }
-
-      final response = await query.order('creado_at', ascending: false);
-
-      if (mounted) {
-        setState(() {
-          _pendingPayments = List<Map<String, dynamic>>.from(response);
-          _isLoading = false;
-        });
-      }
+      final payments = await _repository.loadPayments(
+        colegioId: colegioId,
+        status: status,
+      );
+      if (!mounted || version != _loadVersion) return;
+      setState(() {
+        _pendingPayments = payments;
+        _isLoading = false;
+      });
     } catch (e) {
       debugPrint('Error cargando pagos para conciliación: $e');
-      if (mounted) setState(() => _isLoading = false);
+      if (!mounted || version != _loadVersion) return;
+      setState(() {
+        _isLoading = false;
+        _loadError = 'No se pudieron consultar los pagos. Intenta nuevamente.';
+      });
     }
   }
 
   Future<void> _approvePayment(Map<String, dynamic> pago) async {
     final String pagoId = pago['id'].toString();
-    final user = _supabase.auth.currentUser;
 
     try {
       // Solo se cambia el estado del pago. El trigger de base de datos
       // (fn_conciliar_cuota_al_aprobar_pago) aplica el monto por FIFO a las
       // cuotas de todos los hijos del representante y registra cada abono en
       // pago_aplicaciones. Si sobra dinero queda como saldo a favor.
-      // .select() devuelve las filas realmente actualizadas: si viene vacío,
-      // la base de datos bloqueó el cambio (p. ej. por permisos/RLS).
-      final updated = await _supabase
-          .from('pagos')
-          .update({
-            'estado': 'aprobado',
-            'revisado_por': user?.id,
-            'revisado_at': DateTime.now().toUtc().toIso8601String(),
-          })
-          .eq('id', pagoId)
-          .select('id');
-
-      if ((updated as List).isEmpty) {
-        throw Exception(
-          'La base de datos no actualizó el pago (revisa permisos/RLS de la tabla pagos).',
-        );
-      }
+      // El repositorio comprueba la actualización efectiva y el estado pendiente.
+      await _repository.approvePayment(
+        colegioId: widget.colegioId,
+        paymentId: pagoId,
+      );
 
       if (!mounted) return;
 
@@ -261,57 +250,30 @@ class _PaymentReconciliationWidgetState
     );
 
     if (confirmed == true) {
-      final user = _supabase.auth.currentUser;
       try {
-        await _supabase
-            .from('pagos')
-            .update({
-              'estado': 'rechazado',
-              'motivo_rechazo': motivoController.text.trim(),
-              'revisado_por': user?.id,
-              'revisado_at': DateTime.now().toUtc().toIso8601String(),
-            })
-            .eq('id', pagoId);
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Pago marcado como rechazado.'),
-              backgroundColor: Colors.orangeAccent,
-            ),
-          );
-          _fetchPayments();
-          widget.onPaymentProcessed
-              ?.call(); // <-- Notifica al Dashboard principal
-        }
+        await _repository.rejectPayment(
+          colegioId: widget.colegioId,
+          paymentId: pagoId,
+          reason: motivoController.text.trim(),
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Pago marcado como rechazado.'),
+            backgroundColor: Colors.orangeAccent,
+          ),
+        );
+        _fetchPayments();
+        widget.onPaymentProcessed?.call();
       } catch (e) {
-        _showErrorSnackBar('Error al rechazar el pago: $e');
+        if (mounted) _showErrorSnackBar('Error al rechazar el pago: $e');
       }
     }
   }
 
-  /// Devuelve una URL firmada y temporal para ver el comprobante.
-  /// Acepta la ruta del archivo (formato nuevo) o la URL pública completa que
-  /// guardaban los registros antiguos. El bucket debe ser privado.
-  Future<String?> _resolveComprobanteUrl(String stored) async {
-    if (stored.isEmpty) return null;
-    String path = stored;
-    final legacy = RegExp(
-      r'/storage/v1/object/(?:public|sign|authenticated)/comprobantes/',
-    ).firstMatch(stored);
-    if (legacy != null) {
-      path = Uri.decodeComponent(stored.substring(legacy.end).split('?').first);
-    }
-    try {
-      return await _supabase.storage
-          .from('comprobantes')
-          .createSignedUrl(path, 300);
-    } catch (e) {
-      debugPrint('No se pudo firmar el comprobante: $e');
-      // Último recurso para registros antiguos con bucket aún público.
-      return stored.startsWith('http') ? stored : null;
-    }
-  }
+  /// Resuelve un comprobante mediante el repositorio, sin usar Storage aquí.
+  Future<String?> _resolveComprobanteUrl(String stored) =>
+      _repository.resolveProofUrl(stored);
 
   void _showDetailModal(Map<String, dynamic> pago) {
     final String repNombre = pago['representantes'] != null
@@ -576,6 +538,24 @@ class _PaymentReconciliationWidgetState
                 padding: EdgeInsets.all(32),
                 child: Center(child: CircularProgressIndicator()),
               )
+            else if (_loadError != null)
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  children: [
+                    Text(
+                      _loadError!,
+                      style: const TextStyle(color: Colors.redAccent),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: _fetchPayments,
+                      child: const Text('Reintentar'),
+                    ),
+                  ],
+                ),
+              )
             else if (_pendingPayments.isEmpty)
               Container(
                 padding: const EdgeInsets.all(32),
@@ -605,7 +585,7 @@ class _PaymentReconciliationWidgetState
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 itemCount: _pendingPayments.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
+                separatorBuilder: (context, index) => const Divider(height: 1),
                 itemBuilder: (context, index) {
                   final pago = _pendingPayments[index];
                   final String repNombre = pago['representantes'] != null
@@ -614,9 +594,12 @@ class _PaymentReconciliationWidgetState
                   final String status = pago['estado'] ?? 'pendiente';
 
                   Color badgeColor = Colors.orange;
-                  if (status == 'aprobado')
+                  if (status == 'aprobado') {
                     badgeColor = const Color(0xFF059669);
-                  if (status == 'rechazado') badgeColor = Colors.redAccent;
+                  }
+                  if (status == 'rechazado') {
+                    badgeColor = Colors.redAccent;
+                  }
 
                   return ListTile(
                     contentPadding: const EdgeInsets.symmetric(
@@ -624,7 +607,7 @@ class _PaymentReconciliationWidgetState
                       vertical: 4,
                     ),
                     leading: CircleAvatar(
-                      backgroundColor: badgeColor.withOpacity(0.1),
+                      backgroundColor: badgeColor.withValues(alpha: 0.1),
                       child: Icon(
                         status == 'aprobado'
                             ? Icons.check

@@ -330,7 +330,10 @@ class DriftingGlow extends StatelessWidget {
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             gradient: RadialGradient(
-              colors: [color.withOpacity(opacity), color.withOpacity(0)],
+              colors: [
+                color.withValues(alpha: opacity),
+                color.withValues(alpha: 0),
+              ],
             ),
           ),
         ),
@@ -463,8 +466,8 @@ class _HoverCardState extends State<HoverCard> {
               ),
               boxShadow: [
                 BoxShadow(
-                  color: widget.shadowColor.withOpacity(
-                    _hovered
+                  color: widget.shadowColor.withValues(
+                    alpha: _hovered
                         ? widget.hoverShadowOpacity
                         : widget.restShadowOpacity,
                   ),
@@ -551,7 +554,7 @@ class _AnimatedButtonState extends State<AnimatedButton> {
               ? const []
               : [
                   BoxShadow(
-                    color: glow.withOpacity(_hovered ? 0.40 : 0.0),
+                    color: glow.withValues(alpha: _hovered ? 0.40 : 0.0),
                     blurRadius: _hovered ? 22 : 0,
                     offset: Offset(0, _hovered ? 8 : 0),
                   ),

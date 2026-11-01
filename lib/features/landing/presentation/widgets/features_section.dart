@@ -113,7 +113,7 @@ class _FeatureCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return HoverCard(
       width: width,
-      hoverBorderColor: AppColors.primaryBlue.withOpacity(0.35),
+      hoverBorderColor: AppColors.primaryBlue.withValues(alpha: 0.35),
       shadowColor: AppColors.primaryBlue,
       hoverShadowOpacity: 0.16,
       builder: (context, hovered) {
@@ -128,7 +128,7 @@ class _FeatureCard extends StatelessWidget {
               decoration: BoxDecoration(
                 color: hovered
                     ? AppColors.primaryBlue
-                    : AppColors.primaryBlue.withOpacity(0.08),
+                    : AppColors.primaryBlue.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: AnimatedScale(

@@ -67,7 +67,7 @@ class SecuritySection extends StatelessWidget {
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             border: Border.all(
-                              color: Colors.white.withOpacity(0.08),
+                              color: Colors.white.withValues(alpha: 0.08),
                               width: 40,
                             ),
                           ),
@@ -83,11 +83,11 @@ class SecuritySection extends StatelessWidget {
                           child: Container(
                             padding: const EdgeInsets.all(28),
                             decoration: BoxDecoration(
-                              color: AppColors.primaryBlue.withOpacity(0.2),
+                              color: AppColors.primaryBlue.withValues(alpha: 0.2),
                               borderRadius: BorderRadius.circular(24),
                               boxShadow: [
                                 BoxShadow(
-                                  color: AppColors.primaryBlue.withOpacity(
+                                  color: AppColors.primaryBlue.withValues(alpha: 
                                     0.35,
                                   ),
                                   blurRadius: 40,
@@ -204,7 +204,7 @@ class SecuritySection extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.18),
+            color: Colors.black.withValues(alpha: 0.18),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -258,7 +258,7 @@ class _PulseRings extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         border: Border.all(
-          color: AppColors.primaryBlue.withOpacity((1 - p) * 0.35),
+          color: AppColors.primaryBlue.withValues(alpha: (1 - p) * 0.35),
           width: 1.5,
         ),
       ),
@@ -297,7 +297,7 @@ class _CheckItem extends StatelessWidget {
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
                     color: hovered
-                        ? AppColors.successGreen.withOpacity(0.22)
+                        ? AppColors.successGreen.withValues(alpha: 0.22)
                         : Colors.white10,
                     shape: BoxShape.circle,
                   ),

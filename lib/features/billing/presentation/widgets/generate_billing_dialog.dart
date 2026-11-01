@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../../../../core/theme/app_colors.dart';
+import '../../data/billing_repository.dart';
+import '../../data/supabase_billing_repository.dart';
+import '../../domain/billing_request.dart';
 
 class GenerateBillingDialog extends StatefulWidget {
   final String colegioId;
@@ -18,7 +21,7 @@ class GenerateBillingDialog extends StatefulWidget {
 }
 
 class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
-  final SupabaseClient _supabase = Supabase.instance.client;
+  final BillingRepository _repository = SupabaseBillingRepository();
   final _formKey = GlobalKey<FormState>();
 
   final TextEditingController _conceptoController = TextEditingController(
@@ -60,6 +63,18 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
   }
 
   @override
+  void didUpdateWidget(covariant GenerateBillingDialog oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.colegioId != widget.colegioId) {
+      setState(() {
+        _isLoadingCount = true;
+        _activeStudentsCount = 0;
+      });
+      _countActiveStudents();
+    }
+  }
+
+  @override
   void dispose() {
     _conceptoController.dispose();
     _montoUsdController.dispose();
@@ -69,18 +84,13 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
   /// Cuenta únicamente estudiantes con estatus 'activo = true'
   Future<void> _countActiveStudents() async {
     try {
-      final response = await _supabase
-          .from('estudiantes')
-          .select('id')
-          .eq('colegio_id', widget.colegioId)
-          .eq('activo', true);
-
-      if (mounted) {
-        setState(() {
-          _activeStudentsCount = (response as List).length;
-          _isLoadingCount = false;
-        });
-      }
+      final colegioId = widget.colegioId;
+      final count = await _repository.countActiveStudents(colegioId: colegioId);
+      if (!mounted || colegioId != widget.colegioId) return;
+      setState(() {
+        _activeStudentsCount = count;
+        _isLoadingCount = false;
+      });
     } catch (e) {
       debugPrint('Error contando estudiantes activos: $e');
       if (mounted) setState(() => _isLoadingCount = false);
@@ -98,29 +108,20 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
       final String conceptoNombre = _conceptoController.text.trim();
       final double montoUsd =
           double.tryParse(_montoUsdController.text.replaceAll(',', '.')) ?? 0.0;
-      final String fechaVencimiento =
-          '${_dueDate.year}-${_dueDate.month.toString().padLeft(2, '0')}-${_dueDate.day.toString().padLeft(2, '0')}';
-
-      // Facturación atómica en el servidor (un solo viaje a la base de datos):
-      // valida que el usuario sea administrador del colegio, crea o reutiliza
-      // el concepto, inserta las cuotas omitiendo duplicados y aplica el saldo
-      // a favor de las familias que lo tengan.
-      final dynamic res = await _supabase.rpc(
-        'generar_facturacion',
-        params: {
-          'p_colegio': widget.colegioId,
-          'p_concepto': conceptoNombre,
-          'p_periodo': periodo,
-          'p_monto_usd': montoUsd,
-          'p_vencimiento': fechaVencimiento,
-        },
+      // La generación de cuotas sigue siendo atómica y se ejecuta en SQL.
+      // Esta pantalla solo presenta la información y su resultado.
+      final resultado = await _repository.generateBilling(
+        BillingRequest(
+          colegioId: widget.colegioId,
+          concepto: conceptoNombre,
+          periodo: periodo,
+          montoUsd: montoUsd,
+          fechaVencimiento: _dueDate,
+        ),
       );
-      final Map<String, dynamic> row = Map<String, dynamic>.from(
-        (res is List ? res.first : res) as Map,
-      );
-      final int generatedCount = (row['generadas'] as num?)?.toInt() ?? 0;
-      final int skippedDuplicates = (row['omitidas'] as num?)?.toInt() ?? 0;
-      final int activos = (row['activos'] as num?)?.toInt() ?? 0;
+      final generatedCount = resultado.generadas;
+      final skippedDuplicates = resultado.omitidas;
+      final activos = resultado.activos;
 
       if (activos == 0) {
         if (mounted) {
@@ -162,7 +163,7 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Error al procesar la facturación: ${e is PostgrestException ? e.message : e}',
+              'Error al procesar la facturación: ${e is BillingRepositoryException ? e.message : e}',
             ),
             backgroundColor: Colors.redAccent,
           ),
@@ -375,8 +376,9 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
                               )
                               .toList(),
                           onChanged: (val) {
-                            if (val != null)
+                            if (val != null) {
                               setState(() => _selectedMonth = val);
+                            }
                           },
                         ),
                       ],
@@ -411,8 +413,9 @@ class _GenerateBillingDialogState extends State<GenerateBillingDialog> {
                               )
                               .toList(),
                           onChanged: (val) {
-                            if (val != null)
+                            if (val != null) {
                               setState(() => _selectedYear = val);
+                            }
                           },
                         ),
                       ],

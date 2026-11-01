@@ -427,7 +427,7 @@ class _NotificationPanelState extends State<_NotificationPanel> {
         border: Border.all(color: const Color(0xFF94A3B8)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.12),
+            color: Colors.black.withValues(alpha: 0.12),
             blurRadius: 20,
             offset: const Offset(0, 6),
           ),
@@ -586,7 +586,7 @@ class _NotificationPanelState extends State<_NotificationPanel> {
       shrinkWrap: true,
       padding: EdgeInsets.zero,
       itemCount: shown + (showMore ? 1 : 0),
-      separatorBuilder: (_, __) =>
+      separatorBuilder: (_, _) =>
           const Divider(height: 1, color: AppColors.cardBorder),
       itemBuilder: (_, i) {
         if (i == shown) {
@@ -665,7 +665,7 @@ class _NotificationTile extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(7),
               decoration: BoxDecoration(
-                color: color.withOpacity(0.12),
+                color: color.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(icon, size: 16, color: color),

@@ -1,15 +1,17 @@
 import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../data/calendar_repository.dart';
+import '../../data/supabase_calendar_repository.dart';
+import '../../domain/calendar_event.dart';
 
 import '../../../../core/theme/app_colors.dart';
 
 /// Calendario de movimientos y cuotas del representante.
-/// Ruta: lib/features/dashboard/presentation/widgets/representative_calendar_section.dart
+/// Ruta: lib/features/calendar/presentation/widgets/representative_calendar_section.dart
 ///
-/// Nunca genera movimientos ficticios. Lee exclusivamente los registros a los
-/// que el representante tiene acceso en Supabase (incluyendo las políticas RLS).
+/// Nunca genera movimientos ficticios. Los permisos deben estar protegidos
+/// por políticas RLS configuradas en la base de datos.
 class RepresentativeCalendarSection extends StatefulWidget {
   const RepresentativeCalendarSection({
     super.key,
@@ -27,32 +29,6 @@ class RepresentativeCalendarSection extends StatefulWidget {
       _RepresentativeCalendarSectionState();
 }
 
-enum _EventKind { generated, due, paid, reported, approved, rejected }
-
-class _CalendarEvent {
-  const _CalendarEvent({
-    required this.id,
-    required this.date,
-    required this.kind,
-    required this.title,
-    required this.details,
-    this.amount,
-    this.studentId,
-    this.paymentId,
-    this.pending = false,
-  });
-
-  final String id;
-  final DateTime date;
-  final _EventKind kind;
-  final String title;
-  final String details;
-  final String? amount;
-  final String? studentId;
-  final String? paymentId;
-  final bool pending;
-}
-
 class _RepresentativeCalendarSectionState
     extends State<RepresentativeCalendarSection> {
   static const _navy = AppColors.darkNavy;
@@ -66,7 +42,6 @@ class _RepresentativeCalendarSectionState
   // Reportar un pago no equivale a que el banco lo haya confirmado.
   // Indigo diferencia el reporte del azul de una cuota nueva.
   static const _indigo = Color(0xFF4355A5);
-  static const _bg = Color(0xFFF8FAFC);
 
   static const _months = [
     'enero',
@@ -96,11 +71,10 @@ class _RepresentativeCalendarSectionState
   bool _refreshing = false;
   String? _error;
   List<String> _warnings = [];
-  List<_CalendarEvent> _events = [];
+  List<CalendarEvent> _events = [];
   int _loadSerial = 0;
   Timer? _reloadDelay;
-  RealtimeChannel? _paymentsChannel;
-  RealtimeChannel? _noticesChannel;
+  late final CalendarRepository _repository;
 
   @override
   void initState() {
@@ -108,6 +82,7 @@ class _RepresentativeCalendarSectionState
     final today = DateUtils.dateOnly(DateTime.now());
     _month = DateTime(today.year, today.month);
     _selected = today;
+    _repository = SupabaseCalendarRepository(channelKey: 'full-${identityHashCode(this)}');
     _listen();
     _load();
   }
@@ -136,123 +111,21 @@ class _RepresentativeCalendarSectionState
     super.dispose();
   }
 
-  void _stopListening() {
-    final client = Supabase.instance.client;
-    if (_paymentsChannel != null) client.removeChannel(_paymentsChannel!);
-    if (_noticesChannel != null) client.removeChannel(_noticesChannel!);
-    _paymentsChannel = null;
-    _noticesChannel = null;
-  }
+  void _stopListening() => _repository.stopListening();
 
   void _scheduleReload() {
     _reloadDelay?.cancel();
     _reloadDelay = Timer(const Duration(milliseconds: 550), () {
-      if (mounted) _load(silent: true);
+      if (mounted) {
+        _load(silent: true);
+      }
     });
   }
 
-  void _listen() {
-    final rep = widget.representativeId.trim();
-    if (rep.isEmpty) return;
-    final client = Supabase.instance.client;
-    _paymentsChannel = client
-        .channel('calendario-pagos-$rep')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'pagos',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'representante_id',
-            value: rep,
-          ),
-          callback: (_) => _scheduleReload(),
-        )
-        .subscribe();
-    final uid = client.auth.currentUser?.id;
-    if (uid != null) {
-      _noticesChannel = client
-          .channel('calendario-notificaciones-$uid')
-          .onPostgresChanges(
-            event: PostgresChangeEvent.insert,
-            schema: 'public',
-            table: 'notificaciones_app',
-            filter: PostgresChangeFilter(
-              type: PostgresChangeFilterType.eq,
-              column: 'perfil_id',
-              value: uid,
-            ),
-            callback: (_) => _scheduleReload(),
-          )
-          .subscribe();
-    }
-  }
-
-  static String _first(Map<String, dynamic> row, List<String> names) {
-    for (final name in names) {
-      final value = row[name]?.toString().trim() ?? '';
-      if (value.isNotEmpty && value.toLowerCase() != 'null') return value;
-    }
-    return '';
-  }
-
-  static DateTime? _date(Map<String, dynamic> row, List<String> names) {
-    for (final name in names) {
-      final value = row[name]?.toString().trim() ?? '';
-      if (value.isEmpty) continue;
-      // Los campos SQL DATE representan un día local, no un instante UTC.
-      if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value)) {
-        final d = DateTime.tryParse(value);
-        if (d != null) return DateTime(d.year, d.month, d.day);
-      } else {
-        final parsed = DateTime.tryParse(value);
-        if (parsed != null) return parsed.toLocal();
-      }
-    }
-    return null;
-  }
-
-  static String _normalStatus(String value) {
-    final v = value.trim().toLowerCase().replaceAll(' ', '_');
-    if (['aprobado', 'aprobada', 'validado', 'confirmado'].contains(v)) {
-      return 'aprobado';
-    }
-    if (['rechazado', 'rechazada', 'denegado', 'invalidado'].contains(v)) {
-      return 'rechazado';
-    }
-    if ([
-      'pendiente',
-      'reportado',
-      'en_revision',
-      'en_espera',
-      'espera',
-    ].contains(v))
-      return 'pendiente';
-    return v;
-  }
-
-  static String _statusLabel(String value) => switch (value) {
-    'aprobado' => 'Aprobado',
-    'rechazado' => 'Rechazado',
-    'pendiente' => 'En revisión',
-    _ => 'Estado no disponible',
-  };
-
-  static String? _amount(Map<String, dynamic> row, {bool cuota = false}) {
-    final raw = cuota
-        ? _first(row, ['monto_usd', 'monto', 'importe_usd', 'total_usd'])
-        : _first(row, ['monto', 'monto_usd_equivalente']);
-    if (raw.isEmpty) return null;
-    final value = double.tryParse(raw.replaceAll(',', '.'));
-    if (value == null) return null;
-    final currency = cuota
-        ? (_first(row, ['monto_usd', 'importe_usd', 'total_usd']).isNotEmpty
-              ? 'USD'
-              : _first(row, ['moneda']).toUpperCase())
-        : _first(row, ['moneda']).toUpperCase();
-    final number = value.toStringAsFixed(2).replaceAll('.', ',');
-    return currency.isEmpty ? number : '$number $currency';
-  }
+  void _listen() => _repository.startListening(
+    representativeId: widget.representativeId.trim(),
+    onChanged: _scheduleReload,
+  );
 
   static String _formatDate(DateTime d) =>
       '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
@@ -263,17 +136,6 @@ class _RepresentativeCalendarSectionState
       : '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 
   static bool _sameDay(DateTime a, DateTime b) => DateUtils.isSameDay(a, b);
-
-  static String? _notificationPaymentId(Map<String, dynamic> data) {
-    final raw = _first(data, ['pago_id', 'id_pago', 'payment_id']);
-    if (raw.isNotEmpty) return raw;
-    final nested = data['pago'];
-    if (nested is Map) {
-      final v = nested['id']?.toString().trim() ?? '';
-      return v.isNotEmpty ? v : null;
-    }
-    return null;
-  }
 
   Future<void> _load({bool silent = false}) async {
     final serial = ++_loadSerial;
@@ -286,330 +148,88 @@ class _RepresentativeCalendarSectionState
       });
     }
     if (representativeId.isEmpty) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _loading = false;
           _refreshing = false;
           _error = 'No se encontró el representante autenticado.';
         });
+      }
       return;
     }
 
-    final client = Supabase.instance.client;
-    final events = <_CalendarEvent>[];
-    final warnings = <String>[];
-    var successfulSources = 0;
-
-    final studentNames = <String, String>{};
-    final studentIds = <String>[];
-    for (final row in widget.students) {
-      final id = row['id']?.toString() ?? '';
-      if (id.isEmpty) continue;
-      studentIds.add(id);
-      studentNames[id] = '${row['nombres'] ?? ''} ${row['apellidos'] ?? ''}'
-          .trim();
-    }
-
-    // Cuotas: fechas de generación y vencimiento. No se confunden con pagos.
-    if (studentIds.isNotEmpty) {
-      try {
-        final quotas = <Map<String, dynamic>>[];
-        for (var i = 0; i < studentIds.length; i += 80) {
-          final slice = studentIds.skip(i).take(80).toList();
-          final rows = await client
-              .from('cuotas')
-              .select('*')
-              .inFilter('estudiante_id', slice)
-              .limit(3000);
-          quotas.addAll(rows.map((r) => Map<String, dynamic>.from(r)));
-        }
-        final conceptIds = quotas
-            .map((q) => q['concepto_id']?.toString() ?? '')
-            .where((id) => id.isNotEmpty)
-            .toSet()
-            .toList();
-        final conceptNames = <String, String>{};
-        for (var i = 0; i < conceptIds.length; i += 80) {
-          try {
-            final rows = await client
-                .from('conceptos_cobro')
-                .select('*')
-                .inFilter('id', conceptIds.skip(i).take(80).toList());
-            for (final raw in rows) {
-              final row = Map<String, dynamic>.from(raw);
-              final id = row['id']?.toString() ?? '';
-              conceptNames[id] = _first(row, [
-                'nombre',
-                'nombre_concepto',
-                'titulo',
-                'descripcion',
-                'concepto',
-              ]);
-            }
-          } catch (_) {
-            // Los nombres opcionales no impiden mostrar las fechas de cuotas.
-          }
-        }
-        for (final quota in quotas) {
-          final id = quota['id']?.toString() ?? '';
-          final studentId = quota['estudiante_id']?.toString() ?? '';
-          final student = studentNames[studentId] ?? 'Estudiante';
-          final period = _first(quota, ['periodo', 'mes', 'nombre_cuota']);
-          final direct = _first(quota, ['concepto', 'nombre_concepto']);
-          final concept = direct.isNotEmpty
-              ? direct
-              : (conceptNames[quota['concepto_id']?.toString() ?? ''] ??
-                    'Cuota escolar');
-          final title = period.isEmpty ? concept : '$concept · $period';
-          final amount = _amount(quota, cuota: true);
-          final created = _date(quota, [
-            'creado_at',
-            'created_at',
-            'fecha_creacion',
-            'fecha_generacion',
-          ]);
-          final due = _date(quota, [
-            'fecha_vencimiento',
-            'vence_at',
-            'vencimiento',
-          ]);
-          if (created != null) {
-            events.add(
-              _CalendarEvent(
-                id: 'quota-$id-generated',
-                date: created,
-                kind: _EventKind.generated,
-                title: 'Nueva cuota generada',
-                details: '$title · $student',
-                amount: amount,
-                studentId: studentId,
-              ),
-            );
-          }
-          if (due != null) {
-            events.add(
-              _CalendarEvent(
-                id: 'quota-$id-due',
-                date: due,
-                kind: _EventKind.due,
-                title: 'Vencimiento de cuota',
-                details: '$title · $student',
-                amount: amount,
-                studentId: studentId,
-              ),
-            );
-          }
-        }
-        successfulSources++;
-      } catch (e) {
-        warnings.add(
-          'No se pudieron consultar las cuotas. Revisa los permisos de lectura de la tabla cuotas.',
-        );
-        debugPrint('Calendario: error consultando cuotas: $e');
-      }
-    } else {
-      warnings.add(
-        'Todavía no hay estudiantes vinculados para consultar cuotas.',
-      );
-    }
-
-    // Pagos y movimientos. El estado actual nunca implica una fecha histórica.
     try {
-      final rows = await client
-          .from('pagos')
-          .select('*')
-          .eq('representante_id', representativeId)
-          .order('creado_at', ascending: false)
-          .limit(1000);
-      final payments = rows.map((r) => Map<String, dynamic>.from(r)).toList();
-
-      // Notificaciones son evidencia alternativa de la fecha de aprobación o
-      // rechazo cuando no existe una marca temporal de revisión en pagos.
-      final notificationDates = <String, List<Map<String, dynamic>>>{};
-      final uid = client.auth.currentUser?.id;
-      if (uid != null) {
-        try {
-          final notes = await client
-              .from('notificaciones_app')
-              .select('tipo, datos, creada_at')
-              .eq('perfil_id', uid)
-              .order('creada_at', ascending: false)
-              .limit(1000);
-          for (final raw in notes) {
-            final note = Map<String, dynamic>.from(raw);
-            final data = note['datos'];
-            if (data is! Map) continue;
-            final id = _notificationPaymentId(Map<String, dynamic>.from(data));
-            if (id == null) continue;
-            notificationDates.putIfAbsent(id, () => []).add(note);
-          }
-        } catch (e) {
-          debugPrint('Calendario: notificaciones no disponibles: $e');
-        }
-      }
-
-      for (final p in payments) {
-        final id = p['id']?.toString() ?? '';
-        if (id.isEmpty) continue;
-        final status = _normalStatus(_first(p, ['estado', 'status']));
-        final reference = _first(p, [
-          'referencia',
-          'referencia_pago',
-          'referencia_bancaria',
-          'numero_referencia',
-          'nro_referencia',
-        ]);
-        final amount = _amount(p);
-        final details = reference.isNotEmpty
-            ? 'Referencia $reference'
-            : 'Pago escolar';
-        final paid = _date(p, ['fecha_pago']);
-        final reported = _date(p, ['creado_at', 'created_at']);
-        final reviewed = _date(p, [
-          'revisado_at',
-          'fecha_revision',
-          'aprobado_at',
-          'rechazado_at',
-        ]);
-
-        if (paid != null) {
-          events.add(
-            _CalendarEvent(
-              id: 'payment-$id-paid',
-              date: paid,
-              kind: _EventKind.paid,
-              title: 'Pago realizado',
-              details: details,
-              amount: amount,
-              paymentId: id,
-              pending: status == 'pendiente',
-            ),
-          );
-        }
-        if (reported != null) {
-          events.add(
-            _CalendarEvent(
-              id: 'payment-$id-reported',
-              date: reported,
-              kind: _EventKind.reported,
-              title: 'Pago reportado',
-              details: '$details · ${_statusLabel(status)}',
-              amount: amount,
-              paymentId: id,
-              pending: status == 'pendiente',
-            ),
-          );
-        }
-
-        // Si la tabla de pagos tiene fecha de revisión, se prioriza para el
-        // estado actual. Nunca se usa actualizado_at: puede ser otro cambio.
-        if (status == 'aprobado' || status == 'rechazado') {
-          final kind = status == 'aprobado'
-              ? _EventKind.approved
-              : _EventKind.rejected;
-          if (reviewed != null) {
-            events.add(
-              _CalendarEvent(
-                id: 'payment-$id-review',
-                date: reviewed,
-                kind: kind,
-                title: status == 'aprobado'
-                    ? 'Pago aprobado'
-                    : 'Pago rechazado',
-                details: details,
-                amount: amount,
-                paymentId: id,
-              ),
-            );
-          } else {
-            // Se usa la notificación solo si coincide por ID y por estado.
-            final expectedType = status == 'aprobado'
-                ? 'pago_aprobado'
-                : 'pago_rechazado';
-            final note = (notificationDates[id] ?? [])
-                .where((n) => n['tipo']?.toString() == expectedType)
-                .toList();
-            if (note.isNotEmpty) {
-              final date = _date(note.first, ['creada_at']);
-              if (date != null) {
-                events.add(
-                  _CalendarEvent(
-                    id: 'payment-$id-notification-review',
-                    date: date,
-                    kind: kind,
-                    title: status == 'aprobado'
-                        ? 'Pago aprobado'
-                        : 'Pago rechazado',
-                    details: details,
-                    amount: amount,
-                    paymentId: id,
-                  ),
-                );
-              }
-            }
-          }
-        }
-      }
-      successfulSources++;
-    } catch (e) {
-      warnings.add(
-        'No se pudieron cargar los pagos. Comprueba el acceso a la tabla pagos.',
+      final result = await _repository.loadEvents(
+        representativeId: representativeId,
+        students: widget.students.map(CalendarStudent.fromMap).toList(),
       );
-      debugPrint('Calendario: error consultando pagos: $e');
+      if (!mounted || serial != _loadSerial) {
+        return;
+      }
+      setState(() {
+        _events = result.events;
+        _warnings = result.warnings;
+        _loading = false;
+        _refreshing = false;
+        _error = result.hasSuccessfulSource
+            ? null
+            : 'No pudimos cargar el calendario. Comprueba tu conexión o inténtalo de nuevo.';
+      });
+    } catch (error) {
+      if (!mounted || serial != _loadSerial) {
+        return;
+      }
+      setState(() {
+        _loading = false;
+        _refreshing = false;
+        _error = 'No pudimos cargar el calendario. Inténtalo de nuevo.';
+      });
+      debugPrint('Calendario: error de carga: $error');
     }
-
-    if (!mounted || serial != _loadSerial) return;
-    events.sort((a, b) {
-      final cmp = a.date.compareTo(b.date);
-      return cmp != 0 ? cmp : a.title.compareTo(b.title);
-    });
-    setState(() {
-      _events = events;
-      _warnings = warnings;
-      _loading = false;
-      _refreshing = false;
-      _error = successfulSources == 0
-          ? 'No pudimos cargar el calendario. Comprueba tu conexión o inténtalo de nuevo.'
-          : null;
-    });
   }
 
-  Color _tone(_EventKind kind) => switch (kind) {
-    _EventKind.generated => _blue,
-    _EventKind.due => _orange,
-    _EventKind.paid => _violet,
-    _EventKind.reported => _indigo,
-    _EventKind.approved => _green,
-    _EventKind.rejected => _red,
+  Color _tone(CalendarEventKind kind) => switch (kind) {
+    CalendarEventKind.generated => _blue,
+    CalendarEventKind.due => _orange,
+    CalendarEventKind.paid => _violet,
+    CalendarEventKind.reported => _indigo,
+    CalendarEventKind.approved => _green,
+    CalendarEventKind.rejected => _red,
   };
 
-  IconData _icon(_EventKind kind) => switch (kind) {
-    _EventKind.generated => Icons.add_circle_outline_rounded,
-    _EventKind.due => Icons.event_busy_outlined,
-    _EventKind.paid => Icons.payments_outlined,
-    _EventKind.reported => Icons.receipt_long_outlined,
-    _EventKind.approved => Icons.check_circle_outline_rounded,
-    _EventKind.rejected => Icons.cancel_outlined,
+  IconData _icon(CalendarEventKind kind) => switch (kind) {
+    CalendarEventKind.generated => Icons.add_circle_outline_rounded,
+    CalendarEventKind.due => Icons.event_busy_outlined,
+    CalendarEventKind.paid => Icons.payments_outlined,
+    CalendarEventKind.reported => Icons.receipt_long_outlined,
+    CalendarEventKind.approved => Icons.check_circle_outline_rounded,
+    CalendarEventKind.rejected => Icons.cancel_outlined,
   };
 
-  bool _matches(_CalendarEvent e) {
+  bool _matches(CalendarEvent e) {
     // Un pago familiar sin estudiante identificable NO se atribuye a un hijo.
-    if (_studentFilter.isNotEmpty && e.studentId != _studentFilter)
+    if (_studentFilter.isNotEmpty && e.studentId != _studentFilter) {
       return false;
+    }
     if (_filter == 'Cuotas') {
-      return e.kind == _EventKind.generated || e.kind == _EventKind.due;
+      return e.kind == CalendarEventKind.generated || e.kind == CalendarEventKind.due;
     }
     if (_filter == 'Pagos') {
-      return e.kind != _EventKind.generated && e.kind != _EventKind.due;
+      return e.kind != CalendarEventKind.generated && e.kind != CalendarEventKind.due;
     }
-    if (_filter == 'Aprobados') return e.kind == _EventKind.approved;
-    if (_filter == 'Rechazados') return e.kind == _EventKind.rejected;
-    if (_filter == 'En revisión')
-      return e.kind == _EventKind.reported && e.pending;
+    if (_filter == 'Aprobados') {
+      return e.kind == CalendarEventKind.approved;
+    }
+    if (_filter == 'Rechazados') {
+      return e.kind == CalendarEventKind.rejected;
+    }
+    if (_filter == 'En revisión') {
+      return e.kind == CalendarEventKind.reported && e.pending;
+    }
     return true;
   }
 
-  List<_CalendarEvent> get _filtered => _events.where(_matches).toList();
+  List<CalendarEvent> get _filtered => _events.where(_matches).toList();
 
   // Seleccionar una fecha abre el historial de ese día en un diálogo,
   // sin desplazar la página ni modificar los paneles laterales.
@@ -805,27 +425,27 @@ class _RepresentativeCalendarSectionState
     );
   }
 
-  String _movementCategory(_CalendarEvent event) => switch (event.kind) {
-    _EventKind.generated => 'CUOTA GENERADA',
-    _EventKind.due => 'FECHA DE VENCIMIENTO',
-    _EventKind.paid => 'PAGO REALIZADO',
-    _EventKind.reported => 'REPORTE ENVIADO',
-    _EventKind.approved => 'PAGO APROBADO',
-    _EventKind.rejected => 'PAGO RECHAZADO',
+  String _movementCategory(CalendarEvent event) => switch (event.kind) {
+    CalendarEventKind.generated => 'CUOTA GENERADA',
+    CalendarEventKind.due => 'FECHA DE VENCIMIENTO',
+    CalendarEventKind.paid => 'PAGO REALIZADO',
+    CalendarEventKind.reported => 'REPORTE ENVIADO',
+    CalendarEventKind.approved => 'PAGO APROBADO',
+    CalendarEventKind.rejected => 'PAGO RECHAZADO',
   };
 
   // Una etiqueta explícita distingue el paso del proceso incluso para quienes
   // no pueden diferenciar los colores. No se deduce una fecha de aprobación.
-  String _movementDescription(_CalendarEvent event) => switch (event.kind) {
-    _EventKind.generated => 'Se generó una nueva cuota',
-    _EventKind.due => 'Fecha límite de la cuota',
-    _EventKind.paid => 'Fecha del pago registrado',
-    _EventKind.reported => 'El representante envió el reporte',
-    _EventKind.approved => 'El colegio aprobó el pago',
-    _EventKind.rejected => 'El colegio rechazó el pago',
+  String _movementDescription(CalendarEvent event) => switch (event.kind) {
+    CalendarEventKind.generated => 'Se generó una nueva cuota',
+    CalendarEventKind.due => 'Fecha límite de la cuota',
+    CalendarEventKind.paid => 'Fecha del pago registrado',
+    CalendarEventKind.reported => 'El representante envió el reporte',
+    CalendarEventKind.approved => 'El colegio aprobó el pago',
+    CalendarEventKind.rejected => 'El colegio rechazó el pago',
   };
 
-  Widget _popupEventRow(_CalendarEvent event, BuildContext dialogContext) {
+  Widget _popupEventRow(CalendarEvent event, BuildContext dialogContext) {
     final color = _tone(event.kind);
     final canOpen = event.paymentId != null && widget.onOpenPayment != null;
     return Semantics(
@@ -1211,12 +831,12 @@ class _RepresentativeCalendarSectionState
     final dueCount = _events
         .where(
           (e) =>
-              e.kind == _EventKind.due &&
+              e.kind == CalendarEventKind.due &&
               !DateUtils.dateOnly(e.date).isBefore(today),
         )
         .length;
     final pendingCount = _events
-        .where((e) => e.kind == _EventKind.reported && e.pending)
+        .where((e) => e.kind == CalendarEventKind.reported && e.pending)
         .length;
 
     final cards = [
@@ -1682,14 +1302,14 @@ class _RepresentativeCalendarSectionState
                       .toList();
                   final isSelected = _sameDay(date, _selected);
                   final isToday = _sameDay(date, today);
-                  final hasDue = dayEvents.any((e) => e.kind == _EventKind.due);
+                  final hasDue = dayEvents.any((e) => e.kind == CalendarEventKind.due);
                   final kindPriority = {
-                    _EventKind.due: 0,
-                    _EventKind.approved: 1,
-                    _EventKind.rejected: 2,
-                    _EventKind.reported: 3,
-                    _EventKind.paid: 4,
-                    _EventKind.generated: 5,
+                    CalendarEventKind.due: 0,
+                    CalendarEventKind.approved: 1,
+                    CalendarEventKind.rejected: 2,
+                    CalendarEventKind.reported: 3,
+                    CalendarEventKind.paid: 4,
+                    CalendarEventKind.generated: 5,
                   };
                   final kinds = dayEvents.map((e) => e.kind).toSet().toList()
                     ..sort(
@@ -1774,7 +1394,7 @@ class _RepresentativeCalendarSectionState
                                   children: [
                                     for (final kind in kinds.take(3))
                                       Container(
-                                        width: kind == _EventKind.due
+                                        width: kind == CalendarEventKind.due
                                             ? 12
                                             : 5.5,
                                         height: 5.5,
@@ -1882,7 +1502,7 @@ class _RepresentativeCalendarSectionState
         _events
             .where(
               (event) =>
-                  event.kind == _EventKind.due &&
+                  event.kind == CalendarEventKind.due &&
                   (_studentFilter.isEmpty ||
                       event.studentId == _studentFilter) &&
                   !DateUtils.dateOnly(event.date).isBefore(today),
@@ -1893,7 +1513,7 @@ class _RepresentativeCalendarSectionState
         _filtered
             .where(
               (event) =>
-                  event.kind != _EventKind.due &&
+                  event.kind != CalendarEventKind.due &&
                   !DateUtils.dateOnly(event.date).isAfter(today),
             )
             .toList()
@@ -2029,11 +1649,13 @@ class _RepresentativeCalendarSectionState
   }
 
   Widget _scrollableEvents({
-    required List<_CalendarEvent> events,
+    required List<CalendarEvent> events,
     required ScrollController controller,
     required String emptyMessage,
   }) {
-    if (events.isEmpty) return Center(child: _emptyList(emptyMessage));
+    if (events.isEmpty) {
+      return Center(child: _emptyList(emptyMessage));
+    }
     return Scrollbar(
       controller: controller,
       thumbVisibility: true,
@@ -2080,7 +1702,7 @@ class _RepresentativeCalendarSectionState
     ),
   );
 
-  Widget _eventRow(_CalendarEvent event, {bool showDate = false}) {
+  Widget _eventRow(CalendarEvent event, {bool showDate = false}) {
     final color = _tone(event.kind);
     final isPayment = event.paymentId != null && widget.onOpenPayment != null;
     final labelDate = showDate
@@ -2245,12 +1867,13 @@ class _RepresentativeCalendarPreviewState
   bool _loading = true;
   bool _failed = false;
   int _request = 0;
-  RealtimeChannel? _paymentsChannel;
+  late final CalendarRepository _repository;
   Timer? _reloadTimer;
 
   @override
   void initState() {
     super.initState();
+    _repository = SupabaseCalendarRepository(channelKey: 'preview-${identityHashCode(this)}');
     _listenPayments();
     _load();
   }
@@ -2277,154 +1900,68 @@ class _RepresentativeCalendarPreviewState
 
   void _stopListening() {
     _reloadTimer?.cancel();
-    final channel = _paymentsChannel;
-    if (channel != null) Supabase.instance.client.removeChannel(channel);
-    _paymentsChannel = null;
+    _repository.stopListening();
   }
 
-  void _listenPayments() {
-    final id = widget.representativeId.trim();
-    if (id.isEmpty) return;
-    _paymentsChannel = Supabase.instance.client
-        .channel('resumen-calendario-$id')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'pagos',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'representante_id',
-            value: id,
-          ),
-          callback: (_) {
-            _reloadTimer?.cancel();
-            _reloadTimer = Timer(const Duration(milliseconds: 450), _load);
-          },
-        )
-        .subscribe();
-  }
-
-  static DateTime? _readDate(Map<String, dynamic> row, List<String> keys) {
-    for (final key in keys) {
-      final value = row[key]?.toString().trim() ?? '';
-      if (value.isEmpty) continue;
-      final date = DateTime.tryParse(value);
-      if (date == null) continue;
-      // SQL DATE: preservar el día en lugar de convertirlo a otra zona.
-      if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value)) {
-        return DateTime(date.year, date.month, date.day);
-      }
-      return date.toLocal();
-    }
-    return null;
-  }
+  void _listenPayments() => _repository.startListening(
+    representativeId: widget.representativeId.trim(),
+    onChanged: () {
+      _reloadTimer?.cancel();
+      _reloadTimer = Timer(const Duration(milliseconds: 450), _load);
+    },
+  );
 
   Future<void> _load() async {
-    final id = widget.representativeId.trim();
+    final representativeId = widget.representativeId.trim();
     final request = ++_request;
-    if (id.isEmpty) {
-      if (mounted)
+    if (representativeId.isEmpty) {
+      if (mounted) {
         setState(() {
           _events = [];
           _loading = false;
+          _failed = true;
         });
+      }
       return;
     }
-    final ids = widget.students
-        .map((s) => s['id']?.toString() ?? '')
-        .where((s) => s.isNotEmpty)
-        .toList();
-    final events = <_PreviewEvent>[];
-    var successful = 0;
-    final client = Supabase.instance.client;
 
-    // Fechas de creación y vencimiento de las cuotas vinculadas.
-    if (ids.isNotEmpty) {
-      try {
-        for (var i = 0; i < ids.length; i += 80) {
-          final rows = await client
-              .from('cuotas')
-              .select('*')
-              .inFilter('estudiante_id', ids.skip(i).take(80).toList())
-              .limit(3000);
-          for (final raw in rows) {
-            final cuota = Map<String, dynamic>.from(raw);
-            final created = _readDate(cuota, [
-              'creado_at',
-              'created_at',
-              'fecha_creacion',
-              'fecha_generacion',
-            ]);
-            final due = _readDate(cuota, [
-              'fecha_vencimiento',
-              'vence_at',
-              'vencimiento',
-            ]);
-            if (created != null)
-              events.add(_PreviewEvent(created, _blue, false));
-            if (due != null) events.add(_PreviewEvent(due, _orange, true));
-          }
-        }
-        successful++;
-      } catch (e) {
-        debugPrint('Resumen calendario: no se pudieron cargar cuotas: $e');
-      }
-    }
-
-    // Reportes, pagos realizados y decisiones con fecha de revisión.
     try {
-      final rows = await client
-          .from('pagos')
-          .select('*')
-          .eq('representante_id', id)
-          .order('creado_at', ascending: false)
-          .limit(1000);
-      for (final raw in rows) {
-        final pago = Map<String, dynamic>.from(raw);
-        final state = (pago['estado'] ?? pago['status'] ?? '')
-            .toString()
-            .toLowerCase()
-            .trim();
-        final paid = _readDate(pago, ['fecha_pago']);
-        final reported = _readDate(pago, ['creado_at', 'created_at']);
-        final reviewed = _readDate(pago, [
-          'revisado_at',
-          'fecha_revision',
-          'aprobado_at',
-          'rechazado_at',
-        ]);
-        if (paid != null) events.add(_PreviewEvent(paid, _violet, false));
-        if (reported != null) events.add(_PreviewEvent(reported, _blue, false));
-        // El estado actual no se utiliza como fecha histórica.
-        if (reviewed != null) {
-          if ([
-            'aprobado',
-            'aprobada',
-            'validado',
-            'confirmado',
-          ].contains(state)) {
-            events.add(_PreviewEvent(reviewed, _green, false));
-          } else if ([
-            'rechazado',
-            'rechazada',
-            'denegado',
-            'invalidado',
-          ].contains(state)) {
-            events.add(_PreviewEvent(reviewed, _red, false));
-          }
-        }
+      final result = await _repository.loadEvents(
+        representativeId: representativeId,
+        students: widget.students.map(CalendarStudent.fromMap).toList(),
+      );
+      if (!mounted || request != _request) {
+        return;
       }
-      successful++;
-    } catch (e) {
-      debugPrint('Resumen calendario: no se pudieron cargar pagos: $e');
+      setState(() {
+        _events = result.events.map((event) {
+          final color = switch (event.kind) {
+            CalendarEventKind.generated => _blue,
+            CalendarEventKind.due => _orange,
+            CalendarEventKind.paid => _violet,
+            CalendarEventKind.reported => _blue,
+            CalendarEventKind.approved => _green,
+            CalendarEventKind.rejected => _red,
+          };
+          return _PreviewEvent(
+            event.date,
+            color,
+            event.kind == CalendarEventKind.due,
+          );
+        }).toList();
+        _loading = false;
+        _failed = !result.hasSuccessfulSource;
+      });
+    } catch (error) {
+      if (!mounted || request != _request) {
+        return;
+      }
+      setState(() {
+        _loading = false;
+        _failed = true;
+      });
+      debugPrint('Resumen calendario: error de carga: $error');
     }
-
-    if (!mounted || request != _request) return;
-    setState(() {
-      _events = events;
-      _loading = false;
-      _failed = successful == 0;
-    });
   }
 
   @override
@@ -2660,7 +2197,9 @@ class _RepresentativeCalendarPreviewState
         .toList();
     final uniqueColors = <Color>[];
     for (final e in dayEvents) {
-      if (!uniqueColors.contains(e.color)) uniqueColors.add(e.color);
+      if (!uniqueColors.contains(e.color)) {
+        uniqueColors.add(e.color);
+      }
     }
     // El día ocupa exactamente 21 px. Los contenidos internos deben sumar
     // como máximo esa altura: 16 px del número + 4 px de indicadores.

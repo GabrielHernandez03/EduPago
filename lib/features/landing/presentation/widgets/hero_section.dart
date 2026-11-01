@@ -133,7 +133,7 @@ class _HeroSectionState extends State<HeroSection> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
-              color: AppColors.primaryBlue.withOpacity(0.1),
+              color: AppColors.primaryBlue.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(20),
             ),
             child: const Row(
@@ -210,8 +210,8 @@ class _HeroSectionState extends State<HeroSection> {
                 label: 'Ya tengo una cuenta',
                 onPressed: widget.onLoginPressed,
                 icon: null,
-                background: AppColors.primaryBlue.withOpacity(0),
-                hoverBackground: AppColors.primaryBlue.withOpacity(0.06),
+                background: AppColors.primaryBlue.withValues(alpha: 0),
+                hoverBackground: AppColors.primaryBlue.withValues(alpha: 0.06),
                 foreground: AppColors.darkNavy,
                 borderColor: AppColors.cardBorder,
                 hoverBorderColor: AppColors.primaryBlue,
@@ -440,7 +440,7 @@ class _HeroSectionState extends State<HeroSection> {
                             (Theme.of(context).brightness == Brightness.dark
                                     ? Colors.white
                                     : AppColors.primaryBlue)
-                                .withOpacity(active ? 0.9 : 0.4),
+                                .withValues(alpha: active ? 0.9 : 0.4),
                       ),
                     ),
                   ),
@@ -461,7 +461,7 @@ class _HeroSectionState extends State<HeroSection> {
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
+            color: Colors.black.withValues(alpha: 0.08),
             blurRadius: 20,
             offset: const Offset(0, 10),
           ),

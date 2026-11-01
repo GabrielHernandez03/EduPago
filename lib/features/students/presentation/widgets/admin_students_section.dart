@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../data/student_repository.dart';
+import '../../data/supabase_student_repository.dart';
+import '../../domain/student_account.dart';
 
 /// Directorio académico y estado de cuenta por estudiante.
 /// Todas las consultas se limitan al colegio del administrador. Las políticas
@@ -15,155 +17,6 @@ class AdminStudentsSection extends StatefulWidget {
   State<AdminStudentsSection> createState() => _AdminStudentsSectionState();
 }
 
-class _StudentAccount {
-  _StudentAccount(this.data);
-
-  final Map<String, dynamic> data;
-  final List<_StudentQuota> quotas = [];
-  final List<Map<String, dynamic>> representatives = [];
-
-  String get id => _text(data, ['id']);
-  String get name {
-    final combined = _text(data, ['nombre_completo', 'nombre_apellido']);
-    if (combined.isNotEmpty) return combined;
-    final first = _text(data, ['nombres', 'nombre']);
-    final last = _text(data, ['apellidos', 'apellido']);
-    final result = '$first $last'.trim();
-    return result.isNotEmpty ? result : 'Estudiante sin nombre';
-  }
-
-  String get grade {
-    final separate = _text(data, ['grado', 'nivel_grado']);
-    if (separate.isNotEmpty) return separate;
-    final combined = _text(data, ['grado_seccion']);
-    if (combined.isEmpty) return 'Sin grado';
-    final match = RegExp(
-      r'^(.*?)\s*(?:[-–/]\s*|secci[oó]n\s+)([A-Za-z])$',
-      caseSensitive: false,
-    ).firstMatch(combined);
-    if (match != null)
-      return match
-          .group(1)!
-          .trim()
-          .replaceFirst(RegExp(r'[-–/]\s*$'), '')
-          .trim();
-    final trailing = RegExp(r'^(.*\S)\s+([A-Za-z])$').firstMatch(combined);
-    return trailing == null ? combined : trailing.group(1)!;
-  }
-
-  String get section {
-    final separate = _text(data, [
-      'seccion',
-      'sección',
-      'seccion_actual',
-      'letra_seccion',
-    ]);
-    if (separate.isNotEmpty) return separate;
-    final combined = _text(data, ['grado_seccion']);
-    final match = RegExp(
-      r'(?:[-–/]\s*|secci[oó]n\s+|\s+)([A-Za-z])$',
-      caseSensitive: false,
-    ).firstMatch(combined);
-    return match == null ? 'Sin sección' : match.group(1)!.toUpperCase();
-  }
-
-  String get identification => _text(data, [
-    'cedula',
-    'cedula_estudiante',
-    'documento_identidad',
-    'numero_documento',
-    'numero_cedula',
-    'nro_cedula',
-    'ci',
-    'codigo',
-    'codigo_estudiante',
-  ]);
-
-  bool get hasNoQuota => quotas.isEmpty;
-  bool get hasIncompleteBalance => quotas.any((q) => !q.hasBalance);
-  double get billed =>
-      quotas.fold<double>(0.0, (sum, q) => sum + (q.original ?? 0.0));
-  double get outstanding => quotas.fold<double>(
-    0.0,
-    (sum, q) => sum + ((q.balance ?? 0.0) > 0 ? q.balance! : 0.0),
-  );
-  double get overdueBalance => quotas
-      .where((q) => q.isOverdue)
-      .fold<double>(0.0, (sum, q) => sum + (q.balance ?? 0.0));
-  int get overdueCount => quotas.where((q) => q.isOverdue).length;
-  int get pendingCount =>
-      quotas.where((q) => q.hasBalance && (q.balance ?? 0) > 0.01).length;
-  int get maxOverdueDays => quotas.fold<int>(
-    0,
-    (max, q) => q.overdueDays > max ? q.overdueDays : max,
-  );
-
-  String status(bool balancesAvailable) {
-    if (!balancesAvailable) return 'sin_datos';
-    if (hasNoQuota) return 'sin_cuotas';
-    if (hasIncompleteBalance) return 'sin_datos';
-    if (overdueCount > 0) return 'moroso';
-    if (pendingCount > 0) return 'pendiente';
-    return 'solvente';
-  }
-}
-
-class _StudentQuota {
-  _StudentQuota(this.raw, this.concept);
-
-  final Map<String, dynamic> raw;
-  final String concept;
-  Map<String, dynamic>? balanceRow;
-  final List<Map<String, dynamic>> applications = [];
-
-  String get id => _text(raw, ['id']);
-  String get period => _text(raw, ['periodo', 'mes_periodo']).isEmpty
-      ? 'Sin período'
-      : _text(raw, ['periodo', 'mes_periodo']);
-  DateTime? get due => DateTime.tryParse(_text(raw, ['fecha_vencimiento']));
-  bool get hasBalance =>
-      balanceRow != null &&
-      _asNumber(balanceRow!['saldo_usd']) != null &&
-      _asNumber(balanceRow!['monto_usd']) != null;
-  double? get original =>
-      balanceRow == null ? null : _asNumber(balanceRow!['monto_usd']);
-  double? get balance =>
-      balanceRow == null ? null : _asNumber(balanceRow!['saldo_usd']);
-  double? get covered => original == null || balance == null
-      ? null
-      : (original! - balance!).clamp(0.0, double.infinity).toDouble();
-  int get overdueDays {
-    if (!hasBalance || (balance ?? 0) <= 0.01 || due == null) return 0;
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final day = DateTime(due!.year, due!.month, due!.day);
-    final days = today.difference(day).inDays;
-    return days > 0 ? days : 0;
-  }
-
-  bool get isOverdue => overdueDays > 0;
-  String get status {
-    if (!hasBalance) return 'Sin datos';
-    if ((balance ?? 0) <= 0.01) return 'Pagada';
-    return isOverdue ? 'Vencida' : 'Pendiente';
-  }
-}
-
-String _text(Map<String, dynamic> data, List<String> names) {
-  for (final name in names) {
-    final raw = data[name];
-    if (raw == null) continue;
-    final value = raw.toString().trim();
-    if (value.isNotEmpty && value.toLowerCase() != 'null') return value;
-  }
-  return '';
-}
-
-double? _asNumber(dynamic value) {
-  if (value is num) return value.toDouble();
-  return double.tryParse(value?.toString() ?? '');
-}
-
 class _AdminStudentsSectionState extends State<AdminStudentsSection> {
   static const _navy = AppColors.darkNavy;
   static const _blue = AppColors.primaryBlue;
@@ -173,6 +26,7 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
   static const _orange = Color(0xFFAF6500);
   static const _red = Color(0xFFCA3545);
 
+  final StudentRepository _repository = SupabaseStudentRepository();
   final _searchController = TextEditingController();
   bool _loading = true;
   bool _refreshing = false;
@@ -186,7 +40,7 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
   int _page = 0;
   int _request = 0;
   static const int _perPage = 12;
-  List<_StudentAccount> _students = [];
+  List<StudentAccount> _students = [];
   Map<String, Map<String, dynamic>> _paymentsById = {};
 
   @override
@@ -217,38 +71,6 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
     });
   }
 
-  /// Lee todas las páginas: Supabase suele limitar una consulta a 1000 filas.
-  /// No se informa solvencia sobre una lista de cuotas truncada.
-  Future<List<Map<String, dynamic>>> _pages(
-    Future<dynamic> Function(int start, int end) query,
-  ) async {
-    const size = 500;
-    final output = <Map<String, dynamic>>[];
-    for (var from = 0; ; from += size) {
-      final response = await query(from, from + size - 1);
-      final batch = (response as List)
-          .map((row) => Map<String, dynamic>.from(row as Map))
-          .toList();
-      output.addAll(batch);
-      if (batch.length < size) break;
-    }
-    return output;
-  }
-
-  /// No filtra saldos por colegio_id porque la vista v_saldo_cuotas puede no
-  /// exponerlo. Los IDs proceden exclusivamente de estudiantes del colegio.
-  Future<List<Map<String, dynamic>>> _batchIds(
-    List<String> ids,
-    Future<List<Map<String, dynamic>>> Function(List<String> ids) fetch,
-  ) async {
-    final all = <Map<String, dynamic>>[];
-    for (var i = 0; i < ids.length; i += 100) {
-      final end = i + 100 < ids.length ? i + 100 : ids.length;
-      all.addAll(await fetch(ids.sublist(i, end)));
-    }
-    return all;
-  }
-
   Future<void> _fetch() async {
     final request = ++_request;
     setState(() {
@@ -257,215 +79,13 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
       _error = null;
     });
     try {
-      final client = Supabase.instance.client;
-      final studentRows = await _pages(
-        (from, to) => client
-            .from('estudiantes')
-            .select('*')
-            .eq('colegio_id', widget.colegioId)
-            .order('id')
-            .range(from, to),
-      );
-      final students = studentRows.map(_StudentAccount.new).toList();
-      final studentById = {for (final s in students) s.id: s};
-      final ids = students
-          .map((s) => s.id)
-          .where((id) => id.isNotEmpty)
-          .toList();
-
-      final quotaRows = await _pages(
-        (from, to) => client
-            .from('cuotas')
-            .select('*')
-            .eq('colegio_id', widget.colegioId)
-            .order('id')
-            .range(from, to),
-      );
-      final conceptIds = quotaRows
-          .map((q) => _text(q, ['concepto_id']))
-          .where((id) => id.isNotEmpty)
-          .toSet()
-          .toList();
-      final concepts = <String, String>{};
-      if (conceptIds.isNotEmpty) {
-        try {
-          final conceptRows = await _batchIds(
-            conceptIds,
-            (part) => _pages(
-              (from, to) => client
-                  .from('conceptos_cobro')
-                  .select('*')
-                  .inFilter('id', part)
-                  .order('id')
-                  .range(from, to),
-            ),
-          );
-          for (final row in conceptRows) {
-            concepts[_text(
-              row,
-              ['id'],
-            )] = _text(row, ['nombre', 'descripcion', 'titulo', 'tipo']).isEmpty
-                ? 'Concepto sin nombre'
-                : _text(row, ['nombre', 'descripcion', 'titulo', 'tipo']);
-          }
-        } catch (e) {
-          debugPrint('No se pudieron consultar conceptos de cobro: $e');
-        }
-      }
-      final quotaById = <String, _StudentQuota>{};
-      for (final row in quotaRows) {
-        final student = studentById[_text(row, ['estudiante_id'])];
-        if (student == null) continue;
-        final conceptId = _text(row, ['concepto_id']);
-        final quota = _StudentQuota(
-          row,
-          concepts[conceptId] ?? 'Concepto no disponible',
-        );
-        quotaById[quota.id] = quota;
-        student.quotas.add(quota);
-      }
-
-      // Si la vista no se puede leer, nunca etiquetamos alumnos como solventes.
-      var balancesAvailable = true;
-      try {
-        if (ids.isNotEmpty) {
-          final balances = await _batchIds(
-            ids,
-            (part) => _pages(
-              (from, to) => client
-                  .from('v_saldo_cuotas')
-                  .select('cuota_id, estudiante_id, monto_usd, saldo_usd')
-                  .inFilter('estudiante_id', part)
-                  .order('cuota_id')
-                  .range(from, to),
-            ),
-          );
-          for (final row in balances) {
-            final quota = quotaById[_text(row, ['cuota_id'])];
-            if (quota != null) quota.balanceRow = row;
-          }
-        }
-      } catch (e) {
-        balancesAvailable = false;
-        debugPrint('No fue posible leer v_saldo_cuotas: $e');
-      }
-
-      var applicationsAvailable = true;
-      final paymentsById = <String, Map<String, dynamic>>{};
-      if (quotaById.isNotEmpty) {
-        try {
-          final applicationRows = await _batchIds(
-            quotaById.keys.toList(),
-            (part) => _pages(
-              (from, to) => client
-                  .from('pago_aplicaciones')
-                  .select('*')
-                  .inFilter('cuota_id', part)
-                  .order('cuota_id')
-                  .range(from, to),
-            ),
-          );
-          final paymentIds = <String>{};
-          for (final app in applicationRows) {
-            final quota = quotaById[_text(app, ['cuota_id'])];
-            if (quota == null) continue;
-            quota.applications.add(app);
-            final id = _text(app, ['pago_id']);
-            if (id.isNotEmpty) paymentIds.add(id);
-          }
-          if (paymentIds.isNotEmpty) {
-            final paymentRows = await _batchIds(
-              paymentIds.toList(),
-              (part) => _pages(
-                (from, to) => client
-                    .from('pagos')
-                    .select(
-                      'id, colegio_id, referencia, fecha_pago, metodo, estado',
-                    )
-                    .eq('colegio_id', widget.colegioId)
-                    .inFilter('id', part)
-                    .order('id')
-                    .range(from, to),
-              ),
-            );
-            for (final pay in paymentRows) {
-              paymentsById[_text(pay, ['id'])] = pay;
-            }
-          }
-        } catch (e) {
-          applicationsAvailable = false;
-          debugPrint('No fue posible leer el desglose de pagos: $e');
-          // No se presentan aplicaciones parciales si falló alguna página.
-          for (final quota in quotaById.values) {
-            quota.applications.clear();
-          }
-        }
-      }
-
-      // Relación estudiante-representante: la pantalla sigue funcionando cuando
-      // los permisos no permiten acceder a los datos de contacto.
-      if (ids.isNotEmpty) {
-        try {
-          final relations = await _batchIds(
-            ids,
-            (part) => _pages(
-              (from, to) => client
-                  .from('representante_estudiante')
-                  .select('estudiante_id, representante_id')
-                  .inFilter('estudiante_id', part)
-                  .order('estudiante_id')
-                  .range(from, to),
-            ),
-          );
-          final repIds = relations
-              .map((r) => _text(r, ['representante_id']))
-              .where((id) => id.isNotEmpty)
-              .toSet()
-              .toList();
-          final repsById = <String, Map<String, dynamic>>{};
-          if (repIds.isNotEmpty) {
-            final reps = await _batchIds(
-              repIds,
-              (part) => _pages(
-                (from, to) => client
-                    .from('representantes')
-                    .select('*')
-                    .eq('colegio_id', widget.colegioId)
-                    .inFilter('id', part)
-                    .order('id')
-                    .range(from, to),
-              ),
-            );
-            for (final r in reps) {
-              repsById[_text(r, ['id'])] = r;
-            }
-          }
-          for (final relation in relations) {
-            final s = studentById[_text(relation, ['estudiante_id'])];
-            final r = repsById[_text(relation, ['representante_id'])];
-            if (s != null && r != null) s.representatives.add(r);
-          }
-        } catch (e) {
-          debugPrint('Representantes no disponibles en directorio: $e');
-        }
-      }
-
-      for (final s in students) {
-        s.quotas.sort((a, b) {
-          if (a.due == null) return 1;
-          if (b.due == null) return -1;
-          return a.due!.compareTo(b.due!);
-        });
-      }
-      students.sort(
-        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-      );
+      final snapshot = await _repository.fetchDirectory(colegioId: widget.colegioId);
       if (!mounted || request != _request) return;
       setState(() {
-        _students = students;
-        _paymentsById = paymentsById;
-        _balancesAvailable = balancesAvailable;
-        _applicationsAvailable = applicationsAvailable;
+        _students = snapshot.students;
+        _paymentsById = snapshot.paymentsById;
+        _balancesAvailable = snapshot.balancesAvailable;
+        _applicationsAvailable = snapshot.applicationsAvailable;
         _loading = false;
         _refreshing = false;
         _page = 0;
@@ -476,8 +96,7 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
       setState(() {
         _loading = false;
         _refreshing = false;
-        _error =
-            'No se pudo cargar el directorio o los datos de cuotas. Verifica la conexión y los permisos del colegio.';
+        _error = 'No se pudo cargar el directorio o los datos de cuotas. Verifica la conexión y los permisos del colegio.';
       });
     }
   }
@@ -492,27 +111,29 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
           .toList()
         ..sort();
 
-  List<_StudentAccount> get _visible {
+  List<StudentAccount> get _visible {
     final filtered = _students.where((s) {
       if (_grade != 'todos' && s.grade != _grade) return false;
       if (_section != 'todos' && s.section != _section) return false;
-      if (_status != 'todos' && s.status(_balancesAvailable) != _status)
+      if (_status != 'todos' && s.status(_balancesAvailable) != _status) {
         return false;
+      }
       if (_search.isEmpty) return true;
       return [
         s.name,
         s.grade,
         s.section,
         s.identification,
-        _text(s.data, ['codigo_escolar', 'matricula', 'codigo_estudiante']),
+        studentText(s.data, ['codigo_escolar', 'matricula', 'codigo_estudiante']),
         ...s.representatives.map(
-          (r) => '${_text(r, ['nombres'])} ${_text(r, ['apellidos'])}',
+          (r) => '${studentText(r, ['nombres'])} ${studentText(r, ['apellidos'])}',
         ),
       ].any((v) => v.toLowerCase().contains(_search));
     }).toList();
     // Los morosos más antiguos se muestran primero si se filtra Morosos.
-    if (_status == 'moroso')
+    if (_status == 'moroso') {
       filtered.sort((a, b) => b.maxOverdueDays.compareTo(a.maxOverdueDays));
+    }
     return filtered;
   }
 
@@ -524,10 +145,6 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
     );
     return '${amount < 0 ? '-' : ''}\$$digits,${parts[1]}';
   }
-
-  String _date(DateTime? d) => d == null
-      ? 'Sin fecha'
-      : '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 
   Color _statusColor(String status) {
     if (status == 'solvente' || status == 'Pagada') return _green;
@@ -731,7 +348,7 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
             _page = 0;
           }),
         );
-        if (narrow)
+        if (narrow) {
           return Column(
             children: [
               search,
@@ -747,6 +364,7 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
               status,
             ],
           );
+        }
         return Column(
           children: [
             search,
@@ -1090,7 +708,7 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
     ),
   );
 
-  Widget _studentCard(_StudentAccount s) {
+  Widget _studentCard(StudentAccount s) {
     final status = s.status(_balancesAvailable);
     final wide = MediaQuery.sizeOf(context).width >= 920;
     final student = Row(
@@ -1230,7 +848,7 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
     );
   }
 
-  void _openStudent(_StudentAccount student) {
+  void _openStudent(StudentAccount student) {
     showDialog<void>(
       context: context,
       builder: (dialogContext) => _StudentDetailsDialog(
@@ -1251,7 +869,7 @@ class _StudentDetailsDialog extends StatelessWidget {
     required this.paymentById,
   });
 
-  final _StudentAccount student;
+  final StudentAccount student;
   final bool balancesAvailable;
   final bool applicationsAvailable;
   final Map<String, Map<String, dynamic>> paymentById;
@@ -1531,9 +1149,9 @@ class _StudentDetailsDialog extends StatelessWidget {
 
   Widget _academicCard() {
     final data = student.data;
-    final first = _text(data, ['nombres', 'nombre']);
-    final last = _text(data, ['apellidos', 'apellido']);
-    final birthday = _text(data, ['fecha_nacimiento', 'nacimiento']);
+    final first = studentText(data, ['nombres', 'nombre']);
+    final last = studentText(data, ['apellidos', 'apellido']);
+    final birthday = studentText(data, ['fecha_nacimiento', 'nacimiento']);
     final activeValue = data['activo'];
     final active = activeValue == null
         ? 'No registrado'
@@ -1561,7 +1179,7 @@ class _StudentDetailsDialog extends StatelessWidget {
           _detailField('Sección', student.section),
           _detailField(
             'Matrícula',
-            _text(data, ['matricula', 'codigo_escolar', 'codigo_estudiante']),
+            studentText(data, ['matricula', 'codigo_escolar', 'codigo_estudiante']),
           ),
           Padding(
             padding: const EdgeInsets.only(top: 2),
@@ -1611,7 +1229,7 @@ class _StudentDetailsDialog extends StatelessWidget {
 
   Widget _representativeItem(Map<String, dynamic> rep) {
     final name =
-        '${_text(rep, ['nombres', 'nombre'])} ${_text(rep, ['apellidos', 'apellido'])}'
+        '${studentText(rep, ['nombres', 'nombre'])} ${studentText(rep, ['apellidos', 'apellido'])}'
             .trim();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1637,9 +1255,9 @@ class _StudentDetailsDialog extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 10),
-        _detailField('Cédula', _text(rep, ['cedula', 'ci'])),
-        _detailField('Teléfono', _text(rep, ['telefono_whatsapp', 'telefono'])),
-        _detailField('Correo', _text(rep, ['email', 'correo'])),
+        _detailField('Cédula', studentText(rep, ['cedula', 'ci'])),
+        _detailField('Teléfono', studentText(rep, ['telefono_whatsapp', 'telefono'])),
+        _detailField('Correo', studentText(rep, ['email', 'correo'])),
       ],
     );
   }
@@ -2064,7 +1682,7 @@ class _StudentDetailsDialog extends StatelessWidget {
     );
   }
 
-  Widget _quotaCard(_StudentQuota quota) {
+  Widget _quotaCard(StudentQuota quota) {
     final status = quota.status;
     final color = status == 'Pagada'
         ? _green
@@ -2212,13 +1830,13 @@ class _StudentDetailsDialog extends StatelessWidget {
   );
 
   Widget _applicationRow(Map<String, dynamic> app) {
-    final payment = paymentById[_text(app, ['pago_id'])];
-    final reference = payment == null ? '' : _text(payment, ['referencia']);
-    final date = payment == null ? '' : _text(payment, ['fecha_pago']);
+    final payment = paymentById[studentText(app, ['pago_id'])];
+    final reference = payment == null ? '' : studentText(payment, ['referencia']);
+    final date = payment == null ? '' : studentText(payment, ['fecha_pago']);
     final amount =
-        _asNumber(app['monto_usd_aplicado']) ??
-        _asNumber(app['monto_aplicado_usd']) ??
-        _asNumber(app['monto_usd']);
+        studentNumber(app['monto_usd_aplicado']) ??
+        studentNumber(app['monto_aplicado_usd']) ??
+        studentNumber(app['monto_usd']);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(

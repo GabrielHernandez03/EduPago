@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import '../../../../core/theme/app_colors.dart';
-import '../../../../main.dart';
+import '../../data/profile_repository.dart';
+import '../../data/supabase_profile_repository.dart';
+import '../../domain/profile_contact_update.dart';
 
 class EditProfileDialog extends StatefulWidget {
   final String fullName;
@@ -10,6 +13,7 @@ class EditProfileDialog extends StatefulWidget {
   final String address;
   final String email;
   final VoidCallback? onSaveSuccess;
+  final ProfileRepository? repository;
 
   const EditProfileDialog({
     super.key,
@@ -19,6 +23,7 @@ class EditProfileDialog extends StatefulWidget {
     required this.address,
     required this.email,
     this.onSaveSuccess,
+    this.repository,
   });
 
   @override
@@ -32,10 +37,12 @@ class _EditProfileDialogState extends State<EditProfileDialog> {
   final _phoneFocus = FocusNode();
   final _addressFocus = FocusNode();
   bool _isLoading = false;
+  late final ProfileRepository _repository;
 
   @override
   void initState() {
     super.initState();
+    _repository = widget.repository ?? SupabaseProfileRepository();
     _phoneController = TextEditingController(
       text: _formatPhone(_extractLocalDigits(widget.phone)),
     );
@@ -51,22 +58,6 @@ class _EditProfileDialogState extends State<EditProfileDialog> {
     super.dispose();
   }
 
-  /// Intenta actualizar la fila de `representantes` usando [column] = [value].
-  /// Devuelve true solo si realmente se modificó al menos una fila
-  /// (evita el falso "éxito" cuando el filtro no coincide o RLS bloquea).
-  Future<bool> _tryUpdate(
-    Map<String, dynamic> data,
-    String column,
-    String value,
-  ) async {
-    final result = await supabase
-        .from('representantes')
-        .update(data)
-        .eq(column, value)
-        .select();
-    return result.isNotEmpty;
-  }
-
   Future<void> _handleSave() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
@@ -74,43 +65,17 @@ class _EditProfileDialogState extends State<EditProfileDialog> {
     final navigator = Navigator.of(context);
 
     setState(() => _isLoading = true);
-
     try {
-      final user = supabase.auth.currentUser;
-      if (user == null) {
-        throw Exception('No hay una sesión activa');
-      }
-
-      final data = {
-        'telefono_whatsapp':
-            '+58${_phoneController.text.replaceAll(RegExp(r'\D'), '')}',
-        'direccion': _addressController.text.trim(),
-      };
-
-      // 1) Por perfil_id (el más confiable), 2) por cédula, 3) por email.
-      bool updated = await _tryUpdate(data, 'perfil_id', user.id);
-
-      if (!updated &&
-          widget.cedula.isNotEmpty &&
-          widget.cedula != 'Sin cédula') {
-        updated = await _tryUpdate(data, 'cedula', widget.cedula);
-      }
-
-      if (!updated && widget.email.isNotEmpty) {
-        updated = await _tryUpdate(data, 'email', widget.email);
-      }
-
-      if (!updated) {
-        throw Exception(
-          'No se encontró tu registro de representante o no tienes permiso para editarlo',
-        );
-      }
+      final update = ProfileContactUpdate(
+        phone: _phoneController.text,
+        address: _addressController.text,
+      );
+      await _repository.updateContact(update);
 
       if (!mounted) return;
       setState(() => _isLoading = false);
       navigator.pop();
       widget.onSaveSuccess?.call();
-
       messenger.showSnackBar(
         const SnackBar(
           content: Text('Perfil actualizado exitosamente'),

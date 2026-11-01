@@ -57,7 +57,7 @@ class CustomNavbar extends StatelessWidget {
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(isScrolled ? 0.08 : 0.03),
+                color: Colors.black.withValues(alpha: isScrolled ? 0.08 : 0.03),
                 blurRadius: isScrolled ? 18 : 6,
                 offset: Offset(0, isScrolled ? 6 : 2),
               ),
@@ -466,9 +466,9 @@ class _GlowingRegisterButtonState extends State<_GlowingRegisterButton> {
                                 decoration: BoxDecoration(
                                   gradient: LinearGradient(
                                     colors: [
-                                      Colors.white.withOpacity(0),
-                                      Colors.white.withOpacity(0.28),
-                                      Colors.white.withOpacity(0),
+                                      Colors.white.withValues(alpha: 0),
+                                      Colors.white.withValues(alpha: 0.28),
+                                      Colors.white.withValues(alpha: 0),
                                     ],
                                   ),
                                 ),

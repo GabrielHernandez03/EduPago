@@ -331,7 +331,7 @@ class _CtaCard extends StatelessWidget {
                   height: 160,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Colors.white.withOpacity(0.06),
+                    color: Colors.white.withValues(alpha: 0.06),
                   ),
                 ),
               ),
@@ -346,7 +346,7 @@ class _CtaCard extends StatelessWidget {
                     duration: const Duration(milliseconds: 260),
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(hovered ? 0.22 : 0.12),
+                      color: Colors.white.withValues(alpha: hovered ? 0.22 : 0.12),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: AnimatedRotation(

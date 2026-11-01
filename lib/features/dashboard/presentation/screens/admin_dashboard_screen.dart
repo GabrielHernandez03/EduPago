@@ -6,14 +6,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/services/bcv_service.dart';
+import '../../data/admin_dashboard_repository.dart';
+import '../../data/supabase_admin_dashboard_repository.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/session/idle_session_store.dart';
 import '../../../../main.dart';
 import '../../../landing/presentation/screens/home_screen.dart';
-import '../widgets/students_import_card.dart';
-import '../widgets/admin_students_section.dart';
-import '../widgets/payment_reconciliation_widget.dart';
-import '../widgets/generate_billing_dialog.dart';
+import '../../../students/presentation/widgets/students_import_card.dart';
+import '../../../students/presentation/widgets/admin_students_section.dart';
+import '../../../payments/presentation/widgets/payment_reconciliation_widget.dart';
+import '../../../billing/presentation/widgets/generate_billing_dialog.dart';
+
 import '../../../../core/widgets/dashboard_shell.dart';
 import '../../../../core/widgets/skeleton_loader.dart';
 
@@ -72,6 +75,7 @@ class _PagoRow {
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final BcvService _bcvService = BcvService();
+  final AdminDashboardRepository _adminRepository = SupabaseAdminDashboardRepository();
 
   static const _navItems = <DashboardNavItem>[
     DashboardNavItem(Icons.home_outlined, Icons.home, 'Resumen'),
@@ -306,7 +310,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         ),
         content: ValueListenableBuilder<int>(
           valueListenable: _idleSecondsLeft,
-          builder: (_, seconds, __) => Text(
+          builder: (_, seconds, _) => Text(
             'Por seguridad, tu sesión se cerrará por inactividad en $seconds s.',
           ),
         ),
@@ -383,9 +387,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         : (f <= 2 ? 2.0 : (f <= 2.5 ? 2.5 : (f <= 5 ? 5.0 : 10.0)));
     return nice * exp;
   }
-
-  String _isoDate(DateTime d) =>
-      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
   // Clave estable para agrupar cuotas de distintos años por mes.
   // Se prioriza cuotas.periodo y se utiliza fecha_vencimiento cuando no se
@@ -536,17 +537,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       final today = DateTime(now.year, now.month, now.day);
       final start12 = DateTime(now.year, now.month - 11, 1);
 
-      // 1. Perfil del administrador
-      final perfil = await supabase
-          .from('perfiles')
-          .select('nombre_completo, colegio_id')
-          .eq('id', user.id)
-          .maybeSingle();
-
-      final colegioId = perfil?['colegio_id']?.toString();
-      final adminName =
-          (perfil?['nombre_completo'] ?? user.email ?? 'Administrador')
-              .toString();
+      // Consultas a BD aisladas en el repositorio del Dashboard administrativo.
+      final identity = await _adminRepository.loadIdentity();
+      final colegioId = identity.schoolId;
+      final adminName = identity.name;
 
       if (colegioId == null || colegioId.isEmpty) {
         if (!mounted) return;
@@ -559,14 +553,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         return;
       }
 
-      // 2. ¿Existe al menos un estudiante en este colegio?
-      final exists = await supabase
-          .from('estudiantes')
-          .select('id')
-          .eq('colegio_id', colegioId)
-          .limit(1);
-
-      if ((exists as List).isEmpty) {
+      final hasStudents = await _adminRepository.schoolHasStudents(colegioId);
+      if (!hasStudents) {
         if (!mounted) return;
         setState(() {
           _adminName = adminName;
@@ -578,65 +566,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         return;
       }
 
-      // 3. Estudiantes activos del colegio
-      List<Map<String, dynamic>> students = [];
-      try {
-        final resEst = await supabase
-            .from('estudiantes')
-            .select('id')
-            .eq('colegio_id', colegioId)
-            .eq('activo', true);
-        students = List<Map<String, dynamic>>.from(resEst);
-      } catch (e) {
-        debugPrint('Error en estudiantes: $e');
-      }
-
-      // 4. Saldo Cuotas
-      List<Map<String, dynamic>> saldoRows = [];
-      try {
-        final resSaldo = await supabase
-            .from('v_saldo_cuotas')
-            .select('cuota_id, estudiante_id, monto_usd, saldo_usd');
-        saldoRows = List<Map<String, dynamic>>.from(resSaldo);
-      } catch (e) {
-        debugPrint('Error en v_saldo_cuotas: $e');
-      }
-
-      // 5. Cuotas
-      List<Map<String, dynamic>> cuotaRows = [];
-      try {
-        final resCuotas = await supabase
-            .from('cuotas')
-            .select('id, fecha_vencimiento, periodo');
-        cuotaRows = List<Map<String, dynamic>>.from(resCuotas);
-      } catch (e) {
-        debugPrint('Error en cuotas: $e');
-      }
-
-      // 6. Pagos Aprobados
-      List<Map<String, dynamic>> paidRows = [];
-      try {
-        final resPaid = await supabase
-            .from('pagos')
-            .select('monto_usd_equivalente, fecha_pago')
-            .eq('estado', 'aprobado')
-            .gte('fecha_pago', _isoDate(start12));
-        paidRows = List<Map<String, dynamic>>.from(resPaid);
-      } catch (e) {
-        debugPrint('Error en pagos aprobados: $e');
-      }
-
-      // 7. Pagos Pendientes
-      List<Map<String, dynamic>> pendingRows = [];
-      try {
-        final resPending = await supabase
-            .from('pagos')
-            .select('id, creado_at')
-            .eq('estado', 'pendiente');
-        pendingRows = List<Map<String, dynamic>>.from(resPending);
-      } catch (e) {
-        debugPrint('Error en pagos pendientes: $e');
-      }
+      final financialRows = await _adminRepository.loadRows(
+        schoolId: colegioId,
+        fromDate: start12,
+      );
+      final students = financialRows.students;
+      final saldoRows = financialRows.balances;
+      final cuotaRows = financialRows.quotas;
+      final paidRows = financialRows.approvedPayments;
+      final pendingRows = financialRows.pendingPayments;
 
       // 8. Tasa BCV Oficial obtenida mediante el BcvService en vivo
       double? tasa;
@@ -774,51 +712,29 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   Future<void> _loadSchool(String? colegioId) async {
-    if (colegioId == null) return;
+    if (colegioId == null || colegioId.isEmpty) return;
     try {
-      final row = await supabase
-          .from('colegios')
-          .select('nombre')
-          .eq('id', colegioId)
-          .maybeSingle();
-
-      if (row != null && mounted) {
-        setState(() => _schoolName = (row['nombre'] ?? '').toString());
+      final name = await _adminRepository.loadSchoolName(colegioId);
+      if (mounted && colegioId == _colegioId) {
+        setState(() => _schoolName = name);
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('No se pudo cargar el colegio: $e');
+    }
   }
 
   Future<void> _loadRecentPayments() async {
-    List<dynamic> rows = [];
+    final schoolId = _colegioId;
+    if (schoolId == null || schoolId.isEmpty) return;
     try {
-      rows = await supabase
-          .from('pagos')
-          .select(
-            'id, monto, moneda, estado, creado_at, representantes (nombres, apellidos), '
-            'pago_aplicaciones (cuotas (periodo, estudiantes (nombres, apellidos), conceptos_cobro(nombre)))',
-          )
-          .order('creado_at', ascending: false)
-          .limit(6);
-    } catch (_) {
-      try {
-        rows = await supabase
-            .from('pagos')
-            .select(
-              'id, monto, moneda, estado, creado_at, representantes (nombres, apellidos)',
-            )
-            .order('creado_at', ascending: false)
-            .limit(6);
-      } catch (e) {
-        debugPrint('Error al cargar pagos recientes: $e');
+      final rows = await _adminRepository.loadRecentPayments(schoolId);
+      final list = rows.map(_toPagoRow).toList();
+      if (mounted && schoolId == _colegioId) {
+        setState(() => _recent = list);
       }
+    } catch (e) {
+      debugPrint('Error al cargar pagos recientes: $e');
     }
-
-    final list = rows
-        .whereType<Map>()
-        .map((m) => _toPagoRow(Map<String, dynamic>.from(m)))
-        .toList();
-
-    if (mounted) setState(() => _recent = list);
   }
 
   _PagoRow _toPagoRow(Map<String, dynamic> m) {
@@ -1475,7 +1391,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                             ),
                             child: Icon(icon, color: iconFg, size: 20),
                           ),
-                          if (topRight != null) topRight,
+                          ?topRight,
                         ],
                       ),
                       const SizedBox(height: 16),

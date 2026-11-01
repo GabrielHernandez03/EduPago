@@ -1,8 +1,8 @@
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../data/payment_submission_repository.dart';
+import '../../data/supabase_payment_submission_repository.dart';
 import '../../../../core/services/bcv_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import 'package:file_selector/file_selector.dart' as fs;
@@ -50,13 +50,13 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
   String? _proofError;
   String get _originBankValue => _selectedOriginBank ?? '';
 
-  final SupabaseClient _supabase = Supabase.instance.client;
+  final PaymentSubmissionRepository _paymentSubmission = SupabasePaymentSubmissionRepository();
   final BcvService _bcvService = BcvService();
 
   int _currentStep = 1; // 1: Método, 2: Datos, 3: Comprobante
   bool _isSubmitted = false;
   bool _isSubmitting = false;
-  bool _isCheckingRef = false;
+  final bool _isCheckingRef = false;
 
   // Tasa BCV en vivo
   // Sin tasa conocida = 0. No se usa una tasa fija "de respaldo": un pago en
@@ -95,12 +95,6 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
   final TextEditingController _bankSearchController = TextEditingController();
   final FocusNode _bankSearchFocus = FocusNode();
 
-  final List<String> _destinationAccounts = [
-    'Mercantil 4872',
-    'Banesco 0194',
-    'BNC 8812',
-  ];
-
   // Datos bancarios oficiales del colegio
   final Map<String, String> _pagoMovilColegio = {
     'Banco': 'Mercantil (0105)',
@@ -124,7 +118,9 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
   @override
   void initState() {
     super.initState();
-    _currentTasaBcv = widget.tasaBcv > 0 ? widget.tasaBcv : 0.0;
+    // El valor recibido del dashboard no incluye fecha de vigencia.
+    // Se habilita el cálculo en Bs. solo después de consultar una tasa válida.
+    _currentTasaBcv = 0.0;
     _updateMontoField(widget.amountUsd);
     _initDataAndRate();
   }
@@ -165,6 +161,11 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       }
     } catch (e) {
       debugPrint('Error obteniendo tasa BCV en diálogo: $e');
+      if (!mounted) return;
+      setState(() {
+        _currentTasaBcv = 0.0;
+        if (_isVes) _updateMontoField(widget.amountUsd);
+      });
     }
   }
 
@@ -402,10 +403,12 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     if (raw.contains('REFERENCIA_INVALIDA')) {
       return 'La referencia debe tener al menos 4 caracteres.';
     }
-    if (raw.contains('FECHA_INVALIDA'))
+    if (raw.contains('FECHA_INVALIDA')) {
       return 'La fecha del pago no es válida.';
-    if (raw.contains('MONTO_INVALIDO'))
+    }
+    if (raw.contains('MONTO_INVALIDO')) {
       return 'El monto del pago no es válido.';
+    }
     if (raw.contains('TASA_INVALIDA')) {
       return 'No se pudo determinar la tasa BCV. Intenta de nuevo.';
     }
@@ -460,32 +463,8 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     }
 
     setState(() => _isSubmitting = true);
-    String? uploadedPath;
-    bool pagoRegistrado = false;
-    bool uploadAttempted = false;
 
     try {
-      final user = _supabase.auth.currentUser;
-      if (user == null) {
-        throw const _ReporteException(
-          'Tu sesión expiró. Inicia sesión nuevamente.',
-        );
-      }
-
-      // El representante se identifica por la sesión; nunca se envía '' a una
-      // columna UUID. El servidor vuelve a derivarlo de auth.uid().
-      final rep = await _supabase
-          .from('representantes')
-          .select('id')
-          .eq('perfil_id', user.id)
-          .maybeSingle();
-      if (rep == null) {
-        throw const _ReporteException(
-          'No encontramos tu perfil de representante. Contacta al colegio.',
-        );
-      }
-      final String repId = rep['id'].toString();
-
       String metodoKey = 'pago_movil';
       if (_selectedMethod == 'Zelle') metodoKey = 'zelle';
       if (_selectedMethod == 'Transferencia Bancaria') {
@@ -493,39 +472,19 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
       }
       if (_selectedMethod == 'Efectivo USD') metodoKey = 'efectivo';
 
-      // La referencia de efectivo debe provenir del recibo oficial, no ser inventada.
-      final String refStr = _refController.text.trim();
-
-      // 1. Subir el comprobante a la carpeta del representante.
-      final String fileExt = _attachedFileName!.split('.').last.toLowerCase();
-      final String safeRef = refStr.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
-      final String storagePath =
-          '$repId/${DateTime.now().millisecondsSinceEpoch}_$safeRef.$fileExt';
-      uploadAttempted = true;
-      await _supabase.storage
-          .from('comprobantes')
-          .uploadBinary(storagePath, _attachedFileBytes!);
-      uploadedPath = storagePath;
-
-      // 2. Registrar el pago (el servidor valida y calcula el equivalente USD).
-      //    Se guarda la RUTA del archivo, no una URL pública.
-      final dynamic pagoId = await _supabase.rpc(
-        'reportar_pago',
-        params: {
-          'p_metodo': metodoKey,
-          'p_moneda': isBs ? 'VES' : 'USD',
-          'p_monto': montoIngresado,
-          'p_tasa': isBs ? _currentTasaBcv : null,
-          'p_referencia': refStr,
-          'p_fecha':
-              '${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}',
-          'p_comprobante_path': storagePath,
-          'p_banco_origen': _needsBank ? _originBankValue : null,
-        },
+      final String idStr = await _paymentSubmission.reportPayment(
+        PaymentReportRequest(
+          method: metodoKey,
+          currency: isBs ? 'VES' : 'USD',
+          amount: montoIngresado,
+          exchangeRate: isBs ? _currentTasaBcv : null,
+          reference: _refController.text.trim(),
+          paymentDate: _selectedDate,
+          bankOrigin: _needsBank ? _originBankValue : null,
+          fileName: _attachedFileName!,
+          fileBytes: _attachedFileBytes!,
+        ),
       );
-      pagoRegistrado = true;
-
-      final String idStr = pagoId.toString();
       final String reportCode =
           'EP-${DateTime.now().year}-${(idStr.length >= 8 ? idStr.substring(0, 8) : idStr).toUpperCase()}';
 
@@ -539,21 +498,10 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
     } catch (e) {
       debugPrint('Error al registrar pago: $e');
 
-      // Si el pago no quedó registrado, no se deja basura en el bucket.
-      final String? pathToClean = uploadedPath;
-      if (!pagoRegistrado && pathToClean != null) {
-        try {
-          await _supabase.storage.from('comprobantes').remove([pathToClean]);
-        } catch (cleanupError) {
-          debugPrint(
-            'No se pudo borrar el comprobante huérfano: $cleanupError',
-          );
-        }
-      }
-
+      // El repositorio elimina automáticamente comprobantes huérfanos.
       final String raw = e is PostgrestException
           ? e.message
-          : (e is _ReporteException ? e.message : '$e');
+          : (e is PaymentSubmissionException ? e.message : '$e');
       final errorMessage = _mensajeErrorReporte(raw);
       final upper = raw.toUpperCase();
       final referenceError =
@@ -567,7 +515,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
           upper.contains('BANCO_INVALIDO');
       final proofError =
           upper.contains('COMPROBANTE_INVALIDO') ||
-          (uploadAttempted && uploadedPath == null);
+          (e is PaymentSubmissionException && e.proofUploadFailed);
       final associatedFieldError =
           referenceError || dateError || amountError || bankError || proofError;
 
@@ -583,7 +531,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
           if (amountError) _amountError = errorMessage;
           if (bankError) _bankError = errorMessage;
           if (proofError) {
-            _proofError = uploadAttempted && uploadedPath == null
+            _proofError = e is PaymentSubmissionException && e.proofUploadFailed
                 ? 'No se pudo subir el comprobante. Comprueba tu conexión e inténtalo de nuevo.'
                 : errorMessage;
           }
@@ -1196,7 +1144,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
               asset,
               fit: BoxFit.contain,
               semanticLabel: method,
-              errorBuilder: (_, __, ___) =>
+              errorBuilder: (_, _, _) =>
                   Icon(icon, color: color, size: size * 0.6),
             ),
     );
@@ -2401,7 +2349,7 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
                     bytes,
                     height: 104,
                     fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const Icon(
+                    errorBuilder: (_, _, _) => const Icon(
                       Icons.image_outlined,
                       size: 48,
                       color: AppColors.textMuted,
@@ -3106,7 +3054,7 @@ Widget _buildOriginBankResults(
     keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
     padding: EdgeInsets.zero,
     itemCount: banks.length,
-    separatorBuilder: (_, __) => const Divider(
+    separatorBuilder: (_, _) => const Divider(
       height: 1,
       indent: 16,
       endIndent: 16,
@@ -3241,14 +3189,6 @@ class _OriginBankSheetState extends State<_OriginBankSheet> {
       ],
     );
   }
-}
-
-/// Error de validación con un mensaje apto para mostrar al usuario.
-class _ReporteException implements Exception {
-  final String message;
-  const _ReporteException(this.message);
-  @override
-  String toString() => message;
 }
 
 // ---------------------------------------------------------------------------

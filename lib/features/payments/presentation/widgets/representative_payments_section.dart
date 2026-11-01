@@ -2,17 +2,20 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../core/theme/app_colors.dart';
-import '../../data/account_status_service.dart';
+import '../../data/supabase_account_status_repository.dart';
+import '../../domain/account_status.dart';
 import '../../../../core/widgets/skeleton_loader.dart';
+import '../../data/payment_repository.dart';
+import '../../data/supabase_payment_repository.dart';
+import '../../domain/reported_payment.dart';
 
 /// Historial de los pagos reportados por el representante autenticado.
 /// Vista revisada 2026-10-30: concepto mensual por periodo y desglose USD
 /// por estudiante basado en pago_aplicaciones. Sin fecha del pago en detalle.
 ///
-/// Ubicación: lib/features/dashboard/presentation/widgets/representative_payments_section.dart
+/// Ubicación: lib/features/payments/presentation/widgets/representative_payments_section.dart
 /// Lee el estado y los motivos reales de Supabase; nunca simula pagos.
 class RepresentativePaymentsSection extends StatefulWidget {
   const RepresentativePaymentsSection({
@@ -51,15 +54,15 @@ class _RepresentativePaymentsSectionState
   static const _orange = Color(0xFFAF6600);
   static const _red = Color(0xFFCA3545);
 
-  final AccountStatusService _accountStatusService = AccountStatusService();
+  final SupabaseAccountStatusRepository _accountStatusService = SupabaseAccountStatusRepository();
   EstadoCuenta? _currentAccount;
   bool _accountLoading = true;
 
   final TextEditingController _searchController = TextEditingController();
   final GlobalKey _focusedCardKey = GlobalKey();
-  RealtimeChannel? _realtime;
+  final PaymentRepository _paymentRepository = SupabasePaymentRepository();
   Timer? _reloadDelay;
-  List<_ReportedPayment> _payments = [];
+  List<ReportedPayment> _payments = [];
   bool _loading = true;
   bool _refreshing = false;
   String? _error;
@@ -87,10 +90,7 @@ class _RepresentativePaymentsSectionState
   void didUpdateWidget(covariant RepresentativePaymentsSection oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.representativeId != widget.representativeId) {
-      if (_realtime != null) {
-        Supabase.instance.client.removeChannel(_realtime!);
-        _realtime = null;
-      }
+      _paymentRepository.stopListening();
       _listenToPayments();
       _loadPayments();
       _loadCurrentAccount();
@@ -105,9 +105,7 @@ class _RepresentativePaymentsSectionState
   @override
   void dispose() {
     _reloadDelay?.cancel();
-    if (_realtime != null) {
-      Supabase.instance.client.removeChannel(_realtime!);
-    }
+    _paymentRepository.stopListening();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
@@ -127,36 +125,26 @@ class _RepresentativePaymentsSectionState
   }
 
   void _listenToPayments() {
-    if (widget.representativeId.isEmpty) return;
-    _realtime = Supabase.instance.client
-        .channel('historial-pagos-${widget.representativeId}')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'pagos',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'representante_id',
-            value: widget.representativeId,
-          ),
-          callback: (_) {
-            _reloadDelay?.cancel();
-            _reloadDelay = Timer(const Duration(milliseconds: 450), () {
-              if (mounted) _loadPayments(silent: true);
-            });
-          },
-        )
-        .subscribe();
+    _paymentRepository.startListening(
+      representativeId: widget.representativeId,
+      onChanged: () {
+        _reloadDelay?.cancel();
+        _reloadDelay = Timer(const Duration(milliseconds: 450), () {
+          if (mounted) _loadPayments(silent: true);
+        });
+      },
+    );
   }
 
   Future<void> _loadCurrentAccount() async {
     final repId = widget.representativeId;
     if (repId.isEmpty) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _currentAccount = null;
           _accountLoading = false;
         });
+      }
       return;
     }
     if (mounted) setState(() => _accountLoading = _currentAccount == null);
@@ -347,102 +335,20 @@ class _RepresentativePaymentsSectionState
     }
 
     try {
-      final client = Supabase.instance.client;
-      // El filtro por representante y la RLS protegen la privacidad de cada familia.
-      final rows = await client
-          .from('pagos')
-          .select('*')
-          .eq('representante_id', repId)
-          .order('creado_at', ascending: false)
-          .limit(100);
-
-      final payments = (rows as List)
-          .whereType<Map>()
-          .map((v) => _ReportedPayment(Map<String, dynamic>.from(v)))
-          .toList();
-
-      // Si la notificación apunta a uno más antiguo que los 100 últimos,
-      // se consulta ese registro concreto, siempre limitado al representante.
-      final target = widget.focusPaymentId?.trim();
-      if (target != null &&
-          target.isNotEmpty &&
-          !payments.any((p) => p.id == target)) {
-        try {
-          final extra = await client
-              .from('pagos')
-              .select('*')
-              .eq('representante_id', repId)
-              .eq('id', target)
-              .maybeSingle();
-          if (extra != null) payments.insert(0, _ReportedPayment(extra));
-        } catch (e) {
-          debugPrint('No fue posible recuperar el pago de la notificación: $e');
-        }
-      }
-
-      // Relacionar cada pago con las cuotas que realmente cubre:
-      // pagos.id -> pago_aplicaciones.pago_id -> cuotas.id
-      // -> conceptos_cobro.id. Nunca adivinamos el mes desde la fecha del pago.
-      await _loadAppliedQuotaConcepts(client, payments);
-
-      // Algunas instalaciones guardan el motivo en la notificación emitida
-      // cuando el administrador rechazó el pago. Se combina con el registro.
-      // Fallar al leer notificaciones no impide visualizar los pagos.
-      final uid = client.auth.currentUser?.id;
-      if (uid != null) {
-        try {
-          final notices = await client
-              .from('notificaciones_app')
-              .select('tipo, mensaje, datos')
-              .eq('perfil_id', uid)
-              .order('creada_at', ascending: false)
-              .limit(300);
-          for (final obj in notices) {
-            final note = Map<String, dynamic>.from(obj);
-            final data = note['datos'];
-            final metadata = data is Map
-                ? Map<String, dynamic>.from(data)
-                : <String, dynamic>{};
-            final notificationId = _paymentIdFromMetadata(metadata);
-            final reference = _referenceFromMetadata(metadata);
-            final matchedById = notificationId == null
-                ? <_ReportedPayment>[]
-                : payments.where((p) => p.id == notificationId).toList();
-            final matchedByReference =
-                notificationId != null || reference == null
-                ? <_ReportedPayment>[]
-                : payments
-                      .where(
-                        (p) =>
-                            p.reference.isNotEmpty &&
-                            p.reference.toLowerCase() ==
-                                reference.toLowerCase(),
-                      )
-                      .toList();
-            // Una misma referencia puede repetirse: nunca atribuimos un
-            // rechazo a varios pagos por una coincidencia ambigua.
-            final matches = matchedById.isNotEmpty
-                ? matchedById
-                : (notificationId == null && matchedByReference.length == 1
-                      ? matchedByReference
-                      : <_ReportedPayment>[]);
-            for (final p in matches) {
-              p.addNotification(note);
-            }
-          }
-        } catch (e) {
-          debugPrint('No se pudieron recuperar las notas de notificación: $e');
-        }
-      }
+      final payments = await _paymentRepository.loadPayments(
+        representativeId: repId,
+        focusPaymentId: widget.focusPaymentId,
+      );
 
       if (minimumFeedback != null) await minimumFeedback;
       if (!mounted ||
           widget.representativeId != repId ||
-          request != _loadVersion)
+          request != _loadVersion) {
         return;
+      }
       final requestedId = widget.focusPaymentId?.trim();
       final requestedReference = widget.focusReference?.trim();
-      _ReportedPayment? focus;
+      ReportedPayment? focus;
       if (requestedId != null && requestedId.isNotEmpty) {
         for (final p in payments) {
           if (p.id == requestedId) {
@@ -468,7 +374,7 @@ class _RepresentativePaymentsSectionState
         _loading = false;
         _refreshing = false;
         if (focus != null) {
-          _focusedId = focus!.id;
+          _focusedId = focus.id;
           _filter = 'todos';
           // Si el reporte proviene de una notificación, se expande su mes y
           // su día para que Scrollable.ensureVisible encuentre la tarjeta.
@@ -505,365 +411,6 @@ class _RepresentativePaymentsSectionState
     }
   }
 
-  /// Obtiene concepto y período de las cuotas realmente aplicadas.
-  /// Para pagos aún en revisión (que no tienen pago_aplicaciones), calcula
-  /// una PREVISIÓN de FIFO, sin confundirla con una aplicación contabilizada.
-  /// Una transacción puede cubrir varias cuotas y varios estudiantes.
-  Future<void> _loadAppliedQuotaConcepts(
-    SupabaseClient client,
-    List<_ReportedPayment> payments,
-  ) async {
-    final paymentIds = payments
-        .map((p) => p.id)
-        .where((id) => id.isNotEmpty)
-        .toSet()
-        .toList();
-    if (paymentIds.isEmpty) return;
-
-    // Asociaciones explícitas que pudiera registrar el backend en pagos.
-    final quotaIdsByPayment = <String, Set<String>>{};
-    for (final payment in payments) {
-      for (final field in ['cuota_id', 'id_cuota']) {
-        final id = payment.raw[field]?.toString().trim() ?? '';
-        if (id.isNotEmpty) {
-          quotaIdsByPayment.putIfAbsent(payment.id, () => <String>{}).add(id);
-        }
-      }
-      for (final field in ['cuota_ids', 'cuotas_ids']) {
-        final values = payment.raw[field];
-        if (values is! List) continue;
-        for (final value in values) {
-          final id = value?.toString().trim() ?? '';
-          if (id.isNotEmpty) {
-            quotaIdsByPayment.putIfAbsent(payment.id, () => <String>{}).add(id);
-          }
-        }
-      }
-    }
-
-    final applicationsByPayment = <String, List<Map<String, dynamic>>>{};
-    try {
-      final applications = await client
-          .from('pago_aplicaciones')
-          .select('*')
-          .inFilter('pago_id', paymentIds);
-      for (final app in applications) {
-        final paymentId = app['pago_id']?.toString().trim() ?? '';
-        final quotaId = app['cuota_id']?.toString().trim() ?? '';
-        if (paymentId.isEmpty || quotaId.isEmpty) continue;
-        applicationsByPayment
-            .putIfAbsent(paymentId, () => <Map<String, dynamic>>[])
-            .add(Map<String, dynamic>.from(app));
-        quotaIdsByPayment.putIfAbsent(paymentId, () => <String>{}).add(quotaId);
-      }
-    } catch (e) {
-      debugPrint('No se pudieron consultar las aplicaciones de pago: $e');
-    }
-
-    // La conciliación FIFO solo ocurre al aprobar. Antes de eso se pueden
-    // mostrar las cuotas que previsiblemente cubrirá el pago, con una
-    // advertencia de que NO es una asignación definitiva.
-    final pending = payments
-        .where(
-          (p) =>
-              p.normalizedStatus == 'pendiente' &&
-              !(quotaIdsByPayment[p.id]?.isNotEmpty ?? false),
-        )
-        .toList();
-    final pendingBalances = <Map<String, dynamic>>[];
-    if (pending.isNotEmpty) {
-      try {
-        final relations = await client
-            .from('representante_estudiante')
-            .select('estudiante_id')
-            .eq('representante_id', widget.representativeId);
-        final studentIds = relations
-            .map((r) => r['estudiante_id']?.toString().trim() ?? '')
-            .where((id) => id.isNotEmpty)
-            .toSet()
-            .toList();
-        if (studentIds.isNotEmpty) {
-          final balances = await client
-              .from('v_saldo_cuotas')
-              .select('cuota_id, estudiante_id, saldo_usd')
-              .inFilter('estudiante_id', studentIds);
-          pendingBalances.addAll(
-            balances.map((row) => Map<String, dynamic>.from(row)),
-          );
-        }
-      } catch (e) {
-        debugPrint('No se pudo obtener la vista previa de cuotas: $e');
-      }
-    }
-
-    final allQuotaIds = <String>{
-      ...quotaIdsByPayment.values.expand((ids) => ids),
-      ...pendingBalances.map((b) => b['cuota_id']?.toString() ?? ''),
-    }..remove('');
-    if (allQuotaIds.isEmpty) return;
-
-    try {
-      // SELECT * es importante: algunos esquemas guardan el concepto como
-      // cuotas.concepto (texto), otros como cuotas.concepto_id.
-      final quotaRows = <Map<String, dynamic>>[];
-      final ids = allQuotaIds.toList();
-      for (var i = 0; i < ids.length; i += 100) {
-        final end = (i + 100 < ids.length) ? i + 100 : ids.length;
-        final rows = await client
-            .from('cuotas')
-            .select('*')
-            .inFilter('id', ids.sublist(i, end));
-        quotaRows.addAll(rows.map((r) => Map<String, dynamic>.from(r)));
-      }
-      final quotaById = <String, Map<String, dynamic>>{
-        for (final row in quotaRows) row['id'].toString(): row,
-      };
-      final conceptIds = quotaRows
-          .map((q) => q['concepto_id']?.toString().trim() ?? '')
-          .where((v) => v.isNotEmpty)
-          .toSet()
-          .toList();
-      final conceptById = <String, String>{};
-      if (conceptIds.isNotEmpty) {
-        try {
-          final concepts = await client
-              .from('conceptos_cobro')
-              .select('*')
-              .inFilter('id', conceptIds);
-          for (final row in concepts) {
-            final id = row['id']?.toString() ?? '';
-            final name = _firstField(Map<String, dynamic>.from(row), [
-              'nombre',
-              'nombre_concepto',
-              'titulo',
-              'descripcion',
-              'concepto',
-              'tipo',
-            ]);
-            if (id.isNotEmpty && name.isNotEmpty) conceptById[id] = name;
-          }
-        } catch (e) {
-          debugPrint('No se pudieron consultar conceptos_cobro: $e');
-        }
-      }
-
-      // Identifica cuotas iguales de distintos estudiantes en el desglose.
-      final studentIds = quotaRows
-          .map((q) => q['estudiante_id']?.toString().trim() ?? '')
-          .where((v) => v.isNotEmpty)
-          .toSet()
-          .toList();
-      final studentById = <String, String>{};
-      if (studentIds.isNotEmpty) {
-        try {
-          final students = await client
-              .from('estudiantes')
-              .select('id, nombres, apellidos')
-              .inFilter('id', studentIds);
-          for (final s in students) {
-            final id = s['id']?.toString() ?? '';
-            final name = '${s['nombres'] ?? ''} ${s['apellidos'] ?? ''}'.trim();
-            if (id.isNotEmpty && name.isNotEmpty) studentById[id] = name;
-          }
-        } catch (e) {
-          debugPrint('No se pudieron consultar nombres de estudiantes: $e');
-        }
-      }
-
-      String conceptFor(Map<String, dynamic> quota) {
-        final direct = _firstField(quota, ['concepto', 'nombre_concepto']);
-        if (direct.isNotEmpty) return direct;
-        return conceptById[quota['concepto_id']?.toString() ?? ''] ?? '';
-      }
-
-      // Los conceptos se agrupan por mensualidad (no por estudiante).
-      // El importe de cada estudiante se calcula EXCLUSIVAMENTE a partir de
-      // pago_aplicaciones: no se divide el pago entre hijos por aproximación.
-      void assign(
-        _ReportedPayment payment,
-        List<String> quotaIds, {
-        required bool estimated,
-      }) {
-        final lines = <String>[];
-        final periods = <String>[];
-        final concepts = <String>[];
-        for (final id in quotaIds) {
-          final quota = quotaById[id];
-          if (quota == null) continue;
-          final concept = conceptFor(quota);
-          final period = _firstField(quota, ['periodo', 'mes_periodo']);
-          final label = _quotaDescription(concept, period);
-          if (label.isEmpty) continue;
-          if (!lines.contains(label)) lines.add(label);
-          if (concept.isNotEmpty && !concepts.contains(concept)) {
-            concepts.add(concept);
-          }
-          if (period.isNotEmpty && !periods.contains(period)) {
-            periods.add(period);
-          }
-        }
-        if (lines.isEmpty) return;
-        payment.setAppliedQuotaLabels(
-          lines,
-          quotaIds.where(quotaById.containsKey).length,
-          concepts: concepts,
-          periods: periods,
-          estimated: estimated,
-        );
-      }
-
-      for (final payment in payments) {
-        final explicit = quotaIdsByPayment[payment.id];
-        if (explicit == null || explicit.isEmpty) continue;
-        assign(
-          payment,
-          explicit.toList(),
-          estimated: payment.normalizedStatus == 'pendiente',
-        );
-
-        final apps = applicationsByPayment[payment.id];
-        if (apps == null ||
-            apps.isEmpty ||
-            payment.normalizedStatus != 'aprobado')
-          continue;
-
-        // Agrupar el importe aplicado por estudiante, sumando las distintas
-        // mensualidades que cubra este pago para una misma persona.
-        final grouped = <String, _StudentPaymentAllocation>{};
-        for (final app in apps) {
-          final quotaId = app['cuota_id']?.toString().trim() ?? '';
-          final quota = quotaById[quotaId];
-          if (quota == null) continue;
-          final studentId = quota['estudiante_id']?.toString().trim() ?? '';
-          if (studentId.isEmpty) continue;
-          final name =
-              studentById[studentId] ?? 'Estudiante sin nombre disponible';
-          final amount = _firstNumeric(app, [
-            'monto_usd_aplicado',
-            'monto_aplicado_usd',
-            'monto_usd',
-          ]);
-          final previous = grouped[studentId];
-          final total =
-              amount == null || (previous != null && previous.amountUsd == null)
-              ? null
-              : (previous?.amountUsd ?? 0.0) + amount;
-          grouped[studentId] = _StudentPaymentAllocation(
-            name: name,
-            amountUsd: total,
-            quotaCount: (previous?.quotaCount ?? 0) + 1,
-          );
-        }
-        if (grouped.isNotEmpty) {
-          payment.setStudentAllocations(grouped.values.toList());
-        }
-      }
-
-      if (pendingBalances.isEmpty) return;
-      // Esta vista previa replica el orden FIFO esperado, NO una distribución
-      // confirmada. Se descuentan las vistas previas de otros pagos pendientes
-      // para evitar mostrar la misma cuota dos veces por simple acumulación.
-      final available = <String, double>{};
-      for (final row in pendingBalances) {
-        final id = row['cuota_id']?.toString() ?? '';
-        final saldo = _asAmount(row['saldo_usd']);
-        if (quotaById.containsKey(id) && saldo > 0.01) available[id] = saldo;
-      }
-      final sortedIds = available.keys.toList()
-        ..sort((a, b) {
-          final qa = quotaById[a]!;
-          final qb = quotaById[b]!;
-          final da = _firstField(qa, ['fecha_vencimiento']);
-          final db = _firstField(qb, ['fecha_vencimiento']);
-          final byDate = da.compareTo(db);
-          return byDate != 0 ? byDate : a.compareTo(b);
-        });
-      pending.sort((a, b) {
-        final left = a.createdAt ?? a.paymentDate ?? DateTime(1970);
-        final right = b.createdAt ?? b.paymentDate ?? DateTime(1970);
-        return left.compareTo(right);
-      });
-      for (final payment in pending) {
-        var remaining = payment.amountUsdEquivalent;
-        if (remaining <= 0.01) continue;
-        final targetIds = <String>[];
-        for (final id in sortedIds) {
-          final due = available[id] ?? 0;
-          if (due <= 0.01 || remaining <= 0.01) continue;
-          final applied = remaining < due ? remaining : due;
-          remaining -= applied;
-          available[id] = due - applied;
-          targetIds.add(id);
-        }
-        if (targetIds.isNotEmpty) assign(payment, targetIds, estimated: true);
-      }
-    } catch (e) {
-      debugPrint('No se pudo leer la información de cuotas: $e');
-    }
-  }
-
-  static double _asAmount(dynamic raw) {
-    if (raw is num) return raw.toDouble();
-    return double.tryParse(raw?.toString() ?? '') ?? 0;
-  }
-
-  static double? _firstNumeric(Map<String, dynamic> row, List<String> keys) {
-    for (final key in keys) {
-      final raw = row[key];
-      if (raw == null) continue;
-      final value = raw is num
-          ? raw.toDouble()
-          : double.tryParse(raw.toString());
-      if (value != null && value.isFinite && value >= 0) return value;
-    }
-    return null;
-  }
-
-  static String _firstField(Map<String, dynamic> row, List<String> keys) {
-    for (final key in keys) {
-      final value = row[key]?.toString().trim() ?? '';
-      if (value.isNotEmpty && value.toLowerCase() != 'null') return value;
-    }
-    return '';
-  }
-
-  static String _quotaDescription(String concept, String period) {
-    if (concept.isEmpty) return period;
-    if (period.isEmpty) return concept;
-    // Ej.: «Mensualidad de Octubre 2026». Otros conceptos conservan su
-    // denominación real, como «Inscripción · Septiembre 2026».
-    if (concept.toLowerCase() == 'mensualidad') return '$concept de $period';
-    return '$concept · $period';
-  }
-
-  static String? _paymentIdFromMetadata(Map<String, dynamic> data) {
-    for (final key in ['pago_id', 'id_pago', 'payment_id']) {
-      final id = data[key]?.toString().trim();
-      if (id != null && id.isNotEmpty) return id;
-    }
-    final nested = data['pago'];
-    if (nested is Map) {
-      for (final key in ['id', 'pago_id']) {
-        final id = nested[key]?.toString().trim();
-        if (id != null && id.isNotEmpty) return id;
-      }
-    }
-    return null;
-  }
-
-  static String? _referenceFromMetadata(Map<String, dynamic> data) {
-    for (final key in [
-      'referencia',
-      'referencia_pago',
-      'referencia_bancaria',
-      'numero_referencia',
-    ]) {
-      final value = data[key]?.toString().trim();
-      if (value != null && value.isNotEmpty) return value;
-    }
-    return null;
-  }
-
   void _scrollToFocused() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -885,7 +432,7 @@ class _RepresentativePaymentsSectionState
     if (mounted) await _loadPayments(silent: true);
   }
 
-  List<_ReportedPayment> get _visible {
+  List<ReportedPayment> get _visible {
     return _payments.where((p) {
       if (_filter != 'todos' && p.normalizedStatus != _filter) return false;
       if (_search.isEmpty) return true;
@@ -946,8 +493,8 @@ class _RepresentativePaymentsSectionState
 
   // Orden descendente por fecha de reporte y, dentro de cada fecha, por hora.
   // Las fechas ausentes van al final, sin usar fecha_pago como sustituto.
-  List<_ReportMonthGroup> _groupByReportDate(List<_ReportedPayment> items) {
-    final sorted = List<_ReportedPayment>.of(items)
+  List<_ReportMonthGroup> _groupByReportDate(List<ReportedPayment> items) {
+    final sorted = List<ReportedPayment>.of(items)
       ..sort((a, b) {
         final left = a.createdAt?.toLocal();
         final right = b.createdAt?.toLocal();
@@ -957,7 +504,7 @@ class _RepresentativePaymentsSectionState
         final result = right.compareTo(left);
         return result != 0 ? result : a.id.compareTo(b.id);
       });
-    final buckets = <String, Map<String, List<_ReportedPayment>>>{};
+    final buckets = <String, Map<String, List<ReportedPayment>>>{};
     final monthDates = <String, DateTime?>{};
     final dayDates = <String, DateTime?>{};
 
@@ -973,9 +520,9 @@ class _RepresentativePaymentsSectionState
           : DateTime(date.year, date.month, date.day);
       final days = buckets.putIfAbsent(
         monthKey,
-        () => <String, List<_ReportedPayment>>{},
+        () => <String, List<ReportedPayment>>{},
       );
-      days.putIfAbsent(dayKey, () => <_ReportedPayment>[]).add(payment);
+      days.putIfAbsent(dayKey, () => <ReportedPayment>[]).add(payment);
     }
 
     return [
@@ -1722,7 +1269,7 @@ class _RepresentativePaymentsSectionState
   }
 
   // La fecha del reporte vive fuera de la tarjeta completa: una sola vez.
-  Widget _paymentCard(_ReportedPayment payment) {
+  Widget _paymentCard(ReportedPayment payment) {
     final open = payment.id == _focusedId;
     final status = payment.normalizedStatus;
     final color = status == 'aprobado'
@@ -1909,7 +1456,7 @@ class _RepresentativePaymentsSectionState
   }
 
   Widget _paymentIdentity(
-    _ReportedPayment payment,
+    ReportedPayment payment,
     IconData icon,
     Color color,
   ) {
@@ -1940,7 +1487,7 @@ class _RepresentativePaymentsSectionState
     );
   }
 
-  Widget _paymentInstallment(_ReportedPayment payment) {
+  Widget _paymentInstallment(ReportedPayment payment) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1989,7 +1536,7 @@ class _RepresentativePaymentsSectionState
     );
   }
 
-  Widget _paymentAmount(_ReportedPayment payment) {
+  Widget _paymentAmount(ReportedPayment payment) {
     return FittedBox(
       fit: BoxFit.scaleDown,
       alignment: Alignment.centerRight,
@@ -2015,7 +1562,7 @@ class _RepresentativePaymentsSectionState
 
   // Una distribución única, con campos relevantes para cada medio de pago.
   // No se muestran datos bancarios inventados ni la fecha de pago eliminada.
-  String _paymentMethodKind(_ReportedPayment payment) {
+  String _paymentMethodKind(ReportedPayment payment) {
     final method = payment.method.toLowerCase();
     if (method.contains('móvil') ||
         method.contains('movil') ||
@@ -2028,7 +1575,7 @@ class _RepresentativePaymentsSectionState
     return 'otro';
   }
 
-  String _paymentMethodName(_ReportedPayment payment) {
+  String _paymentMethodName(ReportedPayment payment) {
     return switch (_paymentMethodKind(payment)) {
       'movil' => 'PAGO MÓVIL',
       'transferencia' => 'TRANSFERENCIA BANCARIA',
@@ -2112,7 +1659,7 @@ class _RepresentativePaymentsSectionState
     _ => 'Información de la operación',
   };
 
-  Widget _details(_ReportedPayment payment) {
+  Widget _details(ReportedPayment payment) {
     final status = payment.normalizedStatus;
     final kind = _paymentMethodKind(payment);
     final accent = _paymentMethodColor(kind);
@@ -2455,7 +2002,7 @@ class _RepresentativePaymentsSectionState
     );
   }
 
-  Widget _paymentConceptAndAllocations(_ReportedPayment payment) {
+  Widget _paymentConceptAndAllocations(ReportedPayment payment) {
     final concepts = payment.quotaDetails;
     final allocations = payment.studentAllocations;
     final approved = payment.normalizedStatus == 'aprobado';
@@ -2719,7 +2266,7 @@ class _ReportDayGroup {
   });
   final String key;
   final DateTime? date;
-  final List<_ReportedPayment> payments;
+  final List<ReportedPayment> payments;
 }
 
 /// Mismo hover que las tarjetas del dashboard: contorno azul tenue y sombra
@@ -2881,401 +2428,5 @@ class _PaymentStatusFilterState extends State<_PaymentStatusFilter> {
         ),
       ),
     );
-  }
-}
-
-/// Suma real aplicada a las cuotas de un estudiante por un pago aprobado.
-class _StudentPaymentAllocation {
-  const _StudentPaymentAllocation({
-    required this.name,
-    required this.amountUsd,
-    required this.quotaCount,
-  });
-
-  final String name;
-  final double? amountUsd;
-  final int quotaCount;
-}
-
-/// Modelo flexible: el backend puede incluir columnas adicionales o distintas
-/// versiones de nombres sin bloquear la pantalla.
-class _ReportedPayment {
-  final Map<String, dynamic> raw;
-  final List<Map<String, dynamic>> _notifications = [];
-  List<String> _appliedQuotaLabels = const [];
-  List<String> _appliedConcepts = const [];
-  List<String> _appliedPeriods = const [];
-  int _appliedQuotaCount = 0;
-  bool _quotaEstimate = false;
-  List<_StudentPaymentAllocation> _studentAllocations = const [];
-
-  _ReportedPayment(this.raw);
-
-  void setStudentAllocations(List<_StudentPaymentAllocation> allocations) {
-    _studentAllocations = allocations;
-  }
-
-  List<_StudentPaymentAllocation> get studentAllocations =>
-      List.unmodifiable(_studentAllocations);
-
-  void setAppliedQuotaLabels(
-    List<String> labels,
-    int quotaCount, {
-    List<String> concepts = const [],
-    List<String> periods = const [],
-    bool estimated = false,
-  }) {
-    _appliedQuotaLabels = labels;
-    _quotaEstimate = estimated;
-    _appliedQuotaCount = quotaCount;
-    _appliedConcepts = concepts;
-    _appliedPeriods = periods;
-  }
-
-  bool get hasQuotaDetails => _appliedQuotaLabels.isNotEmpty;
-  bool get quotaEstimate => _quotaEstimate;
-  List<String> get quotaDetails => List.unmodifiable(_appliedQuotaLabels);
-
-  String get installmentHeading {
-    return 'CONCEPTO';
-  }
-
-  String get installmentCardValue {
-    if (_appliedQuotaLabels.isEmpty) {
-      return normalizedStatus == 'pendiente'
-          ? 'Se asignará al aprobar'
-          : installmentLabel;
-    }
-    final first = _appliedQuotaLabels.first;
-    if (_appliedQuotaLabels.length == 1) return first;
-    final extra = _appliedQuotaLabels.length - 1;
-    return '$first (+$extra ${extra == 1 ? 'concepto' : 'conceptos'})';
-  }
-
-  String _get(List<String> keys) {
-    for (final k in keys) {
-      final str = raw[k]?.toString().trim() ?? '';
-      if (str.isNotEmpty && str.toLowerCase() != 'null') return str;
-    }
-    return '';
-  }
-
-  String get id => _get(['id']);
-  String get shortId => id.length > 8 ? id.substring(0, 8) : id;
-  String get displayReference =>
-      reference.isEmpty ? '#$shortId' : '· $reference';
-  String get reference => _get([
-    'referencia',
-    'referencia_pago',
-    'referencia_bancaria',
-    'numero_referencia',
-    'nro_referencia',
-    'numero_operacion',
-  ]);
-  String get method {
-    final rawMethod = _get([
-      'metodo_pago',
-      'metodo',
-      'medio_pago',
-      'tipo_pago',
-    ]);
-    return switch (rawMethod.toLowerCase()) {
-      'pago_movil' || 'pago móvil' || 'pago movil' => 'Pago móvil',
-      'transferencia_bancaria' => 'Transferencia bancaria',
-      'efectivo_usd' => 'Efectivo USD',
-      _ => rawMethod,
-    };
-  }
-
-  String get bank =>
-      _get(['banco_origen', 'banco', 'banco_emisor', 'entidad_bancaria']);
-  String get concept =>
-      _get([
-        'concepto',
-        'descripcion',
-        'periodo',
-        'observacion_concepto',
-      ]).isEmpty
-      ? 'Pago escolar'
-      : _get(['concepto', 'descripcion', 'periodo', 'observacion_concepto']);
-
-  /// Prioriza los conceptos reales de pago_aplicaciones -> cuotas y
-  /// conceptos_cobro. Si no hay aplicaciones, usa campos explícitos de pagos.
-  /// Nunca infiere la mensualidad según la fecha o el monto depositado.
-  String get installmentLabel {
-    if (_appliedQuotaLabels.isNotEmpty) {
-      final label = _appliedQuotaLabels.join(' · ');
-      // Una familia puede pagar la misma mensualidad de varios estudiantes.
-      return _appliedQuotaCount > _appliedQuotaLabels.length
-          ? '$label (${_appliedQuotaCount} cuotas)'
-          : label;
-    }
-
-    final named = _get([
-      'nombre_cuota',
-      'cuota_nombre',
-      'nombre_mensualidad',
-      'mensualidad',
-      'concepto_cuota',
-      'periodo_cuota',
-      'cuota_periodo',
-      'periodo_pagado',
-      'mes_correspondiente',
-    ]);
-    if (named.isNotEmpty) return named;
-
-    // Si el backend conserva las cuotas en un JSON o arreglo, mostramos los
-    // nombres disponibles; nunca mostramos UUIDs como si fueran cuotas.
-    final assigned = <String>[];
-    for (final key in ['cuotas', 'mensualidades', 'detalle_cuotas']) {
-      final data = raw[key];
-      if (data is! List) continue;
-      for (final entry in data) {
-        if (entry is! Map) continue;
-        final detail = Map<String, dynamic>.from(entry);
-        for (final candidate in [
-          'nombre_cuota',
-          'concepto',
-          'periodo',
-          'nombre',
-          'mes',
-        ]) {
-          final value = detail[candidate]?.toString().trim() ?? '';
-          if (value.isNotEmpty && !assigned.contains(value)) {
-            assigned.add(value);
-            break;
-          }
-        }
-      }
-    }
-    if (assigned.isNotEmpty) return assigned.join(' · ');
-
-    final month = _get(['mes_cuota', 'mes_mensualidad', 'mes_pagado', 'mes']);
-    final year = _get(['anio_cuota', 'ano_cuota', 'anio', 'ano', 'año']);
-    if (month.isNotEmpty) {
-      const months = [
-        'enero',
-        'febrero',
-        'marzo',
-        'abril',
-        'mayo',
-        'junio',
-        'julio',
-        'agosto',
-        'septiembre',
-        'octubre',
-        'noviembre',
-        'diciembre',
-      ];
-      final n = int.tryParse(month);
-      final name = n != null && n >= 1 && n <= 12 ? months[n - 1] : month;
-      return year.isEmpty ? name : '$name $year';
-    }
-
-    final number = _get(['numero_cuota', 'nro_cuota', 'cuota_numero']);
-    if (number.isNotEmpty) return 'Cuota $number';
-
-    final period = _get(['periodo']);
-    if (period.isNotEmpty) return period;
-
-    // Algunas instalaciones solo guardan la cuota dentro del concepto.
-    final description = _get([
-      'concepto',
-      'descripcion',
-      'observacion_concepto',
-    ]);
-    if (RegExp(
-      r'\b(mensualidad|cuota|inscripci[oó]n|matr[ií]cula|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\b',
-      caseSensitive: false,
-    ).hasMatch(description)) {
-      return description;
-    }
-    return normalizedStatus == 'pendiente'
-        ? 'Se asignará al aprobar'
-        : 'Cuotas sin detalle disponible';
-  }
-
-  DateTime? _date(List<String> keys) {
-    for (final k in keys) {
-      final result = DateTime.tryParse(raw[k]?.toString() ?? '');
-      if (result != null) return result;
-    }
-    return null;
-  }
-
-  DateTime? get createdAt => _date(['creado_at', 'created_at']);
-  DateTime? get paymentDate => _date(['fecha_pago']);
-  DateTime? get confirmedAt =>
-      _date(['revisado_at', 'fecha_revision', 'aprobado_at', 'actualizado_at']);
-
-  String get normalizedStatus {
-    final status = _get(['estado', 'status']).toLowerCase().trim();
-    if (['aprobado', 'aprobada', 'validado', 'confirmado'].contains(status))
-      return 'aprobado';
-    if (['rechazado', 'rechazada', 'denegado', 'invalidado'].contains(status))
-      return 'rechazado';
-    if ([
-      'pendiente',
-      'en_revision',
-      'en revisión',
-      'en_espera',
-      'reportado',
-      'espera',
-      'en espera',
-    ].contains(status))
-      return 'pendiente';
-    return status.isEmpty ? 'pendiente' : status;
-  }
-
-  String get statusLabel => switch (normalizedStatus) {
-    'pendiente' => 'En espera',
-    'aprobado' => 'Aprobado',
-    'rechazado' => 'Rechazado',
-    final other => other,
-  };
-
-  /// Valor contable estimado en USD, solo para previsualizar FIFO.
-  /// La aplicación definitiva del pago la determina la base de datos.
-  double get amountUsdEquivalent {
-    final converted = raw['monto_usd_equivalente'];
-    if (converted != null) {
-      return converted is num
-          ? converted.toDouble()
-          : (double.tryParse(converted.toString()) ?? 0);
-    }
-    final rawAmount = raw['monto'];
-    final amount = rawAmount is num
-        ? rawAmount.toDouble()
-        : (double.tryParse(rawAmount?.toString() ?? '') ?? 0);
-    final currency = _get(['moneda']).toUpperCase();
-    if (currency == 'USD') return amount;
-    final tasa = raw['tasa_aplicada'];
-    final rate = tasa is num
-        ? tasa.toDouble()
-        : (double.tryParse(tasa?.toString() ?? '') ?? 0);
-    return rate > 0 ? amount / rate : 0;
-  }
-
-  String get displayAmount {
-    final rawAmount = raw['monto'];
-    final amount = rawAmount is num
-        ? rawAmount.toDouble()
-        : double.tryParse('$rawAmount') ?? 0;
-    final fixed = amount.abs().toStringAsFixed(2).split('.');
-    final n = fixed[0].replaceAllMapped(
-      RegExp(r'\B(?=(\d{3})+(?!\d))'),
-      (_) => '.',
-    );
-    final text = '${amount < 0 ? '-' : ''}$n,${fixed[1]}';
-    final currency = _get(['moneda']).toUpperCase();
-    return currency == 'VES' || currency == 'BS' || currency == 'BS.'
-        ? 'Bs. $text'
-        : '\$$text ${currency.isEmpty ? 'USD' : currency}';
-  }
-
-  void addNotification(Map<String, dynamic> item) => _notifications.add(item);
-
-  static void _append(List<String> output, Set<String> seen, dynamic value) {
-    if (value == null) return;
-    if (value is List) {
-      for (final sub in value) {
-        _append(output, seen, sub);
-      }
-      return;
-    }
-    if (value is Map) {
-      for (final entry in value.entries) {
-        _append(output, seen, entry.value);
-      }
-      return;
-    }
-    final text = value.toString().trim();
-    if (text.isEmpty || ['null', 'false', 'true'].contains(text.toLowerCase()))
-      return;
-    if (seen.add(text.toLowerCase())) output.add(text);
-  }
-
-  List<String> get rejectionReasons {
-    final values = <String>[];
-    final seen = <String>{};
-    for (final entry in raw.entries) {
-      final k = entry.key.toLowerCase();
-      if (k.contains('motivo') ||
-          k.contains('razon_rechazo') ||
-          k.contains('razón') ||
-          k.contains('justificacion') ||
-          k.contains('causa_rechazo') ||
-          k.contains('detalle_rechazo') ||
-          (normalizedStatus == 'rechazado' &&
-              (k.contains('observ') ||
-                  k.contains('comentario') ||
-                  k.contains('nota_rechazo') ||
-                  k.contains('nota_admin')))) {
-        _append(values, seen, entry.value);
-      }
-    }
-    if (normalizedStatus == 'rechazado') {
-      for (final k in [
-        'observaciones',
-        'observacion',
-        'observacion_admin',
-        'observaciones_admin',
-        'comentario_admin',
-        'comentarios_admin',
-        'nota_admin',
-      ]) {
-        _append(values, seen, raw[k]);
-      }
-    }
-    for (final note in _notifications) {
-      if (note['tipo']?.toString() != 'pago_rechazado') continue;
-      final data = note['datos'];
-      if (data is Map) {
-        for (final item in data.entries) {
-          final name = item.key.toString().toLowerCase();
-          if (name.contains('motivo') ||
-              name.contains('razon') ||
-              name.contains('observacion') ||
-              name.contains('comentario')) {
-            _append(values, seen, item.value);
-          }
-        }
-      }
-      // Solo tratamos el mensaje como motivo si explicita alguna causa.
-      // Una notificación genérica «Pago rechazado» NO es un motivo.
-      final message = note['mensaje']?.toString() ?? '';
-      if (RegExp(
-        r'motivo|raz[oó]n|debido|porque|causa|inconsisten|incorrect|inv[aá]lid',
-        caseSensitive: false,
-      ).hasMatch(message)) {
-        _append(values, seen, message);
-      }
-    }
-    return values;
-  }
-
-  List<String> get otherNotes {
-    final result = <String>[];
-    final seen = <String>{};
-    if (normalizedStatus != 'rechazado') {
-      for (final key in [
-        'observaciones',
-        'observacion',
-        'comentario_admin',
-        'nota_admin',
-      ]) {
-        _append(result, seen, raw[key]);
-      }
-    } else {
-      for (final note in _notifications) {
-        if (note['tipo']?.toString() == 'pago_rechazado') {
-          final message = note['mensaje']?.toString().trim() ?? '';
-          if (message.isNotEmpty && !rejectionReasons.contains(message)) {
-            _append(result, seen, 'Mensaje de notificación: $message');
-          }
-        }
-      }
-    }
-    return result;
   }
 }

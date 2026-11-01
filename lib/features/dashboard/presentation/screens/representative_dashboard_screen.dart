@@ -2,15 +2,17 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../../../core/services/bcv_service.dart';
+import '../../application/representative_financial_summary_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../main.dart';
 import '../../../landing/presentation/screens/home_screen.dart';
-import '../../data/account_status_service.dart';
-import '../widgets/edit_profile_dialog.dart';
-import '../widgets/report_payment_dialog.dart';
-import '../widgets/representative_payments_section.dart';
-import '../widgets/representative_calendar_section.dart';
+import '../../../payments/domain/account_status.dart';
+import '../../../profile/presentation/widgets/edit_profile_dialog.dart';
+import '../../../profile/data/profile_repository.dart';
+import '../../../profile/data/supabase_profile_repository.dart';
+import '../../../payments/presentation/widgets/report_payment_dialog.dart';
+import '../../../payments/presentation/widgets/representative_payments_section.dart';
+import '../../../calendar/presentation/widgets/representative_calendar_section.dart';
 import '../../../../core/services/notification_service.dart';
 import '../../../../core/widgets/dashboard_shell.dart';
 import '../../../../core/widgets/skeleton_loader.dart';
@@ -28,8 +30,9 @@ class _RepresentativeDashboardScreenState
   final User? currentUser = supabase.auth.currentUser;
 
   // Servicios para Tasa BCV y Estado de Cuenta
-  final BcvService _bcvService = BcvService();
-  final AccountStatusService _accountStatusService = AccountStatusService();
+  final RepresentativeFinancialSummaryService _financialService =
+      RepresentativeFinancialSummaryService();
+  final ProfileRepository _profileRepository = SupabaseProfileRepository();
 
   bool _isLoading = false;
   bool _isLoadingProfile = true;
@@ -40,6 +43,7 @@ class _RepresentativeDashboardScreenState
 
   // Datos dinámicos del representante autenticado
   String _repDbId = '';
+  String _repSchoolId = '';
   String _fullName = '';
   String _cedula = '';
   String _email = '';
@@ -97,253 +101,158 @@ class _RepresentativeDashboardScreenState
     super.dispose();
   }
 
-  // --- CONSULTA EN VIVO DEL PERFIL DEL REPRESENTANTE ---
-  // silent: true se usa al refrescar (pull-to-refresh) para no reemplazar la
-  // pantalla por el spinner de carga.
+  // --- PERFIL, ESTUDIANTES Y COLEGIO DESDE EL MÓDULO PROFILE ---
+  // Las consultas pertenecen al repositorio; esta pantalla gestiona la UI.
   Future<void> fetchUserProfileAndStudents({bool silent = false}) async {
-    if (!silent) setState(() => _isLoadingProfile = true);
+    if (!silent && mounted) setState(() => _isLoadingProfile = true);
     try {
       final user = supabase.auth.currentUser;
-      if (user != null) {
-        final userEmail = user.email ?? '';
-        final userCedula = user.userMetadata?['cedula']?.toString() ?? '';
-        final userFullName =
-            user.userMetadata?['nombre_completo']?.toString() ?? '';
+      if (user == null) return;
+      final profile = await _profileRepository.loadCurrentProfile();
+      if (!mounted) return;
+      final fallbackName = (user.userMetadata?['nombre_completo'] ?? '')
+          .toString()
+          .trim();
+      final authEmail = user.email ?? '';
+      final authId = (user.userMetadata?['cedula'] ?? '').toString();
 
-        Map<String, dynamic>? data;
-
-        // 1. Buscar en 'representantes' por perfil_id, email o cédula
-        try {
-          data = await supabase
-              .from('representantes')
-              .select()
-              .eq('perfil_id', user.id)
-              .maybeSingle();
-        } catch (_) {}
-
-        if (data == null && userEmail.isNotEmpty) {
-          try {
-            data = await supabase
-                .from('representantes')
-                .select()
-                .eq('email', userEmail)
-                .maybeSingle();
-          } catch (_) {}
+      if (profile != null) {
+        final previousRepresentativeId = _repDbId;
+        _repDbId = profile.id;
+        _repSchoolId = profile.schoolId;
+        if (previousRepresentativeId != _repDbId) {
+          _selectionInitialized = false;
         }
+        _fullName = profile.fullName.trim().isNotEmpty
+            ? profile.fullName
+            : (fallbackName.isNotEmpty
+                  ? fallbackName
+                  : authEmail.split('@')[0]);
+        _cedula = profile.identification.isNotEmpty
+            ? profile.identification
+            : 'Sin cédula';
+        _email = profile.email.isNotEmpty ? profile.email : authEmail;
+        _phone = profile.phone;
+        _address = profile.address;
+        _familyName = (profile.familyName?.trim().isNotEmpty ?? false)
+            ? profile.familyName!
+            : 'Familia ${_getLastName(_fullName)}';
+        _initials = _getInitials(_fullName);
 
-        if (data == null && userCedula.isNotEmpty) {
-          try {
-            data = await supabase
-                .from('representantes')
-                .select()
-                .eq('cedula', userCedula)
-                .maybeSingle();
-          } catch (_) {}
-        }
-
-        if (data != null) {
-          _repDbId = data['id']?.toString() ?? '';
-          final nombres = data['nombres']?.toString() ?? '';
-          final apellidos = data['apellidos']?.toString() ?? '';
-          final computedName = '$nombres $apellidos'.trim();
-
-          final fetchedName = computedName.isNotEmpty
-              ? computedName
-              : (userFullName.isNotEmpty
-                    ? userFullName
-                    : userEmail.split('@')[0]);
-
-          final fetchedCedula =
-              (data['cedula'] != null && data['cedula'].toString().isNotEmpty)
-              ? data['cedula'].toString()
-              : (userCedula.isNotEmpty ? userCedula : 'Sin cédula');
-
-          final fetchedEmail =
-              (data['email'] != null && data['email'].toString().isNotEmpty)
-              ? data['email'].toString()
-              : userEmail;
-
-          final fetchedPhone = data['telefono_whatsapp']?.toString() ?? '';
-          final fetchedAddress = data['direccion']?.toString() ?? '';
-          final fetchedFamily =
-              (data['familia'] != null && data['familia'].toString().isNotEmpty)
-              ? data['familia'].toString()
-              : 'Familia ${_getLastName(fetchedName)}';
-
-          _fullName = fetchedName;
-          _cedula = fetchedCedula;
-          _email = fetchedEmail;
-          _phone = fetchedPhone;
-          _address = fetchedAddress;
-          _familyName = fetchedFamily;
-          _initials = _getInitials(fetchedName);
-
-          // 2. Cargar colegio y estudiantes vinculados (en paralelo)
-          final schoolFuture = _loadSchoolName(data['colegio_id']?.toString());
-          if (_repDbId.isNotEmpty) {
-            await fetchAssociatedStudents(_repDbId);
-          }
-          await schoolFuture;
-        } else {
-          // Fallback para usuario sin perfil creado aún
-          final fallbackName = userFullName.isNotEmpty
-              ? userFullName
-              : (userEmail.isNotEmpty ? userEmail.split('@')[0] : 'Usuario');
-
-          _fullName = fallbackName;
-          _cedula = userCedula.isNotEmpty ? userCedula : 'Sin cédula';
-          _email = userEmail;
-          _familyName = 'Familia ${_getLastName(fallbackName)}';
-          _initials = _getInitials(fallbackName);
-        }
+        final schoolFuture = _loadSchoolName(_repSchoolId);
+        await fetchAssociatedStudents(_repDbId);
+        await schoolFuture;
+      } else {
+        // Si Auth existe pero no hay un representante enlazado, no se
+        // recuperan datos de terceros usando cédula o correo como identidad.
+        _repDbId = '';
+        _repSchoolId = '';
+        _students = [];
+        _selectionInitialized = false;
+        _selectedStudentIndex = 0;
+        _fullName = fallbackName.isNotEmpty
+            ? fallbackName
+            : (authEmail.isNotEmpty ? authEmail.split('@')[0] : 'Usuario');
+        _cedula = authId.isNotEmpty ? authId : 'Sin cédula';
+        _email = authEmail;
+        _phone = '';
+        _address = '';
+        _familyName = 'Familia ${_getLastName(_fullName)}';
+        _initials = _getInitials(_fullName);
+        _schoolName = '';
+        _configuredSchoolPeriod = null;
+        // Perfil no vinculado: nunca conservar solvencia de otra sesión.
+        _estadoCuenta = null;
+        _estadoCuentaError = true;
+        _montoUsd = 0;
+        _equivalenteVes = 0;
       }
     } catch (e) {
-      debugPrint('Error al obtener datos del representante: $e');
-    } finally {
+      debugPrint('Error al cargar el perfil del representante: $e');
       if (mounted) {
-        setState(() => _isLoadingProfile = false);
+        setState(() {
+          _estadoCuenta = null;
+          _estadoCuentaError = true;
+          _montoUsd = 0;
+          _equivalenteVes = 0;
+        });
       }
+    } finally {
+      if (mounted) setState(() => _isLoadingProfile = false);
     }
   }
 
-  // --- CONSULTAR ESTUDIANTES VINCULADOS ---
   Future<void> fetchAssociatedStudents(String representanteId) async {
     try {
-      final relResponse = await supabase
-          .from('representante_estudiante')
-          .select('estudiante_id')
-          .eq('representante_id', representanteId);
-
-      final List<dynamic> relList = relResponse as List<dynamic>;
-      final List<String> studentIds = relList
-          .map((item) => item['estudiante_id']?.toString())
-          .whereType<String>()
-          .toList();
-
-      if (studentIds.isNotEmpty) {
-        final studentsResponse = await supabase
-            .from('estudiantes')
-            .select()
-            .filter('id', 'in', studentIds);
-
-        final loadedStudents = List<Map<String, dynamic>>.from(
-          studentsResponse,
-        );
-
-        if (mounted) {
-          setState(() {
-            _students = loadedStudents;
-            if (!_selectionInitialized) {
-              // Con más de un hijo se abre la vista consolidada (total global).
-              _selectedStudentIndex = _students.length > 1 ? -1 : 0;
-              _selectionInitialized = true;
-            } else if (_selectedStudentIndex >= _students.length ||
-                (_students.length == 1 && _selectedStudentIndex == -1)) {
-              _selectedStudentIndex = 0;
-            }
-          });
-          // Recalcular finanzas con la Tasa BCV y saldos reales (HU7)
-          await _updateFinancialSummary();
-        }
-        return;
-      }
-    } catch (e) {
-      debugPrint('Error al consultar estudiantes asociados: $e');
-    }
-
-    if (mounted) {
+      final loadedStudents = await _profileRepository.loadLinkedStudents(
+        representativeId: representanteId,
+        schoolId: _repSchoolId,
+      );
+      if (!mounted || representanteId != _repDbId) return;
       setState(() {
-        _students = [];
-        _selectedStudentIndex = 0;
+        _students = loadedStudents;
+        if (!_selectionInitialized) {
+          _selectedStudentIndex = _students.length > 1 ? -1 : 0;
+          _selectionInitialized = true;
+        } else if (_selectedStudentIndex >= _students.length ||
+            (_students.length == 1 && _selectedStudentIndex == -1)) {
+          _selectedStudentIndex = 0;
+        }
       });
       await _updateFinancialSummary();
+    } catch (e) {
+      debugPrint('Error al consultar estudiantes asociados: $e');
+      // Un fallo de red no prueba solvencia ni justifica borrar el listado.
+      if (mounted && representanteId == _repDbId) {
+        setState(() {
+          _estadoCuenta = null;
+          _estadoCuentaError = true;
+          _montoUsd = 0;
+          _equivalenteVes = 0;
+        });
+      }
     }
   }
 
-  // --- NOMBRE DEL COLEGIO DEL REPRESENTANTE ---
   Future<void> _loadSchoolName(String? colegioId) async {
     if (colegioId == null || colegioId.isEmpty) return;
     try {
-      final row = await supabase
-          .from('colegios')
-          .select()
-          .eq('id', colegioId)
-          .maybeSingle();
-      final nombre = row?['nombre']?.toString() ?? '';
-      // Soporta nombres habituales del campo sin exigir una migración de BD.
-      // Si no hay uno configurado, se presenta el ciclo calendario actual.
-      String? periodo;
-      for (final value in [
-        row?['periodo_escolar'],
-        row?['periodo_actual'],
-        row?['anio_escolar'],
-        row?['ano_escolar'],
-      ]) {
-        final text = value?.toString().trim() ?? '';
-        if (text.isNotEmpty) {
-          periodo = text;
-          break;
+      final school = await _profileRepository.loadSchool(colegioId);
+      if (!mounted || colegioId != _repSchoolId) return;
+      setState(() {
+        if (school != null && school.name.isNotEmpty) {
+          _schoolName = school.name;
         }
-      }
-      if (mounted) {
-        setState(() {
-          if (nombre.isNotEmpty) _schoolName = nombre;
-          _configuredSchoolPeriod = periodo;
-        });
-      }
+        _configuredSchoolPeriod = school?.period;
+      });
     } catch (e) {
       debugPrint('Error al cargar el colegio del representante: $e');
     }
   }
 
-  // --- CÁLCULO DINÁMICO DE SALDOS Y TASA BCV (HU7) ---
+  // --- RESUMEN FINANCIERO DEL MÓDULO DE DASHBOARD ---
   Future<void> _updateFinancialSummary() async {
-    // Estado de cuenta de TODA la familia: se lanza ya y corre en paralelo
-    // con la consulta de la Tasa BCV. Si falla NO se asume solvencia.
-    final Future<EstadoCuenta?> estadoFuture = _accountStatusService
-        .getEstadoCuenta(representanteId: _repDbId)
-        .then<EstadoCuenta?>((v) => v)
-        .catchError((Object e) {
-          debugPrint('Error consultando el estado de cuenta: $e');
-          return null;
-        });
-
-    // 1. Tasa BCV (oficial o caché). Si falla se conserva la última conocida.
-    double rate = _tasaBcv;
-    String rateStr = _tasaBcvStr;
-    String rateLabel = _tasaFechaLabel;
-    try {
-      final bcvData = await _bcvService.getLatestBcvRate();
-      if (bcvData.rate > 0) {
-        rate = bcvData.rate;
-        rateStr = bcvData.rate.toStringAsFixed(2).replaceAll('.', ',');
-        rateLabel = bcvData.dateFormatted;
-      }
-    } catch (e) {
-      debugPrint('Error obteniendo tasa BCV: $e');
-    }
-
-    // 2. Estado de cuenta de TODA la familia (una fila por cuota).
-    //    Si falla NO se asume solvencia: se muestra un estado de error.
-    final EstadoCuenta? estado = await estadoFuture;
-
-    if (!mounted) return;
+    final representativeId = _repDbId;
+    final snapshot = await _financialService.load(
+      representativeId: representativeId,
+      previousRate: _tasaBcv,
+      previousRateText: _tasaBcvStr,
+      previousRateLabel: _tasaFechaLabel,
+    );
+    if (!mounted || representativeId != _repDbId) return;
     setState(() {
-      _estadoCuenta = estado;
-      _estadoCuentaError = estado == null;
-
-      // Vista individual: solo ese hijo. Consolidado (-1): total global.
+      _estadoCuenta = snapshot.account;
+      _estadoCuentaError = snapshot.account == null;
       final String? selectedId =
           (_selectedStudentIndex >= 0 &&
               _selectedStudentIndex < _students.length)
           ? _students[_selectedStudentIndex]['id'].toString()
           : null;
-      _montoUsd = estado?.pendienteDe(estudianteId: selectedId) ?? 0.0;
-
-      _tasaBcv = rate;
-      _equivalenteVes = _montoUsd * rate;
-      _tasaBcvStr = rateStr;
-      _tasaFechaLabel = rateLabel;
+      _montoUsd = snapshot.account?.pendienteDe(estudianteId: selectedId) ?? 0;
+      _tasaBcv = snapshot.rate;
+      _equivalenteVes = _montoUsd * snapshot.rate;
+      _tasaBcvStr = snapshot.rateText;
+      _tasaFechaLabel = snapshot.rateLabel;
     });
   }
 
@@ -504,8 +413,9 @@ class _RepresentativeDashboardScreenState
       'pago_reportado',
       'pago_aprobado',
       'pago_rechazado',
-    }.contains(notification.tipo))
+    }.contains(notification.tipo)) {
       return;
+    }
 
     final data = notification.datos;
     String? identifier;
@@ -560,7 +470,9 @@ class _RepresentativeDashboardScreenState
       userInitials: _initials.isEmpty ? 'U' : _initials,
       userRole: 'Representante',
       onLogout: _handleLogout,
-      onEditProfile: () => _showEditProfileModal(context),
+      onEditProfile: _repDbId.isEmpty
+          ? null
+          : () => _showEditProfileModal(context),
       searchHint: 'Buscar una sección del menú...',
       onSupportTap: _showSupportDialog,
       onNotificationTap: _openPaymentNotification,
@@ -725,11 +637,6 @@ class _RepresentativeDashboardScreenState
     if (_estadoCuenta == null) _updateFinancialSummary();
   }
 
-  // Conserva la estructura de las tarjetas existentes sin aplicar fondos
-  // decorativos. Iconos, estados y acciones no se modifican.
-  Widget _cornerWaves(Widget content, {Color color = AppColors.primaryBlue}) =>
-      content;
-
   // Ondas en la esquina superior derecha para Estudiante, Solvencia y
   // Próximo pago. En hover crecen solo un 13 %, sin mover el contenido.
   // Los accesos rápidos utilizan un diseño independiente, sin ondas.
@@ -808,20 +715,6 @@ class _RepresentativeDashboardScreenState
       },
     );
   }
-
-  BoxDecoration _whiteCard({Color border = AppColors.cardBorder, Color? bg}) =>
-      BoxDecoration(
-        color: bg ?? Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: border),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF1B4785).withValues(alpha: 0.035),
-            blurRadius: 22,
-            offset: const Offset(0, 5),
-          ),
-        ],
-      );
 
   // Hora local del navegador/dispositivo: mañana 05–11, tarde 12–18,
   // noche 19–04. No requiere consultas ni permisos adicionales.
@@ -994,11 +887,12 @@ class _RepresentativeDashboardScreenState
             ],
           ),
         );
-        if (narrow)
+        if (narrow) {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [greeting, const SizedBox(height: 14), dateAndPeriod],
           );
+        }
         return Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
@@ -1930,7 +1824,7 @@ class _RepresentativeDashboardScreenState
   Widget _buildPaymentAndSecurityRow() {
     return LayoutBuilder(
       builder: (context, c) {
-        if (c.maxWidth < 820)
+        if (c.maxWidth < 820) {
           return Column(
             children: [
               _buildNextPaymentCard(availableWidth: c.maxWidth),
@@ -1938,6 +1832,7 @@ class _RepresentativeDashboardScreenState
               _buildCalendarPreviewCard(),
             ],
           );
+        }
         // Ambas tarjetas comparten altura visual. El mini calendario conserva
         // su diseño compacto y ocupa el alto del bloque «Próximo pago».
         // IntrinsicHeight toma el alto natural de la tarjeta más alta; no
@@ -1970,7 +1865,7 @@ class _RepresentativeDashboardScreenState
     );
     return LayoutBuilder(
       builder: (context, c) {
-        if (c.maxWidth < 820)
+        if (c.maxWidth < 820) {
           return Column(
             children: [
               account,
@@ -1978,6 +1873,7 @@ class _RepresentativeDashboardScreenState
               _buildInstitutionCard(),
             ],
           );
+        }
         return _twoColumnRow(main: account, side: _buildInstitutionCard());
       },
     );
@@ -2118,24 +2014,6 @@ class _RepresentativeDashboardScreenState
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('Entendido'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showSecurityDialog() {
-    showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Privacidad de tu cuenta'),
-        content: const Text(
-          'Tu sesión requiere autenticación. Verifica los datos de cada pago antes de reportarlo y cierra sesión cuando uses un dispositivo compartido.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cerrar'),
           ),
         ],
       ),

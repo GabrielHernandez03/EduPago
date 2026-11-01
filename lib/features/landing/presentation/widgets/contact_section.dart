@@ -294,7 +294,7 @@ class _InfoCardState extends State<_InfoCard> {
       width: widget.width,
       radius: 16,
       borderColor: const Color(0xFFE2E8F0),
-      hoverBorderColor: const Color(0xFF2563EB).withOpacity(0.45),
+      hoverBorderColor: const Color(0xFF2563EB).withValues(alpha: 0.45),
       shadowColor: const Color(0xFF2563EB),
       restShadowOpacity: 0.04,
       hoverShadowOpacity: 0.16,

@@ -124,7 +124,7 @@ class _StatItem extends StatelessWidget {
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: AppColors.primaryBlue.withOpacity(
+                  color: AppColors.primaryBlue.withValues(alpha: 
                     hovered ? 0.28 : 0.12,
                   ),
                 ),

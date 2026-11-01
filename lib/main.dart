@@ -14,7 +14,7 @@ Future<void> main() async {
   // Inicialización de Supabase con flujo implícito configurado correctamente
   await Supabase.initialize(
     url: 'https://biuwojmjudzfvstgklrj.supabase.co',
-    anonKey:
+    publishableKey:
         'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJpdXdvam1qdWR6ZnZzdGdrbHJqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyNDI5MzUsImV4cCI6MjEwNjgxODkzNX0.Ll7gcvZ3lw-vf6dVbJZlMPucMFiwJ7wxaUStymp5glk',
     authOptions: const FlutterAuthClientOptions(
       authFlowType: AuthFlowType.implicit,

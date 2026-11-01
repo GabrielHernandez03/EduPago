@@ -1,4 +1,4 @@
-// lib/features/dashboard/presentation/widgets/manual_student_dialog.dart
+// lib/features/students/presentation/widgets/manual_student_dialog.dart
 
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
@@ -7,7 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../core/theme/app_colors.dart';
-import '../../../../main.dart';
+import '../../data/student_repository.dart';
+import '../../data/supabase_student_repository.dart';
 
 // ---------------------------------------------------------------------------
 // API pública
@@ -42,15 +43,6 @@ const _kGreenBorder = Color(0xFFBBF7D0);
 const _kAmber = Color(0xFFD97706);
 const _kAmberSoft = Color(0xFFFFFBEB);
 const _kAmberBorder = Color(0xFFFDE68A);
-
-// ⚠ AJUSTA estos nombres a tu esquema de Supabase. Las columnas de
-// representantes salen de tu captura; los nombres de las TABLAS son suposición.
-const _kTblEstudiantes = 'estudiantes';
-const _kColCedulaEstudiante = 'cedula';
-const _kTblRepresentantes = 'representantes';
-const _kColCedulaRep = 'cedula';
-const _kSelectRep =
-    'id, nombres, apellidos, telefono_whatsapp, email, direccion';
 
 /// Prefijos de documento: valor → descripción.
 const _kCedPrefixes = {
@@ -304,6 +296,7 @@ class _ManualStudentDialog extends StatefulWidget {
 }
 
 class _ManualStudentDialogState extends State<_ManualStudentDialog> {
+  final StudentRepository _repository = SupabaseStudentRepository();
   final _studentFormKey = GlobalKey<FormState>();
 
   // Estudiante
@@ -430,8 +423,7 @@ class _ManualStudentDialogState extends State<_ManualStudentDialog> {
     _setNotice(_NoticeKind.warning, [
       'No se pudo verificar la cédula del $quien en la base de datos.',
       'Detalle: $corto',
-      'Revisa los nombres de tabla y columna (constantes _kTbl… y _kCol… al '
-          'inicio de manual_student_dialog.dart) y las políticas RLS.',
+      'Revisa las tablas, columnas y políticas RLS configuradas en Supabase.',
     ]);
   }
 
@@ -473,28 +465,12 @@ class _ManualStudentDialogState extends State<_ManualStudentDialog> {
   /// ¿Existe ya un estudiante con esta cédula en ESTE colegio?
   /// La misma cédula sí puede existir en otros colegios (un niño puede estar
   /// registrado en varios); la unicidad es por (colegio_id, cedula).
-  Future<bool> _studentCedExistsInDb(String full) async {
-    final row = await supabase
-        .from(_kTblEstudiantes)
-        .select('id')
-        .eq('colegio_id', widget.colegioId)
-        .eq(_kColCedulaEstudiante, full)
-        .limit(1)
-        .maybeSingle();
-    return row != null;
-  }
+  Future<bool> _studentCedExistsInDb(String full) =>
+      _repository.studentExists(colegioId: widget.colegioId, cedula: full);
 
   /// ¿Esta cédula ya pertenece a un representante de este colegio?
-  Future<bool> _cedExistsAsRepresentative(String full) async {
-    final row = await supabase
-        .from(_kTblRepresentantes)
-        .select('id')
-        .eq('colegio_id', widget.colegioId)
-        .eq(_kColCedulaRep, full)
-        .limit(1)
-        .maybeSingle();
-    return row != null;
-  }
+  Future<bool> _cedExistsAsRepresentative(String full) =>
+      _repository.representativeExists(colegioId: widget.colegioId, cedula: full);
 
   /// ¿La cédula coincide con un representante del formulario o de la lista?
   bool _studentCedInLocalReps(String key) {
@@ -576,7 +552,7 @@ class _ManualStudentDialogState extends State<_ManualStudentDialog> {
       context: context,
       barrierDismissible: false,
       barrierLabel: 'Representante',
-      barrierColor: Colors.black.withOpacity(0.28),
+      barrierColor: Colors.black.withValues(alpha: 0.28),
       transitionDuration: const Duration(milliseconds: 200),
       // Sin FadeTransition: una opacidad por encima rompería el desenfoque.
       transitionBuilder: (ctx, anim, secondary, child) => child,
@@ -777,17 +753,11 @@ class _ManualStudentDialogState extends State<_ManualStudentDialog> {
     });
 
     try {
-      final response = await supabase.functions.invoke(
-        'import-students',
-        body: {
-          'colegio_id': widget.colegioId,
-          'rows': _queue.map((s) => s.toJson()).toList(),
-        },
+      final data = await _repository.importStudents(
+        colegioId: widget.colegioId,
+        rows: _queue.map((s) => s.toJson()).toList(),
       );
       if (!mounted) return;
-
-      final raw = response.data;
-      final data = raw is Map ? Map<String, dynamic>.from(raw) : null;
       if (data == null) {
         setState(() {
           _saving = false;
@@ -1429,7 +1399,7 @@ class _ManualStudentDialogState extends State<_ManualStudentDialog> {
         controller: _queueScroll,
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
         itemCount: _queue.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        separatorBuilder: (_, _) => const SizedBox(height: 10),
         itemBuilder: (_, i) => tile(i),
       );
     }
@@ -1561,7 +1531,6 @@ class _CedulaField extends StatelessWidget {
   final ValueChanged<String> onPrefixChanged;
   final FocusNode? focusNode;
   final String? Function(String?)? validator;
-  final GlobalKey<FormFieldState<String>>? fieldKey;
   final bool checking;
   final ValueChanged<String>? onChanged;
 
@@ -1571,7 +1540,6 @@ class _CedulaField extends StatelessWidget {
     required this.onPrefixChanged,
     this.focusNode,
     this.validator,
-    this.fieldKey,
     this.checking = false,
     this.onChanged,
   });
@@ -1580,7 +1548,6 @@ class _CedulaField extends StatelessWidget {
   Widget build(BuildContext context) {
     final isJ = prefix == 'J-';
     return TextFormField(
-      key: fieldKey,
       controller: controller,
       focusNode: focusNode,
       onChanged: onChanged,
@@ -2170,6 +2137,7 @@ class _RepFormDialog extends StatefulWidget {
 }
 
 class _RepFormDialogState extends State<_RepFormDialog> {
+  final StudentRepository _repository = SupabaseStudentRepository();
   final _formKey = GlobalKey<FormState>();
   final _ced = TextEditingController();
   final _nom = TextEditingController();
@@ -2275,13 +2243,9 @@ class _RepFormDialogState extends State<_RepFormDialog> {
       });
       String? failure;
       try {
-        final row = await supabase
-            .from(_kTblRepresentantes)
-            .select(_kSelectRep)
-            .eq('colegio_id', widget.colegioId)
-            .eq(_kColCedulaRep, full)
-            .limit(1)
-            .maybeSingle();
+        final row = await _repository.findRepresentative(
+          colegioId: widget.colegioId, cedula: full,
+        );
         _lookup[key] = row;
       } catch (e) {
         debugPrint('No se pudo verificar la cédula del representante: $e');
