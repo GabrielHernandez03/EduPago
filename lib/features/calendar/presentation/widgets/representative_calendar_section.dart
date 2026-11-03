@@ -62,6 +62,8 @@ class _RepresentativeCalendarSectionState
   // Las listas laterales cuentan con scroll propio; sus encabezados no se mueven.
   final ScrollController _dueScrollController = ScrollController();
   final ScrollController _recentScrollController = ScrollController();
+  final ScrollController _infoScrollController = ScrollController();
+  String _agendaView = 'Todo';
 
   late DateTime _month;
   late DateTime _selected;
@@ -82,7 +84,9 @@ class _RepresentativeCalendarSectionState
     final today = DateUtils.dateOnly(DateTime.now());
     _month = DateTime(today.year, today.month);
     _selected = today;
-    _repository = SupabaseCalendarRepository(channelKey: 'full-${identityHashCode(this)}');
+    _repository = SupabaseCalendarRepository(
+      channelKey: 'full-${identityHashCode(this)}',
+    );
     _listen();
     _load();
   }
@@ -108,6 +112,7 @@ class _RepresentativeCalendarSectionState
     _stopListening();
     _dueScrollController.dispose();
     _recentScrollController.dispose();
+    _infoScrollController.dispose();
     super.dispose();
   }
 
@@ -212,10 +217,12 @@ class _RepresentativeCalendarSectionState
       return false;
     }
     if (_filter == 'Cuotas') {
-      return e.kind == CalendarEventKind.generated || e.kind == CalendarEventKind.due;
+      return e.kind == CalendarEventKind.generated ||
+          e.kind == CalendarEventKind.due;
     }
     if (_filter == 'Pagos') {
-      return e.kind != CalendarEventKind.generated && e.kind != CalendarEventKind.due;
+      return e.kind != CalendarEventKind.generated &&
+          e.kind != CalendarEventKind.due;
     }
     if (_filter == 'Aprobados') {
       return e.kind == CalendarEventKind.approved;
@@ -668,16 +675,18 @@ class _RepresentativeCalendarSectionState
                   ],
                   _summary(),
                   const SizedBox(height: 22),
-                  _filters(),
-                  const SizedBox(height: 16),
                   LayoutBuilder(
                     builder: (context, constraints) {
                       if (constraints.maxWidth < 830) {
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
+                            _filters(constraints.maxWidth),
+                            const SizedBox(height: 16),
                             _calendar(),
                             const SizedBox(height: 18),
+                            _agendaSelector(),
+                            const SizedBox(height: 12),
                             _agenda(),
                           ],
                         );
@@ -694,9 +703,12 @@ class _RepresentativeCalendarSectionState
                       final scaled =
                           MediaQuery.textScalerOf(context).scale(14) / 14;
                       final panelHeight =
-                          (536.0 + (weeks - 5) * 52.0) *
+                          (446.0 + (weeks - 5) * 50.0) *
                           (scaled > 1 ? scaled : 1.0);
-                      return Row(
+                      // Ancho de la columna del calendario (flex 8 de 13).
+                      final calendarWidth =
+                          (constraints.maxWidth - 18) * 8 / 13;
+                      final panels = Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Expanded(
@@ -711,6 +723,26 @@ class _RepresentativeCalendarSectionState
                             flex: 5,
                             child: _agenda(height: panelHeight),
                           ),
+                        ],
+                      );
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          IntrinsicHeight(
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Expanded(
+                                  flex: 8,
+                                  child: _filters(calendarWidth),
+                                ),
+                                const SizedBox(width: 18),
+                                Expanded(flex: 5, child: _agendaSelector()),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          panels,
                         ],
                       );
                     },
@@ -728,17 +760,31 @@ class _RepresentativeCalendarSectionState
   // al mes y una agenda compacta, legible y accesible.
   Widget _header() => LayoutBuilder(
     builder: (context, constraints) {
+      final narrow = constraints.maxWidth < 540;
       final title = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Mi calendario',
-            style: TextStyle(
-              color: _navy,
-              fontSize: constraints.maxWidth < 540 ? 25 : 30,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.8,
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.calendar_month_rounded,
+                color: _blue,
+                size: narrow ? 26 : 30,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Mi calendario',
+                  style: TextStyle(
+                    color: _navy,
+                    fontSize: narrow ? 25 : 30,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.8,
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           const Text(
@@ -747,30 +793,68 @@ class _RepresentativeCalendarSectionState
           ),
         ],
       );
-      final refresh = OutlinedButton.icon(
-        onPressed: _refreshing ? null : () => _load(silent: true),
-        icon: _refreshing
-            ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : const Icon(Icons.refresh_rounded, size: 18),
-        label: const Text('Actualizar'),
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size(126, 46),
-          foregroundColor: _navy,
-          backgroundColor: Colors.white,
-          side: const BorderSide(color: _border),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          textStyle: const TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w700,
+      final refreshButton = DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _border),
+          boxShadow: [
+            BoxShadow(
+              color: _blue.withValues(alpha: 0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            hoverColor: const Color(0xFFF3F7FE),
+            highlightColor: const Color(0xFFEAF2FF),
+            onTap: _refreshing ? null : () => _load(silent: true),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 8, 18, 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: const Color(0xFFEAF2FF),
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                    child: _refreshing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(
+                            Icons.refresh_rounded,
+                            size: 18,
+                            color: _blue,
+                          ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    _refreshing ? 'Actualizando...' : 'Actualizar',
+                    style: const TextStyle(
+                      color: _navy,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       );
+      final refresh = _CalendarHover(child: refreshButton);
       if (constraints.maxWidth < 560) {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -895,272 +979,616 @@ class _RepresentativeCalendarSectionState
     required IconData icon,
     required Color accent,
     required Color tint,
-  }) => Container(
-    constraints: const BoxConstraints(minHeight: 100),
-    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 17),
-    decoration: _cardDecoration(),
-    child: Row(
-      children: [
-        Container(
-          width: 46,
-          height: 46,
-          decoration: BoxDecoration(
-            color: tint,
-            borderRadius: BorderRadius.circular(14),
+  }) => _CalendarHover(
+    child: Container(
+      constraints: const BoxConstraints(minHeight: 100),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 17),
+      decoration: _cardDecoration(),
+      child: Row(
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: tint,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: accent, size: 23),
           ),
-          child: Icon(icon, color: accent, size: 23),
-        ),
-        const SizedBox(width: 13),
-        Expanded(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                value,
-                style: const TextStyle(
-                  color: _navy,
-                  fontSize: 25,
-                  fontWeight: FontWeight.w800,
-                  height: 1.1,
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  value,
+                  style: const TextStyle(
+                    color: _navy,
+                    fontSize: 25,
+                    fontWeight: FontWeight.w800,
+                    height: 1.1,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 5),
-              Text(
-                title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: _muted,
-                  fontSize: 11.5,
-                  height: 1.3,
+                const SizedBox(height: 5),
+                Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _muted,
+                    fontSize: 11.5,
+                    height: 1.3,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     ),
   );
 
-  Widget _filters() {
+  // --- Selectores con el mismo diseño del selector de estudiantes del inicio ---
+  bool _isStudentActive(Map<String, dynamic> st) {
+    final v = st['activo'];
+    if (v == null) return true;
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    final t = v.toString().trim().toLowerCase();
+    return !(t == 'false' ||
+        t == 'f' ||
+        t == '0' ||
+        t == 'no' ||
+        t == 'inactivo' ||
+        t == 'retirado');
+  }
+
+  String _studentName(Map<String, dynamic> st) =>
+      '${st['nombres'] ?? ''} ${st['apellidos'] ?? ''}'.trim();
+
+  String _initialsOf(String name) {
+    final parts = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts.first[0].toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+
+  /// Avatar circular con degradado suave, igual al del selector del inicio.
+  Widget _selectorAvatar({
+    IconData? icon,
+    String? text,
+    Color color = _blue,
+    double size = 38,
+  }) {
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color.lerp(Colors.white, color, 0.08)!,
+            Color.lerp(Colors.white, color, 0.20)!,
+          ],
+        ),
+        border: Border.all(color: Colors.white, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.18),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: icon != null
+          ? Icon(icon, size: size * 0.5, color: color)
+          : Text(
+              text ?? '',
+              style: TextStyle(
+                color: color,
+                fontSize: size * 0.34,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+    );
+  }
+
+  /// Botón de selección: avatar, título pequeño, valor y flecha circular.
+  Widget _selectorButton({
+    required double width,
+    required Widget avatar,
+    String? caption,
+    required String value,
+    required String detail,
+    String? badge,
+    required Future<void> Function(BuildContext ctx) onOpen,
+  }) => _CalendarHover(
+    child: _selectorButtonRaw(
+      width: width,
+      avatar: avatar,
+      caption: caption,
+      value: value,
+      detail: detail,
+      badge: badge,
+      onOpen: onOpen,
+    ),
+  );
+
+  Widget _selectorButtonRaw({
+    required double width,
+    required Widget avatar,
+    String? caption,
+    required String value,
+    required String detail,
+    String? badge,
+    required Future<void> Function(BuildContext ctx) onOpen,
+  }) {
+    return SizedBox(
+      width: width,
+      child: Builder(
+        builder: (ctx) => Semantics(
+          button: true,
+          label: caption == null ? value : '$caption: $value',
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _border),
+              boxShadow: [
+                BoxShadow(
+                  color: _blue.withValues(alpha: 0.04),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Material(
+              type: MaterialType.transparency,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                hoverColor: const Color(0xFFF3F7FE),
+                highlightColor: const Color(0xFFEAF2FF),
+                onTap: () => onOpen(ctx),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
+                  child: Row(
+                    children: [
+                      avatar,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (caption != null) ...[
+                              Text(
+                                caption,
+                                style: const TextStyle(
+                                  color: _muted,
+                                  fontSize: 9.5,
+                                  letterSpacing: 0.6,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                            ],
+                            Text(
+                              value,
+                              maxLines: 1,
+                              softWrap: false,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: _navy,
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              detail,
+                              maxLines: 1,
+                              softWrap: false,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: _muted,
+                                fontSize: 11.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      if (badge != null) ...[
+                        Container(
+                          constraints: const BoxConstraints(minWidth: 28),
+                          height: 28,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(999),
+                            color: const Color(0xFFEAF2FF),
+                          ),
+                          child: Text(
+                            badge,
+                            style: const TextStyle(
+                              color: _blue,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      Container(
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: const Color(0xFFF0F5FF),
+                          border: Border.all(color: const Color(0xFFDCE7FB)),
+                        ),
+                        child: const Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          size: 19,
+                          color: _blue,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _menuRow<T>(
+    _MenuOption<T> option, {
+    required bool selected,
+    required bool isLast,
+  }) {
+    var hovered = false;
+    return StatefulBuilder(
+      builder: (context, setLocal) => MouseRegion(
+        onEnter: (_) => setLocal(() => hovered = true),
+        onExit: (_) => setLocal(() => hovered = false),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+          decoration: BoxDecoration(
+            color: (hovered && option.enabled)
+                ? const Color(0xFFEAF2FF)
+                : (selected
+                      ? const Color(0xFFEAF2FF).withValues(alpha: 0.65)
+                      : Colors.transparent),
+            border: isLast
+                ? null
+                : const Border(bottom: BorderSide(color: _border)),
+          ),
+          child: Opacity(
+            opacity: option.enabled ? 1 : 0.5,
+            child: Row(
+              children: [
+                option.avatar,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        option.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: selected
+                              ? FontWeight.w800
+                              : FontWeight.w600,
+                          color: _navy,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        option.subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 11.5, color: _muted),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (!option.enabled)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEDF1F7),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      'INACTIVO',
+                      style: TextStyle(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.4,
+                        color: _muted,
+                      ),
+                    ),
+                  )
+                else if (selected)
+                  const Icon(
+                    Icons.check_circle_rounded,
+                    size: 20,
+                    color: _blue,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Menú desplegable bajo el botón, con su mismo ancho (como en el inicio).
+  Future<T?> _showSelectMenu<T>(
+    BuildContext ctx, {
+    required String header,
+    required T selected,
+    required List<_MenuOption<T>> options,
+  }) {
+    final box = ctx.findRenderObject();
+    final overlayBox = Overlay.of(ctx).context.findRenderObject();
+    if (box is! RenderBox || overlayBox is! RenderBox || !box.hasSize) {
+      return Future<T?>.value(null);
+    }
+    final origin = box.localToGlobal(Offset.zero, ancestor: overlayBox);
+    final rect = Rect.fromLTWH(
+      origin.dx,
+      origin.dy + box.size.height + 8,
+      box.size.width,
+      0,
+    );
+    return showMenu<T>(
+      context: ctx,
+      position: RelativeRect.fromRect(rect, Offset.zero & overlayBox.size),
+      color: Colors.white,
+      surfaceTintColor: Colors.transparent,
+      elevation: 6,
+      shadowColor: const Color(0xFF1B4785).withValues(alpha: 0.22),
+      clipBehavior: Clip.antiAlias,
+      menuPadding: EdgeInsets.zero,
+      constraints: BoxConstraints.tightFor(width: box.size.width),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: _border),
+      ),
+      items: [
+        PopupMenuItem<T>(
+          enabled: false,
+          padding: EdgeInsets.zero,
+          height: 40,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: Color(0xFFE8EEF8))),
+            ),
+            child: Text(
+              header,
+              style: const TextStyle(
+                fontSize: 11,
+                color: _muted,
+                letterSpacing: 0.5,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+        for (final entry in options.indexed)
+          PopupMenuItem<T>(
+            value: entry.$2.value,
+            enabled: entry.$2.enabled,
+            padding: EdgeInsets.zero,
+            height: 56,
+            child: _menuRow<T>(
+              entry.$2,
+              selected: entry.$2.enabled && entry.$2.value == selected,
+              isLast: entry.$1 == options.length - 1,
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _filters(double width) {
     final filters = <Map<String, dynamic>>[
       {
         'label': 'Todos',
+        'sub': 'Todos los movimientos',
         'icon': Icons.dashboard_customize_rounded,
         'color': _blue,
       },
-      {'label': 'Cuotas', 'icon': Icons.calendar_month_rounded, 'color': _blue},
-      {'label': 'Pagos', 'icon': Icons.receipt_long_rounded, 'color': _blue},
+      {
+        'label': 'Cuotas',
+        'sub': 'Cuotas nuevas y vencimientos',
+        'icon': Icons.calendar_month_rounded,
+        'color': _blue,
+      },
+      {
+        'label': 'Pagos',
+        'sub': 'Pagos reportados y realizados',
+        'icon': Icons.receipt_long_rounded,
+        'color': _blue,
+      },
       {
         'label': 'Aprobados',
+        'sub': 'Pagos confirmados por el colegio',
         'icon': Icons.check_circle_outline_rounded,
         'color': _green,
       },
       {
         'label': 'Rechazados',
+        'sub': 'Pagos que no fueron validados',
         'icon': Icons.highlight_off_rounded,
         'color': _red,
       },
       {
         'label': 'En revisión',
+        'sub': 'Pagos pendientes de aprobación',
         'icon': Icons.schedule_rounded,
         'color': _orange,
       },
     ];
-
-    final chips = Wrap(
-      spacing: 9,
-      runSpacing: 9,
-      children: [
-        for (final item in filters)
-          _filterChip(
-            label: item['label'] as String,
-            icon: item['icon'] as IconData,
-            color: item['color'] as Color,
-            selected: item['label'] == _filter,
-            onTap: () => setState(() => _filter = item['label'] as String),
-          ),
-      ],
+    final current = filters.firstWhere(
+      (f) => f['label'] == _filter,
+      orElse: () => filters.first,
     );
 
-    final studentSelector = widget.students.length < 2
-        ? null
-        : Container(
-            height: 48,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: _border),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.people_alt_outlined, color: _blue, size: 18),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      value: _studentFilter,
-                      isExpanded: true,
-                      dropdownColor: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      menuMaxHeight: 290,
-                      icon: const Icon(
-                        Icons.keyboard_arrow_down_rounded,
-                        color: _muted,
-                        size: 20,
-                      ),
-                      style: const TextStyle(
-                        color: _navy,
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      items: [
-                        const DropdownMenuItem(
-                          value: '',
-                          child: Text('Toda mi familia'),
-                        ),
-                        for (final s in widget.students)
-                          DropdownMenuItem(
-                            value: s['id']?.toString() ?? '',
-                            child: Text(
-                              '${s['nombres'] ?? ''} ${s['apellidos'] ?? ''}'
-                                  .trim(),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                      ],
-                      onChanged: (value) =>
-                          setState(() => _studentFilter = value ?? ''),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-
-    return LayoutBuilder(
-      builder: (context, c) {
-        if (studentSelector == null) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'FILTRAR MOVIMIENTOS',
-                style: TextStyle(
-                  color: _muted,
-                  fontSize: 10.5,
-                  letterSpacing: 0.8,
-                  fontWeight: FontWeight.w800,
+    Widget filterButton(double w) => _selectorButton(
+      width: w,
+      avatar: _selectorAvatar(
+        icon: current['icon'] as IconData,
+        color: current['color'] as Color,
+      ),
+      caption: 'MOVIMIENTOS',
+      value: current['label'] as String,
+      detail: current['sub'] as String,
+      onOpen: (ctx) async {
+        final choice = await _showSelectMenu<String>(
+          ctx,
+          header: 'FILTRAR MOVIMIENTOS',
+          selected: _filter,
+          options: [
+            for (final f in filters)
+              _MenuOption<String>(
+                value: f['label'] as String,
+                title: f['label'] as String,
+                subtitle: f['sub'] as String,
+                avatar: _selectorAvatar(
+                  icon: f['icon'] as IconData,
+                  color: f['color'] as Color,
+                  size: 36,
                 ),
               ),
-              const SizedBox(height: 10),
-              chips,
-            ],
-          );
-        }
-        if (c.maxWidth < 980) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'FILTRAR MOVIMIENTOS',
-                style: TextStyle(
-                  color: _muted,
-                  fontSize: 10.5,
-                  letterSpacing: 0.8,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 10),
-              chips,
-              const SizedBox(height: 13),
-              SizedBox(
-                width: c.maxWidth < 320 ? c.maxWidth : 270,
-                child: studentSelector,
-              ),
-            ],
-          );
-        }
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'FILTRAR MOVIMIENTOS',
-                    style: TextStyle(
-                      color: _muted,
-                      fontSize: 10.5,
-                      letterSpacing: 0.8,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  chips,
-                ],
-              ),
-            ),
-            const SizedBox(width: 16),
-            SizedBox(width: 235, child: studentSelector),
           ],
         );
+        if (choice != null && mounted) setState(() => _filter = choice);
       },
     );
-  }
 
-  Widget _filterChip({
-    required String label,
-    required IconData icon,
-    required Color color,
-    required bool selected,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOut,
-          height: 40,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: selected ? color.withValues(alpha: 0.10) : Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: selected ? color : _border),
-            boxShadow: selected
-                ? [
-                    BoxShadow(
-                      color: color.withValues(alpha: 0.08),
-                      blurRadius: 10,
-                      offset: const Offset(0, 3),
-                    ),
-                  ]
-                : const [],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 16, color: color),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: TextStyle(
-                  color: selected ? color : _muted,
-                  fontSize: 12.2,
-                  fontWeight: FontWeight.w700,
+    Widget studentButton(double w) {
+      Map<String, dynamic>? selectedStudent;
+      for (final st in widget.students) {
+        if ((st['id']?.toString() ?? '') == _studentFilter &&
+            _studentFilter.isNotEmpty) {
+          selectedStudent = st;
+        }
+      }
+      final family = selectedStudent == null;
+      final name = selectedStudent == null
+          ? 'Toda mi familia'
+          : _studentName(selectedStudent);
+      return _selectorButton(
+        width: w,
+        avatar: family
+            ? _selectorAvatar(icon: Icons.people_alt_rounded)
+            : _selectorAvatar(text: _initialsOf(name)),
+        caption: 'ESTUDIANTE',
+        value: name,
+        detail: selectedStudent == null
+            ? '${widget.students.length} estudiantes vinculados'
+            : ((selectedStudent['grado_seccion'] ??
+                          selectedStudent['grado'] ??
+                          '')
+                      .toString()
+                      .trim()
+                      .isEmpty
+                  ? 'Estudiante'
+                  : (selectedStudent['grado_seccion'] ??
+                            selectedStudent['grado'])
+                        .toString()),
+        badge: selectedStudent == null ? '${widget.students.length}' : '1',
+        onOpen: (ctx) async {
+          final ordered = [
+            ...widget.students.where(_isStudentActive),
+            ...widget.students.where((st) => !_isStudentActive(st)),
+          ];
+          final choice = await _showSelectMenu<String>(
+            ctx,
+            header: 'SELECCIONAR ESTUDIANTE',
+            selected: _studentFilter,
+            options: [
+              _MenuOption<String>(
+                value: '',
+                title: 'Toda mi familia',
+                subtitle: '${widget.students.length} estudiantes vinculados',
+                avatar: _selectorAvatar(
+                  icon: Icons.people_alt_rounded,
+                  size: 36,
                 ),
               ),
+              for (final st in ordered)
+                _MenuOption<String>(
+                  value: st['id']?.toString() ?? '',
+                  title: _studentName(st),
+                  subtitle: _isStudentActive(st)
+                      ? ((st['grado_seccion'] ?? st['grado'] ?? '')
+                                .toString()
+                                .trim()
+                                .isEmpty
+                            ? 'Estudiante'
+                            : (st['grado_seccion'] ?? st['grado']).toString())
+                      : 'Estudiante inactivo o retirado',
+                  enabled: _isStudentActive(st),
+                  avatar: _selectorAvatar(
+                    text: _initialsOf(_studentName(st)),
+                    size: 36,
+                  ),
+                ),
             ],
-          ),
-        ),
-      ),
+          );
+          if (choice != null && mounted) {
+            setState(() => _studentFilter = choice);
+          }
+        },
+      );
+    }
+
+    // Los dos selectores se reparten el ancho disponible (el del calendario).
+    final single = widget.students.length < 2;
+    if (width < 560 && !single) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          filterButton(double.infinity),
+          const SizedBox(height: 12),
+          studentButton(double.infinity),
+        ],
+      );
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(child: filterButton(double.infinity)),
+        if (!single) ...[
+          const SizedBox(width: 14),
+          Expanded(child: studentButton(double.infinity)),
+        ],
+      ],
     );
   }
 
@@ -1175,284 +1603,301 @@ class _RepresentativeCalendarSectionState
     final monthLabel =
         '${name[0].toUpperCase()}${name.substring(1)} ${_month.year}';
 
-    return Container(
-      decoration: _cardDecoration(),
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          LayoutBuilder(
-            builder: (context, c) {
-              final monthInfo = Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'VISTA MENSUAL',
-                    style: TextStyle(
-                      color: _muted,
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.9,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    monthLabel,
-                    style: const TextStyle(
-                      color: _navy,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.4,
-                    ),
-                  ),
-                ],
-              );
-              final controls = Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  OutlinedButton(
-                    onPressed: _goToday,
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size(63, 42),
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      foregroundColor: _blue,
-                      side: const BorderSide(color: _border),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    child: const Text(
-                      'Hoy',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 7),
-                  _monthArrow(Icons.chevron_left_rounded, 'Mes anterior', -1),
-                  const SizedBox(width: 5),
-                  _monthArrow(Icons.chevron_right_rounded, 'Mes siguiente', 1),
-                ],
-              );
-              if (c.maxWidth < 365) {
-                return Column(
+    return _CalendarHover(
+      child: Container(
+        decoration: _cardDecoration(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            LayoutBuilder(
+              builder: (context, c) {
+                final monthInfo = Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [monthInfo, const SizedBox(height: 12), controls],
+                  children: [
+                    const Text(
+                      'VISTA MENSUAL',
+                      style: TextStyle(
+                        color: _muted,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.9,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      monthLabel,
+                      style: const TextStyle(
+                        color: _navy,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.4,
+                      ),
+                    ),
+                  ],
                 );
-              }
-              return Row(
-                children: [
-                  Expanded(child: monthInfo),
-                  controls,
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 12),
-          Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFE),
-              borderRadius: BorderRadius.circular(13),
+                final controls = Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    OutlinedButton(
+                      onPressed: _goToday,
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(58, 36),
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        foregroundColor: _blue,
+                        side: const BorderSide(color: _border),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      child: const Text(
+                        'Hoy',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 7),
+                    _monthArrow(Icons.chevron_left_rounded, 'Mes anterior', -1),
+                    const SizedBox(width: 5),
+                    _monthArrow(
+                      Icons.chevron_right_rounded,
+                      'Mes siguiente',
+                      1,
+                    ),
+                  ],
+                );
+                if (c.maxWidth < 365) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [monthInfo, const SizedBox(height: 12), controls],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(child: monthInfo),
+                    controls,
+                  ],
+                );
+              },
             ),
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            child: Row(
-              children: [
-                for (final label in _weekdays)
-                  Expanded(
-                    child: SizedBox(
-                      height: 30,
-                      child: Center(
-                        child: Text(
-                          label,
-                          style: const TextStyle(
-                            color: _muted,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 11.5,
+            const SizedBox(height: 10),
+            Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFE),
+                borderRadius: BorderRadius.circular(13),
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  for (final label in _weekdays)
+                    Expanded(
+                      child: SizedBox(
+                        height: 24,
+                        child: Center(
+                          child: Text(
+                            label,
+                            style: const TextStyle(
+                              color: _muted,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 11.5,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 13),
-          LayoutBuilder(
-            builder: (context, c) {
-              final compact = c.maxWidth < 420;
-              return GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 7,
-                  mainAxisExtent: compact ? 46 : 49,
-                  mainAxisSpacing: compact ? 2 : 3,
-                  crossAxisSpacing: compact ? 2 : 4,
-                ),
-                itemCount: totalCells,
-                itemBuilder: (context, i) {
-                  final number = i - offset + 1;
-                  if (number < 1 || number > daysInMonth) {
-                    return const SizedBox();
-                  }
-                  final date = DateTime(_month.year, _month.month, number);
-                  final dayEvents = events
-                      .where((e) => _sameDay(e.date, date))
-                      .toList();
-                  final isSelected = _sameDay(date, _selected);
-                  final isToday = _sameDay(date, today);
-                  final hasDue = dayEvents.any((e) => e.kind == CalendarEventKind.due);
-                  final kindPriority = {
-                    CalendarEventKind.due: 0,
-                    CalendarEventKind.approved: 1,
-                    CalendarEventKind.rejected: 2,
-                    CalendarEventKind.reported: 3,
-                    CalendarEventKind.paid: 4,
-                    CalendarEventKind.generated: 5,
-                  };
-                  final kinds = dayEvents.map((e) => e.kind).toSet().toList()
-                    ..sort(
-                      (a, b) => (kindPriority[a] ?? 99).compareTo(
-                        kindPriority[b] ?? 99,
-                      ),
+            const SizedBox(height: 8),
+            LayoutBuilder(
+              builder: (context, c) {
+                final compact = c.maxWidth < 420;
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 7,
+                    mainAxisExtent: compact ? 38 : 40,
+                    mainAxisSpacing: 10,
+                    crossAxisSpacing: compact ? 2 : 4,
+                  ),
+                  itemCount: totalCells,
+                  itemBuilder: (context, i) {
+                    final number = i - offset + 1;
+                    if (number < 1 || number > daysInMonth) {
+                      return const SizedBox();
+                    }
+                    final date = DateTime(_month.year, _month.month, number);
+                    final dayEvents = events
+                        .where((e) => _sameDay(e.date, date))
+                        .toList();
+                    final isSelected = _sameDay(date, _selected);
+                    final isToday = _sameDay(date, today);
+                    final hasDue = dayEvents.any(
+                      (e) => e.kind == CalendarEventKind.due,
                     );
-                  final accessibleLabel =
-                      '${_formatDate(date)}. '
-                      '${dayEvents.length} ${dayEvents.length == 1 ? 'evento' : 'eventos'}';
-                  return Semantics(
-                    button: true,
-                    selected: isSelected,
-                    label: accessibleLabel,
-                    child: Tooltip(
-                      message: accessibleLabel,
-                      child: Material(
-                        color: Colors.transparent,
-                        borderRadius: BorderRadius.circular(12),
-                        child: InkWell(
+                    final kindPriority = {
+                      CalendarEventKind.due: 0,
+                      CalendarEventKind.approved: 1,
+                      CalendarEventKind.rejected: 2,
+                      CalendarEventKind.reported: 3,
+                      CalendarEventKind.paid: 4,
+                      CalendarEventKind.generated: 5,
+                    };
+                    final kinds = dayEvents.map((e) => e.kind).toSet().toList()
+                      ..sort(
+                        (a, b) => (kindPriority[a] ?? 99).compareTo(
+                          kindPriority[b] ?? 99,
+                        ),
+                      );
+                    final accessibleLabel =
+                        '${_formatDate(date)}. '
+                        '${dayEvents.length} ${dayEvents.length == 1 ? 'evento' : 'eventos'}';
+                    return Semantics(
+                      button: true,
+                      selected: isSelected,
+                      label: accessibleLabel,
+                      child: Tooltip(
+                        message: accessibleLabel,
+                        child: Material(
+                          color: Colors.transparent,
                           borderRadius: BorderRadius.circular(12),
-                          hoverColor: const Color(0xFFECF3FF),
-                          onTap: () => _openDayMovements(date),
-                          child: AnimatedContainer(
-                            duration: MediaQuery.disableAnimationsOf(context)
-                                ? Duration.zero
-                                : const Duration(milliseconds: 180),
-                            decoration: BoxDecoration(
-                              color: isSelected
-                                  ? const Color(0xFFEBF2FF)
-                                  : hasDue
-                                  ? const Color(0xFFFFF7EA)
-                                  : isToday
-                                  ? const Color(0xFFF6F9FF)
-                                  : Colors.transparent,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                width: isSelected || hasDue ? 1.4 : 1,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(12),
+                            hoverColor: const Color(0xFFECF3FF),
+                            onTap: () => _openDayMovements(date),
+                            child: AnimatedContainer(
+                              duration: MediaQuery.disableAnimationsOf(context)
+                                  ? Duration.zero
+                                  : const Duration(milliseconds: 180),
+                              decoration: BoxDecoration(
                                 color: isSelected
-                                    ? const Color(0xFF7FAAFF)
+                                    ? const Color(0xFFEBF2FF)
                                     : hasDue
-                                    ? const Color(0xFFF1C27D)
+                                    ? const Color(0xFFFFF7EA)
                                     : isToday
-                                    ? const Color(0xFFD3E1F8)
+                                    ? const Color(0xFFF6F9FF)
                                     : Colors.transparent,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  width: isSelected || hasDue ? 1.4 : 1,
+                                  color: isSelected
+                                      ? const Color(0xFF7FAAFF)
+                                      : hasDue
+                                      ? const Color(0xFFF1C27D)
+                                      : isToday
+                                      ? const Color(0xFFD3E1F8)
+                                      : Colors.transparent,
+                                ),
                               ),
-                            ),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Container(
-                                  width: compact ? 25 : 30,
-                                  height: compact ? 25 : 30,
-                                  alignment: Alignment.center,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: isSelected
-                                        ? _blue
-                                        : hasDue
-                                        ? const Color(0xFFFFE0B2)
-                                        : Colors.transparent,
-                                  ),
-                                  child: Text(
-                                    '$number',
-                                    style: TextStyle(
-                                      fontSize: compact ? 12 : 13,
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Container(
+                                    width: compact ? 22 : 26,
+                                    height: compact ? 22 : 26,
+                                    alignment: Alignment.center,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
                                       color: isSelected
-                                          ? Colors.white
+                                          ? _blue
                                           : hasDue
-                                          ? _orange
-                                          : _navy,
-                                      fontWeight:
-                                          isSelected || isToday || hasDue
-                                          ? FontWeight.w800
-                                          : FontWeight.w600,
+                                          ? const Color(0xFFFFE0B2)
+                                          : Colors.transparent,
+                                    ),
+                                    child: Text(
+                                      '$number',
+                                      style: TextStyle(
+                                        fontSize: compact ? 11.5 : 12.5,
+                                        color: isSelected
+                                            ? Colors.white
+                                            : hasDue
+                                            ? _orange
+                                            : _navy,
+                                        fontWeight:
+                                            isSelected || isToday || hasDue
+                                            ? FontWeight.w800
+                                            : FontWeight.w600,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                const SizedBox(height: 3),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    for (final kind in kinds.take(3))
-                                      Container(
-                                        width: kind == CalendarEventKind.due
-                                            ? 12
-                                            : 5.5,
-                                        height: 5.5,
-                                        margin: const EdgeInsets.symmetric(
-                                          horizontal: 1.2,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          borderRadius: BorderRadius.circular(
-                                            999,
+                                  const SizedBox(height: 2),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      for (final kind in kinds.take(3))
+                                        Container(
+                                          width: kind == CalendarEventKind.due
+                                              ? 12
+                                              : 5,
+                                          height: 5,
+                                          margin: const EdgeInsets.symmetric(
+                                            horizontal: 1.2,
                                           ),
-                                          color: _tone(kind),
+                                          decoration: BoxDecoration(
+                                            borderRadius: BorderRadius.circular(
+                                              999,
+                                            ),
+                                            color: _tone(kind),
+                                          ),
                                         ),
-                                      ),
-                                    if (kinds.length > 3)
-                                      const Text(
-                                        '+',
-                                        style: TextStyle(
-                                          color: _muted,
-                                          fontSize: 8,
-                                          fontWeight: FontWeight.bold,
+                                      if (kinds.length > 3)
+                                        const Text(
+                                          '+',
+                                          style: TextStyle(
+                                            color: _muted,
+                                            fontSize: 8,
+                                            fontWeight: FontWeight.bold,
+                                          ),
                                         ),
-                                      ),
-                                  ],
-                                ),
-                              ],
+                                    ],
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                  );
-                },
-              );
-            },
-          ),
-          if (fillHeight) const Spacer(),
-          const SizedBox(height: 10),
-          const Divider(height: 1, color: _border),
-          const SizedBox(height: 11),
-          Wrap(
-            spacing: 14,
-            runSpacing: 11,
-            children: [
-              _legend('Cuota nueva', _blue),
-              _legend('Vencimiento destacado', _orange),
-              _legend('Pago reportado', _indigo),
-              _legend('Pago realizado', _violet),
-              _legend('Aprobado', _green),
-              _legend('Rechazado', _red),
-            ],
-          ),
-          const SizedBox(height: 7),
-          const Text(
-            'Las fechas corresponden a movimientos registrados. '
-            'Consulta el estado de cuenta para confirmar los saldos.',
-            style: TextStyle(color: _muted, fontSize: 11, height: 1.45),
-          ),
-        ],
+                    );
+                  },
+                );
+              },
+            ),
+            if (fillHeight) const Spacer(),
+            const SizedBox(height: 8),
+            const Divider(height: 1, color: _border),
+            const SizedBox(height: 9),
+            // Leyenda en una sola línea; si no cabe, se reduce en vez de saltar.
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _legend('Cuota nueva', _blue),
+                  const SizedBox(width: 14),
+                  _legend('Vencimiento', _orange),
+                  const SizedBox(width: 14),
+                  _legend('Pago reportado', _indigo),
+                  const SizedBox(width: 14),
+                  _legend('Pago realizado', _violet),
+                  const SizedBox(width: 14),
+                  _legend('Aprobado', _green),
+                  const SizedBox(width: 14),
+                  _legend('Rechazado', _red),
+                ],
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Las fechas corresponden a movimientos registrados. '
+              'Consulta el estado de cuenta para confirmar los saldos.',
+              style: TextStyle(color: _muted, fontSize: 11, height: 1.45),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1466,9 +1911,9 @@ class _RepresentativeCalendarSectionState
         borderRadius: BorderRadius.circular(10),
         onTap: () => _moveMonth(offset),
         child: SizedBox(
-          width: 44,
-          height: 44,
-          child: Icon(icon, color: _navy, size: 21),
+          width: 36,
+          height: 36,
+          child: Icon(icon, color: _navy, size: 20),
         ),
       ),
     ),
@@ -1496,89 +1941,470 @@ class _RepresentativeCalendarSectionState
 
   // La columna lateral muestra solamente próximos vencimientos y actividad
   // reciente. El detalle del día vive en un diálogo al pulsar una fecha.
-  Widget _agenda({double? height}) {
-    final today = DateUtils.dateOnly(DateTime.now());
-    final upcoming =
-        _events
-            .where(
-              (event) =>
-                  event.kind == CalendarEventKind.due &&
-                  (_studentFilter.isEmpty ||
-                      event.studentId == _studentFilter) &&
-                  !DateUtils.dateOnly(event.date).isBefore(today),
-            )
-            .toList()
-          ..sort((a, b) => a.date.compareTo(b.date));
-    final recent =
-        _filtered
-            .where(
-              (event) =>
-                  event.kind != CalendarEventKind.due &&
-                  !DateUtils.dateOnly(event.date).isAfter(today),
-            )
-            .toList()
-          ..sort((a, b) => b.date.compareTo(a.date));
+  List<Map<String, dynamic>> get _agendaViews => [
+    {
+      'label': 'Todo',
+      'sub': 'Vencimientos y movimientos',
+      'icon': Icons.dashboard_customize_rounded,
+      'color': _blue,
+    },
+    {
+      'label': 'Próximos vencimientos',
+      'sub': 'Cuotas que están por vencer',
+      'icon': Icons.event_busy_outlined,
+      'color': _orange,
+    },
+    {
+      'label': 'Movimientos recientes',
+      'sub': 'Tu actividad más reciente',
+      'icon': Icons.history_rounded,
+      'color': _indigo,
+    },
+    {
+      'label': 'Pagos en revisión',
+      'sub': 'Esperando aprobación del colegio',
+      'icon': Icons.schedule_rounded,
+      'color': _orange,
+    },
+    {
+      'label': 'Información de pagos',
+      'sub': 'Resumen de tus pagos reportados',
+      'icon': Icons.payments_outlined,
+      'color': _violet,
+    },
+  ];
 
-    // Móvil: usa el scroll único de la página, evitando listas anidadas.
-    if (height == null) {
-      return Container(
-        decoration: _cardDecoration(),
-        padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _sectionHeading(
-              'Próximos vencimientos',
-              Icons.event_busy_outlined,
-              _orange,
-            ),
-            const SizedBox(height: 12),
-            if (upcoming.isEmpty)
-              _emptyList('No hay vencimientos futuros registrados.')
-            else
-              for (final event in upcoming.take(3))
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 9),
-                  child: _eventRow(event, showDate: true),
-                ),
-            const SizedBox(height: 14),
-            const Divider(height: 1, color: _border),
-            const SizedBox(height: 16),
-            _sectionHeading(
-              'Movimientos recientes',
-              Icons.history_rounded,
-              _indigo,
-            ),
-            const SizedBox(height: 12),
-            if (recent.isEmpty)
-              _emptyList('No hay movimientos registrados con estos filtros.')
-            else
-              for (final event in recent.take(4))
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 9),
-                  child: _eventRow(event, showDate: true),
-                ),
-            if (widget.onOpenPayment != null)
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: () => widget.onOpenPayment?.call(null),
-                  label: const Text('Ver historial de pagos'),
-                  icon: const Icon(Icons.arrow_forward_rounded, size: 17),
+  /// Selector del panel derecho: vive arriba, junto a los demás filtros, y
+  /// define lo que se muestra en la tarjeta de abajo.
+  Widget _agendaSelector() {
+    final views = _agendaViews;
+    final current = views.firstWhere(
+      (v) => v['label'] == _agendaView,
+      orElse: () => views.first,
+    );
+    return _selectorButton(
+      width: double.infinity,
+      avatar: _selectorAvatar(
+        icon: current['icon'] as IconData,
+        color: current['color'] as Color,
+      ),
+      value: current['label'] as String,
+      detail: current['sub'] as String,
+      onOpen: (ctx) async {
+        final choice = await _showSelectMenu<String>(
+          ctx,
+          header: 'VER EN ESTE PANEL',
+          selected: _agendaView,
+          options: [
+            for (final v in views)
+              _MenuOption<String>(
+                value: v['label'] as String,
+                title: v['label'] as String,
+                subtitle: v['sub'] as String,
+                avatar: _selectorAvatar(
+                  icon: v['icon'] as IconData,
+                  color: v['color'] as Color,
+                  size: 36,
                 ),
               ),
           ],
+        );
+        if (choice != null && mounted) setState(() => _agendaView = choice);
+      },
+    );
+  }
+
+  List<CalendarEvent> get _upcomingEvents {
+    final today = DateUtils.dateOnly(DateTime.now());
+    return _events
+        .where(
+          (event) =>
+              event.kind == CalendarEventKind.due &&
+              (_studentFilter.isEmpty || event.studentId == _studentFilter) &&
+              !DateUtils.dateOnly(event.date).isBefore(today),
+        )
+        .toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
+  }
+
+  List<CalendarEvent> get _recentEvents {
+    final today = DateUtils.dateOnly(DateTime.now());
+    return _filtered
+        .where(
+          (event) =>
+              event.kind != CalendarEventKind.due &&
+              !DateUtils.dateOnly(event.date).isAfter(today),
+        )
+        .toList()
+      ..sort((a, b) => b.date.compareTo(a.date));
+  }
+
+  List<CalendarEvent> get _reviewEvents =>
+      _events
+          .where(
+            (event) =>
+                event.kind == CalendarEventKind.reported &&
+                event.pending &&
+                (_studentFilter.isEmpty || event.studentId == _studentFilter),
+          )
+          .toList()
+        ..sort((a, b) => b.date.compareTo(a.date));
+
+  /// Resumen de pagos reportados por la familia (no depende del estudiante).
+  Widget _paymentInfo() {
+    Set<String> ids(Iterable<CalendarEvent> it) =>
+        it.map((e) => e.paymentId ?? e.id).toSet();
+    final reportedEvents =
+        _events.where((e) => e.kind == CalendarEventKind.reported).toList()
+          ..sort((a, b) => b.date.compareTo(a.date));
+    final reported = ids(reportedEvents);
+    final approved = ids(
+      _events.where((e) => e.kind == CalendarEventKind.approved),
+    );
+    final rejected = ids(
+      _events.where((e) => e.kind == CalendarEventKind.rejected),
+    );
+    final review = ids(reportedEvents.where((e) => e.pending));
+    final last = reportedEvents.isEmpty ? null : reportedEvents.first;
+
+    Widget tile(String label, int value, Color color, IconData icon) =>
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(color: color.withValues(alpha: 0.20)),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 20, color: color),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$value',
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        height: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: _muted, fontSize: 11.5),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: tile(
+                'Reportados',
+                reported.length,
+                _indigo,
+                Icons.receipt_long_outlined,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: tile(
+                'Aprobados',
+                approved.length,
+                _green,
+                Icons.check_circle_outline_rounded,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: tile(
+                'En revisión',
+                review.length,
+                _orange,
+                Icons.schedule_rounded,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: tile(
+                'Rechazados',
+                rejected.length,
+                _red,
+                Icons.highlight_off_rounded,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        const Text(
+          'ÚLTIMO PAGO REPORTADO',
+          style: TextStyle(
+            color: _muted,
+            fontSize: 10.5,
+            letterSpacing: 0.8,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (last == null)
+          _emptyList('Aún no hay pagos reportados.')
+        else
+          _eventRow(last, showDate: true),
+      ],
+    );
+  }
+
+  Widget _agenda({double? height}) {
+    final upcoming = _upcomingEvents;
+    final recent = _recentEvents;
+    final inReview = _reviewEvents;
+
+    final view = _agendaView;
+    final showDue = view == 'Todo' || view == 'Próximos vencimientos';
+    final showRecent = view == 'Todo' || view == 'Movimientos recientes';
+    final showReview = view == 'Pagos en revisión';
+    final showInfo = view == 'Información de pagos';
+
+    final historyButton = widget.onOpenPayment == null
+        ? null
+        : Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: () => widget.onOpenPayment?.call(null),
+              label: const Text('Ver historial de pagos'),
+              icon: const Icon(Icons.arrow_forward_rounded, size: 15),
+              style: TextButton.styleFrom(
+                foregroundColor: _blue,
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+              ),
+            ),
+          );
+
+    // Móvil: usa el scroll único de la página, evitando listas anidadas.
+    if (height == null) {
+      Widget block(
+        String title,
+        IconData icon,
+        Color color,
+        List<CalendarEvent> events,
+        int take,
+        String empty,
+      ) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _sectionHeading(title, icon, color),
+          const SizedBox(height: 12),
+          if (events.isEmpty)
+            _emptyList(empty)
+          else
+            for (final event in events.take(take))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 9),
+                child: _eventRow(event, showDate: true),
+              ),
+        ],
+      );
+      return _CalendarHover(
+        child: Container(
+          decoration: _cardDecoration(),
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (showDue)
+                block(
+                  'Próximos vencimientos',
+                  Icons.event_busy_outlined,
+                  _orange,
+                  upcoming,
+                  3,
+                  'No hay vencimientos futuros registrados.',
+                ),
+              if (showDue && showRecent) ...[
+                const SizedBox(height: 5),
+                const Divider(height: 1, color: _border),
+                const SizedBox(height: 16),
+              ],
+              if (showRecent)
+                block(
+                  'Movimientos recientes',
+                  Icons.history_rounded,
+                  _indigo,
+                  recent,
+                  4,
+                  'No hay movimientos registrados con estos filtros.',
+                ),
+              if (showReview)
+                block(
+                  'Pagos en revisión',
+                  Icons.schedule_rounded,
+                  _orange,
+                  inReview,
+                  6,
+                  'No tienes pagos en revisión.',
+                ),
+              if (showInfo) _paymentInfo(),
+              if (historyButton != null) historyButton,
+            ],
+          ),
         ),
       );
     }
 
-    // Escritorio: títulos siempre visibles y dos listas independientes.
+    // Escritorio: títulos siempre visibles y listas independientes.
     // El scrollbar tiene su propio controller para poder arrastrarlo.
+    Widget section(
+      String title,
+      IconData icon,
+      Color color,
+      List<CalendarEvent> events,
+      ScrollController controller,
+      String empty, {
+      int flex = 1,
+    }) => Expanded(
+      flex: flex,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _sectionHeading(title, icon, color),
+          const SizedBox(height: 10),
+          Expanded(
+            child: _scrollableEvents(
+              events: events,
+              controller: controller,
+              emptyMessage: empty,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final dueSection = section(
+      'Próximos vencimientos',
+      Icons.event_busy_outlined,
+      _orange,
+      upcoming.take(20).toList(),
+      _dueScrollController,
+      'No hay vencimientos futuros registrados.',
+      flex: 5,
+    );
+    final recentSection = section(
+      'Movimientos recientes',
+      Icons.history_rounded,
+      _indigo,
+      recent.take(30).toList(),
+      _recentScrollController,
+      'No hay movimientos con estos filtros.',
+      flex: 4,
+    );
+
+    final List<Widget> body;
+    if (view == 'Todo') {
+      // Una sola lista continua: cada bloque ocupa solo lo que necesita.
+      final dueList = upcoming.take(20).toList();
+      final recentList = recent.take(30).toList();
+      body = [
+        Expanded(
+          child: Scrollbar(
+            controller: _dueScrollController,
+            thumbVisibility: true,
+            interactive: true,
+            thickness: 4,
+            radius: const Radius.circular(8),
+            child: ListView(
+              controller: _dueScrollController,
+              primary: false,
+              physics: const ClampingScrollPhysics(),
+              padding: const EdgeInsets.only(right: 10, bottom: 22),
+              children: [
+                _sectionHeading(
+                  'Próximos vencimientos',
+                  Icons.event_busy_outlined,
+                  _orange,
+                  count: upcoming.length,
+                ),
+                const SizedBox(height: 10),
+                if (dueList.isEmpty)
+                  _emptyList('No hay vencimientos futuros registrados.')
+                else
+                  for (final event in dueList)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _eventRow(event, showDate: true),
+                    ),
+                const SizedBox(height: 8),
+                const Divider(height: 1, color: _border),
+                const SizedBox(height: 16),
+                _sectionHeading(
+                  'Movimientos recientes',
+                  Icons.history_rounded,
+                  _indigo,
+                  count: recent.length,
+                ),
+                const SizedBox(height: 10),
+                if (recentList.isEmpty)
+                  _emptyList('No hay movimientos con estos filtros.')
+                else
+                  for (final event in recentList)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _eventRow(event, showDate: true),
+                    ),
+              ],
+            ),
+          ),
+        ),
+      ];
+    } else if (showDue) {
+      body = [dueSection];
+    } else if (showRecent) {
+      body = [recentSection];
+    } else if (showReview) {
+      body = [
+        section(
+          'Pagos en revisión',
+          Icons.schedule_rounded,
+          _orange,
+          inReview.take(30).toList(),
+          _recentScrollController,
+          'No tienes pagos en revisión.',
+        ),
+      ];
+    } else {
+      body = [
+        Expanded(
+          child: SingleChildScrollView(
+            controller: _infoScrollController,
+            primary: false,
+            padding: const EdgeInsets.only(right: 4, bottom: 8),
+            child: _paymentInfo(),
+          ),
+        ),
+      ];
+    }
+
     return Listener(
       // Mantiene el gesto de rueda dentro del panel: cuando una de las listas
       // llega a su primer o último elemento no desplaza la página de fondo.
-      // Si la lista todavía puede desplazarse, Scrollable tiene prioridad
-      // en el PointerSignalResolver y el movimiento funciona normalmente.
       behavior: HitTestBehavior.opaque,
       onPointerSignal: (event) {
         if (event is PointerScrollEvent) {
@@ -1588,61 +2414,21 @@ class _RepresentativeCalendarSectionState
           );
         }
       },
-      child: Container(
-        height: height,
-        decoration: _cardDecoration(),
-        padding: const EdgeInsets.fromLTRB(17, 17, 13, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _sectionHeading(
-              'Próximos vencimientos',
-              Icons.event_busy_outlined,
-              _orange,
-            ),
-            const SizedBox(height: 10),
-            Expanded(
-              flex: 5,
-              child: _scrollableEvents(
-                events: upcoming.take(20).toList(),
-                controller: _dueScrollController,
-                emptyMessage: 'No hay vencimientos futuros registrados.',
-              ),
-            ),
-            const SizedBox(height: 12),
-            const Divider(height: 1, color: _border),
-            const SizedBox(height: 14),
-            _sectionHeading(
-              'Movimientos recientes',
-              Icons.history_rounded,
-              _indigo,
-            ),
-            const SizedBox(height: 10),
-            Expanded(
-              flex: 4,
-              child: _scrollableEvents(
-                events: recent.take(30).toList(),
-                controller: _recentScrollController,
-                emptyMessage: 'No hay movimientos con estos filtros.',
-              ),
-            ),
-            if (widget.onOpenPayment != null) ...[
-              const SizedBox(height: 4),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: () => widget.onOpenPayment?.call(null),
-                  label: const Text('Ver historial de pagos'),
-                  icon: const Icon(Icons.arrow_forward_rounded, size: 15),
-                  style: TextButton.styleFrom(
-                    foregroundColor: _blue,
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                  ),
-                ),
-              ),
+      child: _CalendarHover(
+        child: Container(
+          height: height,
+          decoration: _cardDecoration(),
+          padding: const EdgeInsets.fromLTRB(17, 17, 13, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ...body,
+              if (historyButton != null) ...[
+                const SizedBox(height: 2),
+                historyButton,
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -1677,7 +2463,12 @@ class _RepresentativeCalendarSectionState
     );
   }
 
-  Widget _sectionHeading(String title, IconData icon, Color color) => Row(
+  Widget _sectionHeading(
+    String title,
+    IconData icon,
+    Color color, {
+    int? count,
+  }) => Row(
     children: [
       Icon(icon, size: 18, color: color),
       const SizedBox(width: 8),
@@ -1691,6 +2482,22 @@ class _RepresentativeCalendarSectionState
           ),
         ),
       ),
+      if (count != null)
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            '$count',
+            style: TextStyle(
+              color: color,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
     ],
   );
 
@@ -1873,7 +2680,9 @@ class _RepresentativeCalendarPreviewState
   @override
   void initState() {
     super.initState();
-    _repository = SupabaseCalendarRepository(channelKey: 'preview-${identityHashCode(this)}');
+    _repository = SupabaseCalendarRepository(
+      channelKey: 'preview-${identityHashCode(this)}',
+    );
     _listenPayments();
     _load();
   }
@@ -2299,6 +3108,75 @@ class _PreviewHoverCardState extends State<_PreviewHoverCard> {
             child: widget.child,
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Opción de un menú desplegable de selección.
+class _MenuOption<T> {
+  const _MenuOption({
+    required this.value,
+    required this.title,
+    required this.subtitle,
+    required this.avatar,
+    this.enabled = true,
+  });
+
+  final T value;
+  final String title;
+  final String subtitle;
+  final Widget avatar;
+  final bool enabled;
+}
+
+/// Hover de tarjetas igual al del dashboard: sombra suave y borde azul tenue.
+class _CalendarHover extends StatefulWidget {
+  const _CalendarHover({required this.child, this.radius = 16});
+
+  final Widget child;
+  final double radius;
+
+  @override
+  State<_CalendarHover> createState() => _CalendarHoverState();
+}
+
+class _CalendarHoverState extends State<_CalendarHover> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    final color = AppColors.primaryBlue;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedContainer(
+        duration: reduceMotion
+            ? Duration.zero
+            : const Duration(milliseconds: 155),
+        curve: Curves.easeOutCubic,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(widget.radius),
+          boxShadow: _hovered
+              ? [
+                  BoxShadow(
+                    color: color.withValues(alpha: 0.065),
+                    blurRadius: 14,
+                    offset: const Offset(0, 4),
+                  ),
+                ]
+              : const [],
+        ),
+        foregroundDecoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(widget.radius),
+          border: Border.all(
+            color: _hovered
+                ? color.withValues(alpha: 0.30)
+                : Colors.transparent,
+          ),
+        ),
+        child: widget.child,
       ),
     );
   }

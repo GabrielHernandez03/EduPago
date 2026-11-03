@@ -54,7 +54,8 @@ class _RepresentativePaymentsSectionState
   static const _orange = Color(0xFFAF6600);
   static const _red = Color(0xFFCA3545);
 
-  final SupabaseAccountStatusRepository _accountStatusService = SupabaseAccountStatusRepository();
+  final SupabaseAccountStatusRepository _accountStatusService =
+      SupabaseAccountStatusRepository();
   EstadoCuenta? _currentAccount;
   bool _accountLoading = true;
 
@@ -759,7 +760,7 @@ class _RepresentativePaymentsSectionState
                         spacing: 8,
                         runSpacing: 8,
                         children: [
-                          OutlinedButton.icon(
+                          _PaymentHeaderActionButton(
                             onPressed: _refreshing
                                 ? null
                                 : () async {
@@ -771,37 +772,13 @@ class _RepresentativePaymentsSectionState
                                       _loadCurrentAccount(),
                                     ]);
                                   },
-                            icon: AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 200),
-                              child: _refreshing
-                                  ? const SizedBox(
-                                      key: ValueKey('updating-payments'),
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.2,
-                                        color: _blue,
-                                      ),
-                                    )
-                                  : const Icon(
-                                      Icons.refresh_rounded,
-                                      key: ValueKey('idle-payments'),
-                                      size: 18,
-                                    ),
-                            ),
-                            label: Text(
-                              _refreshing ? 'Actualizando...' : 'Actualizar',
-                            ),
+                            icon: Icons.refresh_rounded,
+                            label: 'Actualizar',
+                            loading: _refreshing,
+                            loadingLabel: 'Actualizando...',
                           ),
                           if (widget.onReportPayment != null)
-                            FilledButton.icon(
-                              onPressed: _report,
-                              style: FilledButton.styleFrom(
-                                backgroundColor: _blue,
-                              ),
-                              icon: const Icon(Icons.add_rounded, size: 18),
-                              label: const Text('Reportar pago'),
-                            ),
+                            _ReportPaymentPrimaryButton(onPressed: _report),
                         ],
                       ),
                     ],
@@ -1455,11 +1432,7 @@ class _RepresentativePaymentsSectionState
     );
   }
 
-  Widget _paymentIdentity(
-    ReportedPayment payment,
-    IconData icon,
-    Color color,
-  ) {
+  Widget _paymentIdentity(ReportedPayment payment, IconData icon, Color color) {
     return Row(
       children: [
         Container(
@@ -2271,6 +2244,249 @@ class _ReportDayGroup {
 
 /// Mismo hover que las tarjetas del dashboard: contorno azul tenue y sombra
 /// ligera sin escalado, salto de contenido ni reconstruir la lista completa.
+/// Acciones del encabezado: misma apariencia que el botón Actualizar
+/// del dashboard (avatar circular, borde sutil y hover azul).
+class _PaymentHeaderActionButton extends StatefulWidget {
+  const _PaymentHeaderActionButton({
+    required this.onPressed,
+    required this.icon,
+    required this.label,
+    this.loading = false,
+    this.loadingLabel = 'Cargando...',
+    this.backgroundColor,
+    this.borderColor,
+    this.labelColor,
+    this.iconBackgroundColor,
+    this.iconColor,
+    this.hoverOverlayColor,
+    this.pressedOverlayColor,
+    this.shadowColor,
+    this.hoverOutlineColor,
+    this.plainIcon = false,
+  });
+
+  final VoidCallback? onPressed;
+  final IconData icon;
+  final String label;
+  final bool loading;
+  final String loadingLabel;
+  final Color? backgroundColor;
+  final Color? borderColor;
+  final Color? labelColor;
+  final Color? iconBackgroundColor;
+  final Color? iconColor;
+  final Color? hoverOverlayColor;
+  final Color? pressedOverlayColor;
+  final Color? shadowColor;
+  final Color? hoverOutlineColor;
+  final bool plainIcon;
+
+  @override
+  State<_PaymentHeaderActionButton> createState() =>
+      _PaymentHeaderActionButtonState();
+}
+
+class _PaymentHeaderActionButtonState
+    extends State<_PaymentHeaderActionButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const blue = AppColors.primaryBlue;
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    final enabled = !widget.loading && widget.onPressed != null;
+    final hovered = enabled && _hovered;
+    final backgroundColor = widget.backgroundColor ?? Colors.white;
+    final borderColor = widget.borderColor ?? AppColors.cardBorder;
+    final labelColor = widget.labelColor ?? AppColors.darkNavy;
+    final iconBackgroundColor =
+        widget.iconBackgroundColor ?? const Color(0xFFEAF2FF);
+    final iconColor = widget.iconColor ?? blue;
+    final hoverOverlayColor =
+        widget.hoverOverlayColor ?? const Color(0xFFF3F7FE);
+    final pressedOverlayColor =
+        widget.pressedOverlayColor ?? const Color(0xFFEAF2FF);
+    final shadowColor = widget.shadowColor ?? blue;
+    final hoverOutlineColor =
+        widget.hoverOutlineColor ?? blue.withValues(alpha: 0.30);
+
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: widget.loading ? widget.loadingLabel : widget.label,
+      child: MouseRegion(
+        cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: AnimatedContainer(
+          duration: reduceMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 155),
+          curve: Curves.easeOutCubic,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: hovered
+                ? [
+                    BoxShadow(
+                      color: shadowColor.withValues(alpha: 0.14),
+                      blurRadius: 14,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : const [],
+          ),
+          foregroundDecoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: hovered ? hoverOutlineColor : Colors.transparent,
+            ),
+          ),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: borderColor),
+              boxShadow: [
+                BoxShadow(
+                  color: shadowColor.withValues(alpha: 0.08),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Material(
+              type: MaterialType.transparency,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                hoverColor: hoverOverlayColor,
+                highlightColor: pressedOverlayColor,
+                onTap: enabled ? widget.onPressed : null,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 8, 18, 8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (widget.plainIcon)
+                        Icon(widget.icon, size: 23, color: iconColor)
+                      else
+                        Container(
+                          width: 34,
+                          height: 34,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: iconBackgroundColor,
+                            border: Border.all(color: Colors.white, width: 2),
+                          ),
+                          child: widget.loading
+                              ? SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: iconColor,
+                                  ),
+                                )
+                              : Icon(widget.icon, size: 18, color: iconColor),
+                        ),
+                      SizedBox(width: widget.plainIcon ? 9 : 10),
+                      Text(
+                        widget.loading ? widget.loadingLabel : widget.label,
+                        style: TextStyle(
+                          color: enabled || widget.loading
+                              ? labelColor
+                              : AppColors.textMuted,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Acción principal de pagos: azul vivo y símbolo + sin círculo.
+/// Independiente del botón Actualizar para mantener jerarquía visual.
+class _ReportPaymentPrimaryButton extends StatefulWidget {
+  const _ReportPaymentPrimaryButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  State<_ReportPaymentPrimaryButton> createState() =>
+      _ReportPaymentPrimaryButtonState();
+}
+
+class _ReportPaymentPrimaryButtonState
+    extends State<_ReportPaymentPrimaryButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    const blue = AppColors.primaryBlue;
+    return Semantics(
+      button: true,
+      label: 'Reportar pago',
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: AnimatedContainer(
+          duration: reduceMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 170),
+          curve: Curves.easeOutCubic,
+          decoration: BoxDecoration(
+            color: _hovered ? AppColors.primaryDark : blue,
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: blue.withValues(alpha: _hovered ? 0.23 : 0.13),
+                blurRadius: _hovered ? 15 : 9,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: widget.onPressed,
+              hoverColor: Colors.white.withValues(alpha: 0.07),
+              splashColor: Colors.white.withValues(alpha: 0.14),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.add_rounded, color: Colors.white, size: 23),
+                    SizedBox(width: 8),
+                    Text(
+                      'Reportar pago',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _PaymentHoverSurface extends StatefulWidget {
   const _PaymentHoverSurface({required this.child, this.hoverColor});
 

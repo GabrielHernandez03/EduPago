@@ -7,6 +7,8 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../main.dart';
 import '../../../landing/presentation/screens/home_screen.dart';
 import '../../../payments/domain/account_status.dart';
+import '../../../payments/domain/student_account_selection.dart';
+import '../../../payments/presentation/widgets/representative_account_statement_section.dart';
 import '../../../profile/presentation/widgets/edit_profile_dialog.dart';
 import '../../../profile/data/profile_repository.dart';
 import '../../../profile/data/supabase_profile_repository.dart';
@@ -191,12 +193,19 @@ class _RepresentativeDashboardScreenState
       if (!mounted || representanteId != _repDbId) return;
       setState(() {
         _students = loadedStudents;
+        final linkedCount = _students.length;
+        final firstActive = _students.indexWhere(_isStudentActive);
+        // Se prefiere la vista familiar si hay varios estudiantes o si
+        // ninguno está activo; nunca se selecciona uno inactivo por defecto.
+        final fallback = linkedCount > 1 || firstActive < 0 ? -1 : firstActive;
         if (!_selectionInitialized) {
-          _selectedStudentIndex = _students.length > 1 ? -1 : 0;
+          _selectedStudentIndex = fallback;
           _selectionInitialized = true;
-        } else if (_selectedStudentIndex >= _students.length ||
-            (_students.length == 1 && _selectedStudentIndex == -1)) {
-          _selectedStudentIndex = 0;
+        } else if (_selectedStudentIndex < -1 ||
+            _selectedStudentIndex >= linkedCount ||
+            (_selectedStudentIndex >= 0 &&
+                !_isStudentActive(_students[_selectedStudentIndex]))) {
+          _selectedStudentIndex = fallback;
         }
       });
       await _updateFinancialSummary();
@@ -337,6 +346,7 @@ class _RepresentativeDashboardScreenState
       return;
     }
 
+    final activeStudents = _students.where(_isStudentActive).toList();
     final String titular = _students.length > 1
         ? (_familyName.isNotEmpty
               ? (RegExp(
@@ -347,8 +357,11 @@ class _RepresentativeDashboardScreenState
                     : 'Familia $_familyName')
               : 'Mi familia')
         : (_students.isNotEmpty
-              ? '${_students.first['nombres'] ?? ''} ${_students.first['apellidos'] ?? ''}'
-                    .trim()
+              ? _studentFullName(
+                  activeStudents.isNotEmpty
+                      ? activeStudents.first
+                      : _students.first,
+                )
               : 'Estudiante');
 
     await showDialog(
@@ -368,9 +381,19 @@ class _RepresentativeDashboardScreenState
     if (mounted) await _updateFinancialSummary();
   }
 
-  // --- NAVEGACIÓN (misma estructura que el panel del administrador) ---
+  // Índices centralizados para mantener los accesos y notificaciones.
+  static const int _tabInicio = 0;
+  static const int _tabEstadoCuenta = 1;
+  static const int _tabPagos = 2;
+  static const int _tabCalendario = 3;
+
   static const _navItems = <DashboardNavItem>[
     DashboardNavItem(Icons.home_outlined, Icons.home_rounded, 'Inicio'),
+    DashboardNavItem(
+      Icons.receipt_long_outlined,
+      Icons.receipt_long_rounded,
+      'Estado de cuenta',
+    ),
     DashboardNavItem(
       Icons.account_balance_wallet_outlined,
       Icons.account_balance_wallet,
@@ -447,7 +470,7 @@ class _RepresentativeDashboardScreenState
       }
     }
     setState(() {
-      _selectedNavIndex = 1;
+      _selectedNavIndex = _tabPagos;
       _paymentNotificationId = identifier;
       _paymentNotificationReference = reference;
       _paymentNotificationVersion++;
@@ -491,7 +514,20 @@ class _RepresentativeDashboardScreenState
       return RepresentativeDashboardSkeleton(padding: contentPadding);
     }
 
-    if (_selectedNavIndex == 1) {
+    if (_selectedNavIndex == _tabEstadoCuenta) {
+      return RepresentativeAccountStatementSection(
+        students: _students,
+        account: _estadoCuenta,
+        selectedStudentIndex: _selectedStudentIndex,
+        onSelectStudent: _chooseStudent,
+        onRefresh: () => fetchUserProfileAndStudents(silent: true),
+        onOpenPayments: () => setState(() => _selectedNavIndex = _tabPagos),
+        rate: _tasaBcv,
+        rateLabel: _tasaFechaLabel,
+      );
+    }
+
+    if (_selectedNavIndex == _tabPagos) {
       return RepresentativePaymentsSection(
         representativeId: _repDbId,
         focusPaymentId: _paymentNotificationId,
@@ -501,12 +537,12 @@ class _RepresentativeDashboardScreenState
       );
     }
 
-    if (_selectedNavIndex == 2) {
+    if (_selectedNavIndex == _tabCalendario) {
       return RepresentativeCalendarSection(
         representativeId: _repDbId,
         students: _students,
         onOpenPayment: (paymentId) => setState(() {
-          _selectedNavIndex = 1;
+          _selectedNavIndex = _tabPagos;
           _paymentNotificationId = paymentId;
           _paymentNotificationReference = null;
           _paymentNotificationVersion++;
@@ -514,7 +550,7 @@ class _RepresentativeDashboardScreenState
       );
     }
 
-    if (_selectedNavIndex != 0) {
+    if (_selectedNavIndex != _tabInicio) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(28),
@@ -537,7 +573,7 @@ class _RepresentativeDashboardScreenState
               ),
               const SizedBox(height: 16),
               FilledButton(
-                onPressed: () => setState(() => _selectedNavIndex = 0),
+                onPressed: () => setState(() => _selectedNavIndex = _tabInicio),
                 child: const Text('Volver al inicio'),
               ),
             ],
@@ -625,6 +661,10 @@ class _RepresentativeDashboardScreenState
   }
 
   void _chooseStudent(int index) {
+    if (index < -1 || index >= _students.length) return;
+    // La vista familiar (-1) permanece disponible incluso si hay un solo
+    // estudiante inactivo. Nunca permitimos seleccionar a uno inactivo.
+    if (index >= 0 && !_isStudentActive(_students[index])) return;
     if (index == _selectedStudentIndex) return;
     setState(() {
       _selectedStudentIndex = index;
@@ -793,7 +833,7 @@ class _RepresentativeDashboardScreenState
                         color: Colors.transparent,
                         child: InkWell(
                           onTap: () => setState(() {
-                            _selectedNavIndex = 2;
+                            _selectedNavIndex = _tabCalendario;
                             _paymentNotificationId = null;
                             _paymentNotificationReference = null;
                             _paymentNotificationVersion = 0;
@@ -996,6 +1036,11 @@ class _RepresentativeDashboardScreenState
   String _studentFullName(Map<String, dynamic> st) =>
       '${st['nombres'] ?? ''} ${st['apellidos'] ?? ''}'.trim();
 
+  /// La selección individual exige estado activo verificado. Los alumnos
+  /// inactivos o sin estado conocido se mantienen visibles en el listado.
+  bool _isStudentActive(Map<String, dynamic>? st) =>
+      st != null && StudentAccountSelection.canSelect(st);
+
   /// Avatar circular del selector: logotipo de familia o iniciales.
   Widget _selectorAvatar({
     required bool family,
@@ -1043,10 +1088,12 @@ class _RepresentativeDashboardScreenState
     required String title,
     required String subtitle,
     bool isLast = false,
+    bool enabled = true,
   }) {
-    final selected = value == _selectedStudentIndex;
+    final selected = enabled && value == _selectedStudentIndex;
     return PopupMenuItem<int>(
       value: value,
+      enabled: enabled,
       padding: EdgeInsets.zero,
       height: 56, // alto mínimo; la fila define su propio alto real
       child: HoverBuilder(
@@ -1056,7 +1103,7 @@ class _RepresentativeDashboardScreenState
               : const Duration(milliseconds: 125),
           width: double.infinity,
           decoration: BoxDecoration(
-            color: hovered
+            color: (hovered && enabled)
                 ? AppColors.primaryLight
                 : (selected
                       ? AppColors.primaryLight.withValues(alpha: 0.65)
@@ -1066,48 +1113,71 @@ class _RepresentativeDashboardScreenState
                 : const Border(bottom: BorderSide(color: AppColors.cardBorder)),
           ),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            children: [
-              leading,
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: selected
-                            ? FontWeight.w800
-                            : FontWeight.w600,
-                        color: AppColors.darkNavy,
+          child: Opacity(
+            opacity: enabled ? 1 : 0.5,
+            child: Row(
+              children: [
+                leading,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: selected
+                              ? FontWeight.w800
+                              : FontWeight.w600,
+                          color: AppColors.darkNavy,
+                        ),
                       ),
+                      const SizedBox(height: 3),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (!enabled)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
                     ),
-                    const SizedBox(height: 3),
-                    Text(
-                      subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEDF1F7),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      'INACTIVO',
+                      style: TextStyle(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.4,
                         color: AppColors.textMuted,
                       ),
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              if (selected)
-                const Icon(
-                  Icons.check_circle_rounded,
-                  size: 20,
-                  color: AppColors.primaryBlue,
-                ),
-            ],
+                  )
+                else if (selected)
+                  const Icon(
+                    Icons.check_circle_rounded,
+                    size: 20,
+                    color: AppColors.primaryBlue,
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1116,7 +1186,8 @@ class _RepresentativeDashboardScreenState
 
   Widget _buildStudentSelectorCard() {
     final hasStudents = _students.isNotEmpty;
-    final consolidated = _selectedStudentIndex == -1 && _students.length > 1;
+    final linkedCount = _students.length;
+    final consolidated = _selectedStudentIndex == -1 && hasStudents;
     final selected =
         hasStudents &&
             _selectedStudentIndex >= 0 &&
@@ -1129,14 +1200,17 @@ class _RepresentativeDashboardScreenState
               ? 'Sin estudiantes vinculados'
               : _studentFullName(selected));
     final details = consolidated
-        ? '${_students.length} estudiantes vinculados'
+        ? '$linkedCount estudiantes vinculados'
         : selected != null
         ? _studentDetails(selected)
         : 'Sin grado ni cédula registrados';
-    final canChoose = _students.length > 1;
+    final canChoose = linkedCount > 1 ||
+        (linkedCount == 1 && !_isStudentActive(_students.first));
+    // Incluso con un solo estudiante inactivo, se puede abrir el menú
+    // para verlo deshabilitado y consultar la vista familiar.
     final initials = _getInitials(name);
     final countLabel = consolidated
-        ? '${_students.length}'
+        ? '$linkedCount'
         : (selected == null ? '0' : '1');
 
     final inner = Container(
@@ -1351,6 +1425,13 @@ class _RepresentativeDashboardScreenState
       0,
     );
 
+    final orderedStudents = <int>[
+      for (var i = 0; i < _students.length; i++)
+        if (_isStudentActive(_students[i])) i,
+      for (var i = 0; i < _students.length; i++)
+        if (!_isStudentActive(_students[i])) i,
+    ];
+
     final choice = await showMenu<int>(
       context: ctx,
       position: RelativeRect.fromRect(rect, Offset.zero & overlayBox.size),
@@ -1395,17 +1476,21 @@ class _RepresentativeDashboardScreenState
           title: 'Toda mi familia',
           subtitle: '${_students.length} estudiantes vinculados',
         ),
-        for (var i = 0; i < _students.length; i++)
+        // Activos primero; los inactivos quedan al final y deshabilitados.
+        for (final entry in orderedStudents.indexed)
           _studentMenuItem(
-            value: i,
-            isLast: i == _students.length - 1,
+            value: entry.$2,
+            isLast: entry.$1 == orderedStudents.length - 1,
+            enabled: _isStudentActive(_students[entry.$2]),
             leading: _selectorAvatar(
               family: false,
-              initials: _getInitials(_studentFullName(_students[i])),
+              initials: _getInitials(_studentFullName(_students[entry.$2])),
               size: 42,
             ),
-            title: _studentFullName(_students[i]),
-            subtitle: _studentDetails(_students[i]),
+            title: _studentFullName(_students[entry.$2]),
+            subtitle: _isStudentActive(_students[entry.$2])
+                ? _studentDetails(_students[entry.$2])
+                : 'Estudiante inactivo o retirado',
           ),
       ],
     );
@@ -1574,7 +1659,7 @@ class _RepresentativeDashboardScreenState
           const Color(0xFF1663E9), // azul: estado de cuenta
           const Color(0xFFE3EDFF),
           const Color(0xFFF2F7FF),
-          () => _scrollTo(_accountSectionKey),
+          () => setState(() => _selectedNavIndex = _tabEstadoCuenta),
         ),
         _quickAction(
           Icons.description_outlined,
@@ -1857,24 +1942,29 @@ class _RepresentativeDashboardScreenState
   }
 
   Widget _buildAccountAndSchoolRow() {
-    final account = Container(
+    // fillHeight: en filas lado a lado la tarjeta se estira a la altura de la
+    // del colegio; el contenido vacío se centra en lugar de dejar un hueco.
+    Widget account({required bool fillHeight}) => Container(
       key: _accountSectionKey,
       child: _estadoCuenta == null
           ? _buildEstadoCuentaErrorBanner()
-          : _buildEstadoCuentaDetalle(),
+          : _buildEstadoCuentaDetalle(fillHeight: fillHeight),
     );
     return LayoutBuilder(
       builder: (context, c) {
         if (c.maxWidth < 820) {
           return Column(
             children: [
-              account,
+              account(fillHeight: false),
               const SizedBox(height: _stackGap),
               _buildInstitutionCard(),
             ],
           );
         }
-        return _twoColumnRow(main: account, side: _buildInstitutionCard());
+        return _twoColumnRow(
+          main: account(fillHeight: true),
+          side: _buildInstitutionCard(),
+        );
       },
     );
   }
@@ -1887,7 +1977,7 @@ class _RepresentativeDashboardScreenState
       students: _students,
       onOpenCalendar: () {
         if (!mounted) return;
-        setState(() => _selectedNavIndex = 2);
+        setState(() => _selectedNavIndex = _tabCalendario);
       },
     );
   }
@@ -2161,7 +2251,7 @@ class _RepresentativeDashboardScreenState
             ),
             const SizedBox(height: 10),
             OutlinedButton.icon(
-              onPressed: () => _scrollTo(_accountSectionKey),
+              onPressed: () => setState(() => _selectedNavIndex = _tabEstadoCuenta),
               icon: const Icon(Icons.description_outlined, size: 18),
               label: const Text(
                 'Ver detalle',
@@ -2498,7 +2588,7 @@ class _RepresentativeDashboardScreenState
   // --- ESTADO DE CUENTA DESGLOSADO (cuota por cuota, de la más antigua) ---
   // Se mantiene el orden y la fuente de datos originales. La nueva distribución
   // prioriza el saldo, el vencimiento y el progreso de cada mensualidad.
-  Widget _buildEstadoCuentaDetalle() {
+  Widget _buildEstadoCuentaDetalle({bool fillHeight = false}) {
     final estado = _estadoCuenta;
     if (estado == null) return const SizedBox.shrink();
 
@@ -2575,15 +2665,21 @@ class _RepresentativeDashboardScreenState
                     vertical: 7,
                   ),
                   decoration: BoxDecoration(
-                    color: AppColors.primaryLight,
+                    color: total == 0
+                        ? AppColors.tint(AppColors.successGreen)
+                        : AppColors.primaryLight,
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
-                    '$total ${total == 1 ? 'pendiente' : 'pendientes'}',
-                    style: const TextStyle(
+                    total == 0
+                        ? 'Al día'
+                        : '$total ${total == 1 ? 'pendiente' : 'pendientes'}',
+                    style: TextStyle(
                       fontSize: 11.5,
                       fontWeight: FontWeight.w800,
-                      color: AppColors.primaryBlue,
+                      color: total == 0
+                          ? AppColors.successGreen
+                          : AppColors.primaryBlue,
                     ),
                   ),
                 ),
@@ -2616,36 +2712,53 @@ class _RepresentativeDashboardScreenState
                 'Tienes ${_fmtUsd(estado.enRevisionUsd)} en pagos pendientes de revisión. Se actualizará su estado de cuenta cuando el colegio los apruebe.',
               ),
             if (pendientes.isEmpty)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  vertical: 20,
-                  horizontal: 14,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFD),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.cardBorder),
-                ),
-                child: const Column(
-                  children: [
-                    Icon(
-                      Icons.check_circle_outline_rounded,
-                      color: AppColors.successGreen,
-                      size: 28,
-                    ),
-                    SizedBox(height: 8),
-                    Text(
-                      'No hay cuotas pendientes',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.darkNavy,
+              () {
+                final box = Container(
+                  width: double.infinity,
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 24,
+                    horizontal: 14,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFD),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.cardBorder),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.check_circle_outline_rounded,
+                        color: AppColors.successGreen,
+                        size: 32,
                       ),
-                    ),
-                  ],
-                ),
-              )
+                      const SizedBox(height: 10),
+                      const Text(
+                        'No hay cuotas pendientes',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.darkNavy,
+                        ),
+                      ),
+                      if (estado.cuotasPagadas > 0) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          '${estado.cuotasPagadas} ${estado.cuotasPagadas == 1 ? 'cuota pagada' : 'cuotas pagadas'} en total',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                );
+                return fillHeight ? Expanded(child: box) : box;
+              }()
             else
               ...pendientes.map(
                 (c) => _buildCuotaRow(
@@ -2653,7 +2766,7 @@ class _RepresentativeDashboardScreenState
                   alumno: consolidado ? nombres[c.estudianteId] : null,
                 ),
               ),
-            if (estado.cuotasPagadas > 0) ...[
+            if (pendientes.isNotEmpty && estado.cuotasPagadas > 0) ...[
               const SizedBox(height: 4),
               Row(
                 children: [
