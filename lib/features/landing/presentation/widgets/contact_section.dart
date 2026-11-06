@@ -1,379 +1,483 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
+import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/motion.dart';
+import 'landing_section_background.dart';
 
-class _ContactPerson {
-  final String nombre;
-  final String telefono;
-  final String avatarAsset;
-
-  const _ContactPerson({
-    required this.nombre,
-    required this.telefono,
-    required this.avatarAsset,
-  });
-}
-
+/// Contacto centrado y, debajo, preguntas frecuentes.
+/// Conserva los fondos de ondas de EduPago y no requiere nuevos assets.
 class ContactSection extends StatelessWidget {
   const ContactSection({super.key});
 
   static const String correoContacto = 'contacto-edupago@gmail.com';
 
-  static const List<_ContactPerson> _contactos = [
-    _ContactPerson(
-      nombre: 'Gabriel Hernandez',
-      telefono: '0424-1410949',
-      avatarAsset: 'assets/images/gabriel_hernandez.webp',
+  static const List<_ContactInfo> _integrantes = [
+    _ContactInfo('Gabriel Hernandez', '0424-1410949'),
+    _ContactInfo('Gabriela Moreta', '0412-8214834'),
+    _ContactInfo('Samuel Fernandes', '0412-3096277'),
+  ];
+
+  static const List<_FaqEntry> _preguntas = [
+    _FaqEntry(
+      '¿Mi colegio debe registrarme?',
+      'Sí. Tu colegio debe registrarte como representante para que puedas '
+          'crear tu cuenta y consultar la información de tus estudiantes.',
     ),
-    _ContactPerson(
-      nombre: 'Gabriela Moreta',
-      telefono: '0412-8214834',
-      avatarAsset: 'assets/images/gabriela_moreta.webp',
+    _FaqEntry(
+      '¿Cómo creo mi cuenta?',
+      'Una vez registrado por el colegio, selecciona «Crear cuenta» y completa '
+          'los datos solicitados para activar tu acceso.',
     ),
-    _ContactPerson(
-      nombre: 'Samuel Fernandes',
-      telefono: '0412-3096277',
-      avatarAsset: 'assets/images/samuel_fernandes.webp',
+    _FaqEntry(
+      '¿Dónde veo mis mensualidades y mi estado de cuenta?',
+      'Ingresa a «Estado de cuenta» para consultar tus cuotas, fechas de '
+          'vencimiento y saldos pendientes.',
+    ),
+    _FaqEntry(
+      '¿Cómo puedo reportar un pago?',
+      'Desde «Mis pagos», selecciona «Reportar pago», elige el método, '
+          'completa los datos y adjunta el comprobante.',
+    ),
+    _FaqEntry(
+      '¿Cómo sé si mi pago fue aprobado?',
+      'Revisa «Mis pagos». Cada reporte indica su estado: en espera, '
+          'aprobado o rechazado.',
     ),
   ];
 
-  static void _copyToClipboard(
-    BuildContext context,
-    String valor,
-    String mensaje,
-  ) {
+  static void _copiar(BuildContext context, String valor, String descripcion) {
     Clipboard.setData(ClipboardData(text: valor));
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
       SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.check_circle, color: Colors.white, size: 18),
-            const SizedBox(width: 10),
-            Expanded(child: Text(mensaje)),
-          ],
-        ),
-        backgroundColor: const Color(0xFF0F172A),
+        content: Text('$descripcion copiado al portapapeles'),
         behavior: SnackBarBehavior.floating,
+        backgroundColor: AppColors.darkNavy,
         duration: const Duration(seconds: 2),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(11.16),
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
+    final mobile = MediaQuery.sizeOf(context).width < 600;
 
-    const double gap = 20;
-    const double minCardWidth = 190;
-    const double maxCardWidth = 260;
-    const int totalCards = 3;
-
-    final double available = screenWidth - 48;
-    double cardWidth = (available - gap * (totalCards - 1)) / totalCards;
-    cardWidth = cardWidth.clamp(minCardWidth, maxCardWidth);
-
-    final bool soloUnaColumna = screenWidth < (minCardWidth * 2 + gap + 48);
-    if (soloUnaColumna) {
-      cardWidth = available.clamp(0, maxCardWidth * 1.4);
-    }
-
-    double emailWidth = available.clamp(0, 360);
-
-    return Container(
-      width: double.infinity,
-      color: const Color(0xFFF8FAFC),
-      padding: const EdgeInsets.symmetric(vertical: 64, horizontal: 24),
-      child: Column(
-        children: [
-          const RevealOnScroll(
-            child: Text(
-              'Contáctanos',
-              style: TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF0F172A),
-              ),
-            ),
+    // Dos capas del mismo fondo reutilizable:
+    // contacto = ola superior izquierda; faq = ola inferior derecha.
+    // Así las preguntas conservan su ola sin dividir el apartado.
+    return LandingSectionBackground(
+      style: LandingWaveStyle.faq,
+      child: LandingSectionBackground(
+        style: LandingWaveStyle.contact,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            mobile ? 18.6 : 44.64,
+            mobile ? 53.94 : 72.54,
+            mobile ? 18.6 : 44.64,
+            mobile ? 74.4 : 93,
           ),
-          const SizedBox(height: 12),
-          const RevealOnScroll(
-            delay: Duration(milliseconds: 100),
-            child: Text(
-              'Nuestro equipo está listo para ayudarte',
-              style: TextStyle(fontSize: 16, color: Color(0xFF64748B)),
-            ),
-          ),
-          const SizedBox(height: 6),
-          const RevealOnScroll(
-            delay: Duration(milliseconds: 180),
-            child: Text(
-              'Toca un dato para copiarlo',
-              style: TextStyle(
-                fontSize: 13,
-                fontStyle: FontStyle.italic,
-                color: Color(0xFF94A3B8),
-              ),
-            ),
-          ),
-          const SizedBox(height: 34),
-
-          Wrap(
-            spacing: gap,
-            runSpacing: gap,
-            alignment: WrapAlignment.center,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              for (var i = 0; i < _contactos.length; i++)
-                RevealOnScroll(
-                  delay: Duration(milliseconds: 200 + i * 120),
-                  startScale: 0.94,
-                  child: _InfoCard(
-                    width: cardWidth,
-                    leadingBuilder: (hovered) => _Avatar(
-                      avatarAsset: _contactos[i].avatarAsset,
-                      hovered: hovered,
-                    ),
-                    title: _contactos[i].nombre,
-                    subtitle: _contactos[i].telefono,
-                    subtitleIcon: Icons.phone_outlined,
-                    onTap: () => _copyToClipboard(
-                      context,
-                      _contactos[i].telefono,
-                      'Teléfono de ${_contactos[i].nombre} copiado',
-                    ),
-                  ),
-                ),
-            ],
-          ),
-
-          const SizedBox(height: 28),
-
-          RevealOnScroll(
-            delay: const Duration(milliseconds: 560),
-            startScale: 0.94,
-            child: _InfoCard(
-              width: emailWidth,
-              leadingBuilder: (hovered) =>
-                  _IconBubble(icon: Icons.email_outlined, hovered: hovered),
-              title: 'Correo general',
-              subtitle: correoContacto,
-              titleIsLabel: true,
-              onTap: () =>
-                  _copyToClipboard(context, correoContacto, 'Correo copiado'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Avatar extends StatelessWidget {
-  final String avatarAsset;
-  final bool hovered;
-
-  const _Avatar({required this.avatarAsset, required this.hovered});
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedScale(
-      scale: hovered ? 1.08 : 1.0,
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutBack,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 260),
-        padding: const EdgeInsets.all(3),
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: hovered ? const Color(0xFF2563EB) : Colors.transparent,
-            width: 2,
-          ),
-        ),
-        child: CircleAvatar(
-          radius: 34,
-          backgroundColor: const Color(0xFFEFF6FF),
-          child: ClipOval(
-            child: Image.asset(
-              avatarAsset,
-              width: 68,
-              height: 68,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) =>
-                  const Icon(Icons.person, size: 34, color: Color(0xFF2563EB)),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _IconBubble extends StatelessWidget {
-  final IconData icon;
-  final bool hovered;
-
-  const _IconBubble({required this.icon, required this.hovered});
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedScale(
-      scale: hovered ? 1.08 : 1.0,
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutBack,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 260),
-        width: 74,
-        height: 74,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: hovered ? const Color(0xFF2563EB) : const Color(0xFFEFF6FF),
-          shape: BoxShape.circle,
-        ),
-        child: Icon(
-          icon,
-          color: hovered ? Colors.white : const Color(0xFF2563EB),
-          size: 28,
-        ),
-      ),
-    );
-  }
-}
-
-class _InfoCard extends StatefulWidget {
-  final double width;
-  final Widget Function(bool hovered) leadingBuilder;
-  final String title;
-  final String subtitle;
-  final IconData? subtitleIcon;
-  final bool titleIsLabel;
-  final VoidCallback onTap;
-
-  const _InfoCard({
-    required this.width,
-    required this.leadingBuilder,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-    this.subtitleIcon,
-    this.titleIsLabel = false,
-  });
-
-  @override
-  State<_InfoCard> createState() => _InfoCardState();
-}
-
-class _InfoCardState extends State<_InfoCard> {
-  bool _copied = false;
-  Timer? _timer;
-
-  void _handleTap() {
-    widget.onTap();
-    setState(() => _copied = true);
-    _timer?.cancel();
-    _timer = Timer(const Duration(milliseconds: 1800), () {
-      if (mounted) setState(() => _copied = false);
-    });
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final bool label = widget.titleIsLabel;
-
-    return HoverCard(
-      width: widget.width,
-      radius: 16,
-      borderColor: const Color(0xFFE2E8F0),
-      hoverBorderColor: const Color(0xFF2563EB).withValues(alpha: 0.45),
-      shadowColor: const Color(0xFF2563EB),
-      restShadowOpacity: 0.04,
-      hoverShadowOpacity: 0.16,
-      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 14),
-      onTap: _handleTap,
-      builder: (context, hovered) {
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            widget.leadingBuilder(hovered),
-            const SizedBox(height: 14),
-            Text(
-              widget.title,
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: label ? 13 : 16,
-                fontWeight: label ? FontWeight.w500 : FontWeight.w600,
-                color: label
-                    ? const Color(0xFF64748B)
-                    : const Color(0xFF0F172A),
-              ),
-            ),
-            const SizedBox(height: 6),
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Row(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 967.2),
+              child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (widget.subtitleIcon != null) ...[
-                    Icon(
-                      widget.subtitleIcon,
-                      size: 14,
-                      color: const Color(0xFF64748B),
-                    ),
-                    const SizedBox(width: 4),
-                  ],
-                  Text(
-                    widget.subtitle,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: label ? FontWeight.w700 : FontWeight.normal,
-                      color: label
-                          ? const Color(0xFF0F172A)
-                          : const Color(0xFF64748B),
+                  const RevealOnScroll(
+                    child: Column(
+                      children: [
+                        Text(
+                          'Contáctanos',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 33.48,
+                            fontWeight: FontWeight.w900,
+                            color: AppColors.darkNavy,
+                            letterSpacing: -0.8,
+                          ),
+                        ),
+                        SizedBox(height: 8.37),
+                        Text(
+                          'Nuestro equipo está listo para ayudarte',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: 14.88,
+                          ),
+                        ),
+                        SizedBox(height: 6.51),
+                        Text(
+                          'Toca un dato para copiarlo',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Color(0xFF8095B8),
+                            fontStyle: FontStyle.italic,
+                            fontSize: 11.16,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 6),
-                  // Copiar → check verde durante unos segundos
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 220),
-                    transitionBuilder: (child, animation) => ScaleTransition(
-                      scale: animation,
-                      child: FadeTransition(opacity: animation, child: child),
+                  const SizedBox(height: 29.76),
+
+                  // Tres tarjetas alineadas en escritorio; 2 o 1 en pantallas
+                  // pequeñas. El Wrap nunca usa Expanded sin ancho definido.
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final width = constraints.maxWidth;
+                      final columns = width >= 890 ? 3 : (width >= 570 ? 2 : 1);
+                      const gap = 16.74;
+                      final cardWidth = (width - gap * (columns - 1)) / columns;
+
+                      return Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: gap,
+                        runSpacing: gap,
+                        children: [
+                          for (var i = 0; i < _integrantes.length; i++)
+                            SizedBox(
+                              width: cardWidth,
+                              child: RevealOnScroll(
+                                delay: Duration(milliseconds: 100 + i * 90),
+                                startScale: 0.98,
+                                child: _ContactCard(
+                                  icon: Icons.person_rounded,
+                                  title: _integrantes[i].nombre,
+                                  value: _integrantes[i].telefono,
+                                  valueIcon: Icons.phone_outlined,
+                                  onTap: () => _copiar(
+                                    context,
+                                    _integrantes[i].telefono,
+                                    'Teléfono',
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 20.46),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 372),
+                    child: RevealOnScroll(
+                      delay: const Duration(milliseconds: 350),
+                      startScale: 0.98,
+                      child: _ContactCard(
+                        icon: Icons.mail_outline_rounded,
+                        title: 'Correo general',
+                        value: correoContacto,
+                        valueIcon: Icons.copy_rounded,
+                        isEmail: true,
+                        onTap: () => _copiar(context, correoContacto, 'Correo'),
+                      ),
                     ),
-                    child: _copied
-                        ? const Icon(
-                            Icons.check_rounded,
-                            key: ValueKey('copied'),
-                            size: 15,
-                            color: Color(0xFF16A34A),
-                          )
-                        : Icon(
-                            Icons.copy_rounded,
-                            key: const ValueKey('copy'),
-                            size: 13,
-                            color: hovered
-                                ? const Color(0xFF2563EB)
-                                : const Color(0xFF94A3B8),
+                  ),
+
+                  // Preguntas frecuentes: DEBAJO de las cuatro tarjetas.
+                  SizedBox(height: mobile ? 66.96 : 87.42),
+                  const RevealOnScroll(
+                    child: Column(
+                      children: [
+                        Text(
+                          'PREGUNTAS FRECUENTES',
+                          style: TextStyle(
+                            color: AppColors.primaryBlue,
+                            fontSize: 11.16,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 1.1,
                           ),
+                        ),
+                        SizedBox(height: 11.16),
+                        Text(
+                          'Resolvemos tus dudas.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: AppColors.darkNavy,
+                            fontSize: 29.76,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -0.6,
+                          ),
+                        ),
+                        SizedBox(height: 7.44),
+                        Text(
+                          'Lo esencial antes de empezar con EduPago.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: 13.02,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 25.11),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 762.6),
+                    child: Column(
+                      children: [
+                        for (var i = 0; i < _preguntas.length; i++)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 10.23),
+                            child: RevealOnScroll(
+                              delay: Duration(milliseconds: (i % 4) * 65),
+                              child: _FaqTile(entry: _preguntas[i]),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ContactInfo {
+  final String nombre;
+  final String telefono;
+
+  const _ContactInfo(this.nombre, this.telefono);
+}
+
+/// Hover consistente con las tarjetas de Soluciones: borde azul,
+/// elevación pequeña, sombra suave e icono destacado.
+/// Es una tarjeta clicable: el toque conserva la acción de copiar el dato.
+class _ContactCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String value;
+  final IconData valueIcon;
+  final VoidCallback onTap;
+  final bool isEmail;
+
+  const _ContactCard({
+    required this.icon,
+    required this.title,
+    required this.value,
+    required this.valueIcon,
+    required this.onTap,
+    this.isEmail = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final duration = reduceMotion
+        ? Duration.zero
+        : const Duration(milliseconds: 230);
+
+    return HoverBuilder(
+      cursor: SystemMouseCursors.click,
+      builder: (context, hovered) => AnimatedContainer(
+        duration: duration,
+        curve: Curves.easeOutCubic,
+        transform: Matrix4.translationValues(
+          0,
+          hovered && !reduceMotion ? -3 : 0,
+          0,
+        ),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(17.67),
+          border: Border.all(
+            color: hovered ? const Color(0xFF8DBAFF) : const Color(0xFFDDE6F3),
+            width: hovered ? 1.4 : 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.darkNavy.withValues(
+                alpha: hovered ? 0.10 : 0.025,
+              ),
+              blurRadius: hovered ? 26 : 12,
+              offset: const Offset(0, 7),
+            ),
           ],
-        );
-      },
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(17.67),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            hoverColor: AppColors.primaryBlue.withValues(alpha: 0.025),
+            child: Container(
+              width: double.infinity,
+              constraints: const BoxConstraints(minHeight: 181.35),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.74,
+                vertical: 22.32,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AnimatedContainer(
+                    duration: duration,
+                    curve: Curves.easeOutCubic,
+                    width: 59.52,
+                    height: 59.52,
+                    decoration: BoxDecoration(
+                      color: hovered
+                          ? AppColors.primaryBlue
+                          : const Color(0xFFECF4FF),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      icon,
+                      color: hovered ? Colors.white : AppColors.primaryBlue,
+                      size: 26.97,
+                    ),
+                  ),
+                  const SizedBox(height: 15.81),
+                  Text(
+                    title,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: isEmail ? AppColors.textMuted : AppColors.darkNavy,
+                      fontWeight: isEmail ? FontWeight.w600 : FontWeight.w800,
+                      fontSize: isEmail ? 12.09 : 14.88,
+                    ),
+                  ),
+                  const SizedBox(height: 6.51),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (!isEmail) ...[
+                        Icon(
+                          valueIcon,
+                          size: 13.02,
+                          color: AppColors.textMuted,
+                        ),
+                        const SizedBox(width: 4.65),
+                      ],
+                      Flexible(
+                        child: Text(
+                          value,
+                          textAlign: TextAlign.center,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: isEmail
+                                ? FontWeight.w800
+                                : FontWeight.w500,
+                            fontSize: isEmail ? 13.02 : 12.09,
+                            color: isEmail
+                                ? AppColors.darkNavy
+                                : AppColors.textMuted,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6.51),
+                      Icon(
+                        Icons.copy_rounded,
+                        size: 13.95,
+                        color: hovered
+                            ? AppColors.primaryBlue
+                            : AppColors.textMuted,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FaqEntry {
+  final String pregunta;
+  final String respuesta;
+  const _FaqEntry(this.pregunta, this.respuesta);
+}
+
+/// Las preguntas frecuentes reciben el mismo borde al pasar el cursor,
+/// sin perder su comportamiento desplegable ni modificar su altura en reposo.
+class _FaqTile extends StatelessWidget {
+  final _FaqEntry entry;
+  const _FaqTile({required this.entry});
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    return HoverBuilder(
+      cursor: SystemMouseCursors.click,
+      builder: (context, hovered) => AnimatedContainer(
+        duration: reduceMotion
+            ? Duration.zero
+            : const Duration(milliseconds: 230),
+        curve: Curves.easeOutCubic,
+        transform: Matrix4.translationValues(
+          0,
+          hovered && !reduceMotion ? -2 : 0,
+          0,
+        ),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(13.95),
+          border: Border.all(
+            color: hovered ? const Color(0xFF8DBAFF) : const Color(0xFFE1E9F5),
+            width: hovered ? 1.4 : 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.darkNavy.withValues(alpha: hovered ? 0.08 : 0),
+              blurRadius: hovered ? 18 : 0,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(13.95),
+          clipBehavior: Clip.antiAlias,
+          child: Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              tilePadding: const EdgeInsets.symmetric(
+                horizontal: 18.6,
+                vertical: 2,
+              ),
+              childrenPadding: const EdgeInsets.fromLTRB(18.6, 0, 18.6, 18.6),
+              iconColor: AppColors.primaryBlue,
+              collapsedIconColor: AppColors.primaryBlue,
+              shape: const Border(),
+              collapsedShape: const Border(),
+              title: Text(
+                entry.pregunta,
+                style: const TextStyle(
+                  color: AppColors.darkNavy,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13.02,
+                ),
+              ),
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    entry.respuesta,
+                    style: const TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 12.56,
+                      height: 1.6,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -1,268 +1,175 @@
 import 'package:flutter/material.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/motion.dart';
+import 'landing_section_background.dart';
+import 'stats_bar_section.dart';
 
 class CtaAndFooterSection extends StatelessWidget {
   final VoidCallback onRegisterPressed;
   final VoidCallback onContactPressed;
+  final VoidCallback onSecurityPressed;
 
   const CtaAndFooterSection({
     super.key,
     required this.onRegisterPressed,
     required this.onContactPressed,
+    required this.onSecurityPressed,
   });
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      child: Column(
-        children: [
-          Container(
-            width: double.infinity,
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [Color(0xFFF8FAFC), Color(0xFFE2E8F0)],
-              ),
+    final narrow = MediaQuery.sizeOf(context).width < 780;
+
+    final familyCard = _ActionCard(
+      icon: Icons.family_restroom_rounded,
+      eyebrow: 'PARA REPRESENTANTES',
+      title: 'Ten tus pagos escolares a la mano.',
+      body: 'Crea tu cuenta para consultar mensualidades y reportar pagos.',
+      buttonText: 'Crear mi cuenta',
+      navy: false,
+      onPressed: onRegisterPressed,
+    );
+    final schoolCard = _ActionCard(
+      icon: Icons.account_balance_outlined,
+      eyebrow: 'PARA INSTITUCIONES',
+      title: 'Dale a tu equipo más claridad.',
+      body: 'Organiza la cobranza y el seguimiento de cuentas de tu colegio.',
+      buttonText: 'Hablar con el equipo',
+      navy: true,
+      onPressed: onContactPressed,
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Separación intencional en azul marino, como la barra de confianza.
+        const LandingSeparatorBar(
+          headline: 'DEL REGISTRO AL SEGUIMIENTO',
+          items: <LandingSeparatorItem>[
+            LandingSeparatorItem(
+              Icons.person_add_alt_1_outlined,
+              'Accede a tu cuenta',
             ),
-            padding: const EdgeInsets.fromLTRB(40, 12, 40, 60),
+            LandingSeparatorItem(
+              Icons.receipt_long_outlined,
+              'Consulta tus cuotas',
+            ),
+            LandingSeparatorItem(Icons.payments_outlined, 'Reporta tus pagos'),
+            LandingSeparatorItem(Icons.fact_check_outlined, 'Revisa su estado'),
+          ],
+        ),
+        LandingSectionBackground(
+          style: LandingWaveStyle.action,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              narrow ? 20.46 : 59.52,
+              60.45,
+              narrow ? 20.46 : 59.52,
+              77.19,
+            ),
             child: Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1200),
+                constraints: const BoxConstraints(maxWidth: 1116),
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     const RevealOnScroll(
-                      child: _SectionHeading(
-                        eyebrow: 'ELIGE TU CAMINO',
-                        title: 'Una plataforma, dos formas de empezar.',
-                        subtitle:
-                            'Ya seas representante o institución, el siguiente paso toma menos de un minuto.',
+                      child: _Heading(
+                        eyebrow: 'EL SIGUIENTE PASO',
+                        title: 'Empieza con EduPago.',
+                        subtitle: 'Una plataforma para familias y colegios.',
                       ),
                     ),
-                    const SizedBox(height: 40),
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        final bool isNarrow = constraints.maxWidth < 760;
-
-                        // En escritorio entran desde los lados; en móvil, desde abajo.
-                        final representanteCard = RevealOnScroll(
-                          delay: const Duration(milliseconds: 120),
-                          offset: isNarrow
-                              ? const Offset(0, 40)
-                              : const Offset(-50, 0),
-                          child: _CtaCard(
-                            eyebrow: 'PARA REPRESENTANTES',
-                            icon: Icons.how_to_reg_rounded,
-                            title:
-                                '¿Ya te dieron permiso\npara crear tu cuenta?',
-                            description:
-                                'Si el colegio ya te registró como representante, activa tu acceso y gestiona los pagos de tus hijos en minutos.',
-                            buttonLabel: 'Crear mi cuenta',
-                            buttonIcon: Icons.arrow_forward,
-                            onPressed: onRegisterPressed,
-                            backgroundColor: AppColors.primaryBlue,
-                            foregroundColor: Colors.white,
-                            eyebrowColor: Colors.white70,
-                            descriptionColor: Colors.white70,
-                            buttonBackgroundColor: Colors.white,
-                            buttonForegroundColor: AppColors.primaryBlue,
-                            buttonHoverBackgroundColor: const Color(0xFFEFF6FF),
-                          ),
-                        );
-
-                        final colegioCard = RevealOnScroll(
-                          delay: const Duration(milliseconds: 260),
-                          offset: isNarrow
-                              ? const Offset(0, 40)
-                              : const Offset(50, 0),
-                          child: _CtaCard(
-                            eyebrow: 'PARA INSTITUCIONES',
-                            icon: Icons.school_rounded,
-                            title: '¿Eres un colegio y\nquieres sumarte?',
-                            description:
-                                'Conversemos sobre cómo EduPago puede simplificar la gestión financiera y las cobranzas de tu institución.',
-                            buttonLabel: 'Contáctanos',
-                            buttonIcon: Icons.arrow_forward,
-                            onPressed: onContactPressed,
-                            backgroundColor: AppColors.darkNavy,
-                            foregroundColor: Colors.white,
-                            eyebrowColor: Colors.white60,
-                            descriptionColor: Colors.white60,
-                            buttonBackgroundColor: AppColors.primaryBlue,
-                            buttonForegroundColor: Colors.white,
-                            buttonHoverBackgroundColor: const Color(0xFF3B82F6),
-                          ),
-                        );
-
-                        if (isNarrow) {
-                          return Column(
-                            children: [
-                              representanteCard,
-                              const SizedBox(height: 20),
-                              colegioCard,
-                            ],
-                          );
-                        }
-
-                        return IntrinsicHeight(
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Expanded(child: representanteCard),
-                              const SizedBox(width: 20),
-                              Expanded(child: colegioCard),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
+                    const SizedBox(height: 34.41),
+                    // Dos columnas arriba (alineadas al inicio) o apiladas en
+                    // pantallas angostas. Sin Flex + stretch: evita pedir una
+                    // altura infinita dentro del scroll.
+                    if (narrow) ...[
+                      familyCard,
+                      const SizedBox(height: 16.74),
+                      schoolCard,
+                    ] else
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: familyCard),
+                          const SizedBox(width: 18.6),
+                          Expanded(child: schoolCard),
+                        ],
+                      ),
                   ],
                 ),
               ),
             ),
           ),
-
-          // Footer
-          Container(
-            width: double.infinity,
-            color: AppColors.darkNavy,
-            padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 32),
+        ),
+        LandingSectionBackground(
+          style: LandingWaveStyle.footer,
+          child: Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: narrow ? 22.32 : 59.52,
+              vertical: 31.62,
+            ),
             child: Center(
-              child: Container(
-                constraints: const BoxConstraints(maxWidth: 1200),
-                child: RevealOnScroll(
-                  offset: const Offset(0, 16),
-                  child: Wrap(
-                    alignment: WrapAlignment.spaceBetween,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 20,
-                    runSpacing: 20,
-                    children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: Image.asset(
-                              'assets/images/logo_edupago.png',
-                              width: 32,
-                              height: 32,
-                              fit: BoxFit.contain,
-                            ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1116),
+                child: Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 20.46,
+                  runSpacing: 18.6,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Image.asset(
+                          'assets/images/logo_edupago.png',
+                          width: 32.55,
+                          height: 32.55,
+                          errorBuilder: (_, __, ___) =>
+                              const Icon(Icons.school, color: Colors.white),
+                        ),
+                        const SizedBox(width: 9.3),
+                        const Text(
+                          'EduPago',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 19.53,
+                            fontWeight: FontWeight.w900,
                           ),
-                          const SizedBox(width: 10),
-                          const Text(
-                            'EduPago',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 18,
-                              letterSpacing: -0.5,
-                            ),
+                        ),
+                      ],
+                    ),
+                    const Text(
+                      '© 2026 EduPago. Gestión escolar más sencilla.',
+                      style: TextStyle(
+                        color: Color(0xFFC6D7F4),
+                        fontSize: 11.16,
+                      ),
+                    ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextButton(
+                          onPressed: onSecurityPressed,
+                          child: const Text(
+                            'Seguridad',
+                            style: TextStyle(color: Colors.white),
                           ),
-                        ],
-                      ),
-                      const Text(
-                        '© 2026 EduPago. Tecnología para una educación que avanza.',
-                        style: TextStyle(color: Colors.white60, fontSize: 12),
-                      ),
-                      const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _FooterLink('Privacidad'),
-                          SizedBox(width: 16),
-                          _FooterLink('Términos'),
-                          SizedBox(width: 16),
-                          _FooterLink('Ayuda'),
-                        ],
-                      ),
-                    ],
-                  ),
+                        ),
+                        TextButton(
+                          onPressed: onContactPressed,
+                          child: const Text(
+                            'Contacto',
+                            style: TextStyle(color: Colors.white),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Link del footer: se ilumina y se subraya al pasar el mouse.
-class _FooterLink extends StatelessWidget {
-  final String text;
-
-  const _FooterLink(this.text);
-
-  @override
-  Widget build(BuildContext context) {
-    return HoverBuilder(
-      cursor: SystemMouseCursors.click,
-      builder: (context, hovered) {
-        return AnimatedDefaultTextStyle(
-          duration: const Duration(milliseconds: 180),
-          style: TextStyle(
-            color: hovered ? Colors.white : Colors.white60,
-            fontSize: 12,
-            decoration: hovered
-                ? TextDecoration.underline
-                : TextDecoration.none,
-            decorationColor: AppColors.primaryBlue,
-            decorationThickness: 2,
-          ),
-          child: Text(text),
-        );
-      },
-    );
-  }
-}
-
-class _SectionHeading extends StatelessWidget {
-  final String eyebrow;
-  final String title;
-  final String subtitle;
-
-  const _SectionHeading({
-    required this.eyebrow,
-    required this.title,
-    required this.subtitle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Text(
-          eyebrow,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: AppColors.primaryBlue,
-            fontWeight: FontWeight.bold,
-            fontSize: 13,
-            letterSpacing: 1.0,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          title,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: AppColors.darkNavy,
-            fontSize: 32,
-            fontWeight: FontWeight.bold,
-            height: 1.2,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Text(
-          subtitle,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: AppColors.textMuted,
-            fontSize: 16,
-            height: 1.4,
           ),
         ),
       ],
@@ -270,137 +177,202 @@ class _SectionHeading extends StatelessWidget {
   }
 }
 
-class _CtaCard extends StatelessWidget {
-  final String eyebrow;
+class _ActionCard extends StatefulWidget {
   final IconData icon;
+  final String eyebrow;
   final String title;
-  final String description;
-  final String buttonLabel;
-  final IconData buttonIcon;
+  final String body;
+  final String buttonText;
+  final bool navy;
   final VoidCallback onPressed;
-  final Color backgroundColor;
-  final Color foregroundColor;
-  final Color eyebrowColor;
-  final Color descriptionColor;
-  final Color buttonBackgroundColor;
-  final Color buttonForegroundColor;
-  final Color buttonHoverBackgroundColor;
 
-  const _CtaCard({
-    required this.eyebrow,
+  const _ActionCard({
     required this.icon,
+    required this.eyebrow,
     required this.title,
-    required this.description,
-    required this.buttonLabel,
-    required this.buttonIcon,
+    required this.body,
+    required this.buttonText,
+    required this.navy,
     required this.onPressed,
-    required this.backgroundColor,
-    required this.foregroundColor,
-    required this.eyebrowColor,
-    required this.descriptionColor,
-    required this.buttonBackgroundColor,
-    required this.buttonForegroundColor,
-    required this.buttonHoverBackgroundColor,
+  });
+
+  @override
+  State<_ActionCard> createState() => _ActionCardState();
+}
+
+class _ActionCardState extends State<_ActionCard> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) => RevealOnScroll(
+    child: MouseRegion(
+      cursor: SystemMouseCursors.basic,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 230),
+        curve: Curves.easeOutCubic,
+        transform: Matrix4.translationValues(0, _hovered ? -5 : 0, 0),
+        decoration: BoxDecoration(
+          color: widget.navy ? AppColors.darkNavy : AppColors.primaryBlue,
+          borderRadius: BorderRadius.circular(25.11),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.darkNavy.withValues(
+                alpha: _hovered ? 0.23 : 0.11,
+              ),
+              blurRadius: _hovered ? 30 : 20.46,
+              offset: Offset(0, _hovered ? 15 : 8.37),
+            ),
+          ],
+        ),
+        // Recorta el círculo decorativo sin cortar la sombra de la tarjeta.
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(25.11),
+          child: Stack(
+            children: [
+              // El círculo queda detrás del contenido y no recibe eventos.
+              Positioned(
+                top: -64,
+                right: -51,
+                child: IgnorePointer(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 230),
+                    curve: Curves.easeOutCubic,
+                    width: _hovered ? 190 : 172,
+                    height: _hovered ? 190 : 172,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withValues(
+                        alpha: widget.navy
+                            ? (_hovered ? 0.12 : 0.075)
+                            : (_hovered ? 0.19 : 0.13),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(29.76),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(11.16),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(13.95),
+                      ),
+                      child: Icon(
+                        widget.icon,
+                        color: Colors.white,
+                        size: 24.18,
+                      ),
+                    ),
+                    const SizedBox(height: 16.74),
+                    Text(
+                      widget.eyebrow,
+                      style: const TextStyle(
+                        color: Color(0xFFDDEBFF),
+                        fontSize: 11.16,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.9,
+                      ),
+                    ),
+                    const SizedBox(height: 9.3),
+                    Text(
+                      widget.title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 24.18,
+                        fontWeight: FontWeight.w900,
+                        height: 1.23,
+                      ),
+                    ),
+                    const SizedBox(height: 11.16),
+                    Text(
+                      widget.body,
+                      style: const TextStyle(
+                        color: Color(0xFFE0EBFF),
+                        fontSize: 13.02,
+                        height: 1.55,
+                      ),
+                    ),
+                    const SizedBox(height: 25.11),
+                    AnimatedButton(
+                      label: widget.buttonText,
+                      onPressed: widget.onPressed,
+                      icon: Icons.arrow_forward_rounded,
+                      background: widget.navy
+                          ? AppColors.primaryBlue
+                          : Colors.white,
+                      hoverBackground: widget.navy
+                          ? const Color(0xFF377FFF)
+                          : const Color(0xFFE5F0FF),
+                      foreground: widget.navy
+                          ? Colors.white
+                          : AppColors.primaryBlue,
+                      radius: 13.02,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _Heading extends StatelessWidget {
+  final String eyebrow;
+  final String title;
+  final String subtitle;
+  const _Heading({
+    required this.eyebrow,
+    required this.title,
+    required this.subtitle,
   });
 
   @override
   Widget build(BuildContext context) {
-    return HoverCard(
-      color: backgroundColor,
-      borderColor: Colors.transparent,
-      radius: 24,
-      padding: EdgeInsets.zero,
-      lift: 8,
-      clip: true,
-      shadowColor: backgroundColor,
-      restShadowOpacity: 0.10,
-      hoverShadowOpacity: 0.40,
-      builder: (context, hovered) {
-        return Stack(
-          children: [
-            // Círculo decorativo que crece al hacer hover
-            Positioned(
-              right: -40,
-              top: -40,
-              child: AnimatedScale(
-                scale: hovered ? 1.4 : 1.0,
-                duration: const Duration(milliseconds: 600),
-                curve: Curves.easeOutCubic,
-                child: Container(
-                  width: 160,
-                  height: 160,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white.withValues(alpha: 0.06),
-                  ),
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(32),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 260),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: hovered ? 0.22 : 0.12),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: AnimatedRotation(
-                      turns: hovered ? 0.03 : 0,
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeOutBack,
-                      child: Icon(icon, color: foregroundColor, size: 20),
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  Text(
-                    eyebrow,
-                    style: TextStyle(
-                      color: eyebrowColor,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    title,
-                    style: TextStyle(
-                      color: foregroundColor,
-                      fontSize: 24,
-                      height: 1.25,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    description,
-                    style: TextStyle(color: descriptionColor, height: 1.4),
-                  ),
-                  const SizedBox(height: 24),
-                  SizedBox(
-                    width: double.infinity,
-                    child: AnimatedButton(
-                      label: buttonLabel,
-                      icon: buttonIcon,
-                      onPressed: onPressed,
-                      expand: true,
-                      background: buttonBackgroundColor,
-                      hoverBackground: buttonHoverBackgroundColor,
-                      foreground: buttonForegroundColor,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        );
-      },
+    final mobile = MediaQuery.sizeOf(context).width < 650;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          eyebrow,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: AppColors.primaryBlue,
+            fontSize: 11.16,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1.1,
+          ),
+        ),
+        const SizedBox(height: 11.16),
+        Text(
+          title,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: mobile ? 27.9 : 35.34,
+            fontWeight: FontWeight.w900,
+            color: AppColors.darkNavy,
+          ),
+        ),
+        const SizedBox(height: 11.16),
+        Text(
+          subtitle,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: AppColors.textMuted,
+            fontSize: 13.95,
+            height: 1.5,
+          ),
+        ),
+      ],
     );
   }
 }

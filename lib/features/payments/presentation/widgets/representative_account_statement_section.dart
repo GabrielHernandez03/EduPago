@@ -285,7 +285,7 @@ class _RepresentativeAccountStatementSectionState
               ),
               SizedBox(width: 10),
               Text(
-                'Estado de cuenta',
+                'Mi estado de cuenta',
                 style: TextStyle(
                   fontSize: 29,
                   fontWeight: FontWeight.w800,

@@ -2,98 +2,109 @@ import 'package:flutter/material.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/motion.dart';
 
-class _Stat {
-  final IconData icon;
-  final String prefix;
-  final double value;
-  final int decimals;
-  final String suffix;
-
-  const _Stat({
-    required this.icon,
-    required this.value,
-    required this.suffix,
-    this.prefix = '',
-    this.decimals = 0,
-  });
-}
-
-const List<_Stat> _stats = [
-  _Stat(
-    icon: Icons.business_outlined,
-    prefix: '+',
-    value: 35,
-    suffix: ' colegios',
-  ),
-  _Stat(
-    icon: Icons.people_outline,
-    prefix: '+',
-    value: 2000,
-    suffix: ' familias',
-  ),
-  _Stat(
-    icon: Icons.receipt_long_outlined,
-    prefix: '+',
-    value: 18,
-    suffix: 'k transacciones',
-  ),
-  _Stat(
-    icon: Icons.verified_user_outlined,
-    value: 99.9,
-    decimals: 1,
-    suffix: '% disponible',
-  ),
-];
-
+/// Barra horizontal azul marino que separa dos secciones de la landing.
+/// Usa mensajes funcionales en lugar de estadísticas no verificadas.
 class StatsBarSection extends StatelessWidget {
   const StatsBarSection({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final bool isMobile = MediaQuery.of(context).size.width < 900;
+    return const LandingSeparatorBar(
+      headline: 'UNA SOLUCIÓN\nCONFIABLE PARA TODA LA\nCOMUNIDAD EDUCATIVA',
+      items: <LandingSeparatorItem>[
+        LandingSeparatorItem(Icons.school_outlined, 'Para colegios'),
+        LandingSeparatorItem(Icons.groups_2_outlined, 'Para las familias'),
+        LandingSeparatorItem(Icons.receipt_long_outlined, 'Pagos y comprobantes'),
+        LandingSeparatorItem(Icons.verified_user_outlined, 'Acceso por roles'),
+      ],
+    );
+  }
+}
+
+/// Pieza reutilizable: también se muestra entre Preguntas frecuentes y el CTA.
+class LandingSeparatorItem {
+  final IconData icon;
+  final String label;
+
+  const LandingSeparatorItem(this.icon, this.label);
+}
+
+class LandingSeparatorBar extends StatelessWidget {
+  final String headline;
+  final List<LandingSeparatorItem> items;
+
+  const LandingSeparatorBar({
+    super.key,
+    required this.headline,
+    required this.items,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final narrow = MediaQuery.sizeOf(context).width < 700;
 
     return Container(
       width: double.infinity,
       color: AppColors.darkNavy,
       padding: EdgeInsets.symmetric(
-        horizontal: isMobile ? 20 : 60,
-        vertical: 36,
+        horizontal: narrow ? 20.46 : 48.36,
+        vertical: narrow ? 25.11 : 26.97,
       ),
       child: Center(
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 1200),
-          child: Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 30,
-            runSpacing: 24,
-            children: [
-              const RevealOnScroll(
-                offset: Offset(-24, 0),
-                child: SizedBox(
-                  width: 240,
-                  child: Text(
-                    'UNA SOLUCIÓN\nCONFIABLE PARA TODA LA\nCOMUNIDAD EDUCATIVA',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.8,
-                      height: 1.5,
-                    ),
-                  ),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1143.9),
+          child: LayoutBuilder(
+            builder: (context, bounds) {
+              final wide = bounds.maxWidth >= 1030;
+              final heading = Text(
+                headline,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10.23,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.35,
+                  height: 1.4,
                 ),
-              ),
-              for (var i = 0; i < _stats.length; i++)
-                RevealOnScroll(
-                  delay: Duration(milliseconds: 150 + i * 120),
-                  offset: const Offset(0, 20),
-                  child: _StatItem(
-                    stat: _stats[i],
-                    delay: Duration(milliseconds: 150 + i * 120),
+              );
+
+              if (wide) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    SizedBox(width: 204.6, child: heading),
+                    const SizedBox(width: 20.46),
+                    for (final item in items) ...[
+                      Expanded(child: _SeparatorTile(item: item)),
+                      if (item != items.last) const SizedBox(width: 11.16),
+                    ],
+                  ],
+                );
+              }
+
+              final oneColumn = bounds.maxWidth < 520;
+              final tileWidth = oneColumn
+                  ? bounds.maxWidth
+                  : (bounds.maxWidth - 16) / 2;
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  heading,
+                  const SizedBox(height: 19.53),
+                  Wrap(
+                    spacing: 14.88,
+                    runSpacing: 16.74,
+                    children: [
+                      for (final item in items)
+                        SizedBox(
+                          width: tileWidth,
+                          child: _SeparatorTile(item: item),
+                        ),
+                    ],
                   ),
-                ),
-            ],
+                ],
+              );
+            },
           ),
         ),
       ),
@@ -101,52 +112,44 @@ class StatsBarSection extends StatelessWidget {
   }
 }
 
-class _StatItem extends StatelessWidget {
-  final _Stat stat;
-  final Duration delay;
+class _SeparatorTile extends StatelessWidget {
+  final LandingSeparatorItem item;
 
-  const _StatItem({required this.stat, required this.delay});
+  const _SeparatorTile({required this.item});
 
   @override
   Widget build(BuildContext context) {
-    return HoverBuilder(
-      cursor: SystemMouseCursors.basic,
-      builder: (context, hovered) {
-        return AnimatedScale(
-          scale: hovered ? 1.05 : 1.0,
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutBack,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.primaryBlue.withValues(alpha: 
-                    hovered ? 0.28 : 0.12,
-                  ),
-                ),
-                child: Icon(stat.icon, color: AppColors.primaryBlue, size: 22),
-              ),
-              const SizedBox(width: 12),
-              CountUp(
-                end: stat.value,
-                decimals: stat.decimals,
-                prefix: stat.prefix,
-                suffix: stat.suffix,
-                delay: delay,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
+    return LandingHover(
+      lift: 2.5,
+      scale: 1.015,
+      child: Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Container(
+          width: 36.27,
+          height: 36.27,
+          alignment: Alignment.center,
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            color: Color(0xFF1A396D),
           ),
-        );
-      },
+          child: Icon(item.icon, size: 19.53, color: const Color(0xFF3986FF)),
+        ),
+        const SizedBox(width: 10.23),
+        Flexible(
+          child: Text(
+            item.label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12.09,
+              fontWeight: FontWeight.w800,
+              height: 1.3,
+            ),
+          ),
+        ),
+      ],
+      ),
     );
   }
 }

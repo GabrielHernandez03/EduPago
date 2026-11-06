@@ -43,41 +43,62 @@ class _InViewState extends State<InView> {
   Timer? _timer;
   bool _triggered = false;
   bool _visible = false;
+  bool _checkScheduled = false;
+  int _attempts = 0;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final position = Scrollable.maybeOf(context)?.position;
     if (position != _position) {
-      _position?.removeListener(_check);
+      _position?.removeListener(_scheduleCheck);
       _position = position;
-      if (!_triggered) _position?.addListener(_check);
+      if (!_triggered) _position?.addListener(_scheduleCheck);
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) => _check());
+    _scheduleCheck();
+  }
+
+  /// Varias notificaciones de scroll dentro del mismo frame provocan solo
+  /// una lectura de geometría, una vez que el layout ya terminó.
+  void _scheduleCheck() {
+    if (_triggered || !mounted || _checkScheduled) return;
+    _checkScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkScheduled = false;
+      if (mounted && !_triggered) _check();
+    });
+  }
+
+  void _retry() {
+    if (_triggered || !mounted || _attempts >= 40) return;
+    _attempts++;
+    _scheduleCheck();
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   void _check() {
-    if (_triggered || !mounted) return;
     final box = context.findRenderObject();
-    if (box is! RenderBox || !box.attached || !box.hasSize) return;
-
-    final viewport = Scrollable.maybeOf(context)?.context.findRenderObject();
-    final double top;
-    final double height;
-    if (viewport is RenderBox && viewport.hasSize) {
-      top = box.localToGlobal(Offset.zero, ancestor: viewport).dy;
-      height = viewport.size.height;
-    } else {
-      top = box.localToGlobal(Offset.zero).dy;
-      height = MediaQuery.of(context).size.height;
+    if (box is! RenderBox || !box.attached || !box.hasSize) {
+      _retry();
+      return;
     }
-
-    if (top <= height * widget.triggerAt) _fire();
+    try {
+      final viewport = Scrollable.maybeOf(context)?.context.findRenderObject();
+      final top = viewport is RenderBox && viewport.attached && viewport.hasSize
+          ? box.localToGlobal(Offset.zero, ancestor: viewport).dy
+          : box.localToGlobal(Offset.zero).dy;
+      final height = viewport is RenderBox && viewport.hasSize
+          ? viewport.size.height
+          : MediaQuery.sizeOf(context).height;
+      if (top <= height * widget.triggerAt) _fire();
+    } catch (_) {
+      _retry();
+    }
   }
 
   void _fire() {
     _triggered = true;
-    _position?.removeListener(_check);
+    _position?.removeListener(_scheduleCheck);
     if (widget.delay == Duration.zero || _reduceMotion(context)) {
       setState(() => _visible = true);
     } else {
@@ -90,7 +111,7 @@ class _InViewState extends State<InView> {
   @override
   void dispose() {
     _timer?.cancel();
-    _position?.removeListener(_check);
+    _position?.removeListener(_scheduleCheck);
     super.dispose();
   }
 
@@ -597,6 +618,64 @@ class _AnimatedButtonState extends State<AnimatedButton> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hover suave de la landing — integrado aquí, sin archivos adicionales.
+// ─────────────────────────────────────────────────────────────────────────────
+/// Efecto de elevación al pasar el mouse sin alterar el layout del widget.
+/// No convierte tarjetas informativas en botones: el cursor sigue normal.
+/// Respeta la preferencia del sistema de reducir animaciones.
+class LandingHover extends StatefulWidget {
+  final Widget child;
+  final double lift;
+  final double scale;
+  final Duration duration;
+
+  const LandingHover({
+    super.key,
+    required this.child,
+    this.lift = 3.0,
+    this.scale = 1.01,
+    this.duration = const Duration(milliseconds: 220),
+  });
+
+  @override
+  State<LandingHover> createState() => _LandingHoverState();
+}
+
+class _LandingHoverState extends State<LandingHover> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    return MouseRegion(
+      cursor: SystemMouseCursors.basic,
+      onEnter: (_) {
+        if (!_hovered) setState(() => _hovered = true);
+      },
+      onExit: (_) {
+        if (_hovered) setState(() => _hovered = false);
+      },
+      child: TweenAnimationBuilder<double>(
+        duration: reduceMotion ? Duration.zero : widget.duration,
+        curve: Curves.easeOutCubic,
+        tween: Tween<double>(
+          end: reduceMotion ? 0 : (_hovered ? 1 : 0),
+        ),
+        // El hijo se pinta una vez; el hover anima una transformación
+        // compuesta sin volver a construir imágenes ni texto en cada frame.
+        child: RepaintBoundary(child: widget.child),
+        builder: (context, t, child) => Transform(
+          alignment: Alignment.center,
+          transform: Matrix4.translationValues(0, -widget.lift * t, 0)
+            ..scale(1 + (widget.scale - 1) * t),
+          child: child,
         ),
       ),
     );

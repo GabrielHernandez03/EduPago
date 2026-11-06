@@ -1,24 +1,30 @@
-import 'dart:ui' show ImageFilter;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 
-class CustomNavbar extends StatelessWidget {
+/// Barra superior flotante que se superpone al contenido (el fondo de la
+/// landing pasa por detrás). Mantiene todos los callbacks del navbar original.
+///
+/// - Se compacta al hacer scroll y muestra una barra de progreso de lectura.
+/// - En pantallas angostas el menú se despliega como panel bajo la barra.
+/// - Layout deliberadamente simple: sin blur, sin tamaños animados.
+class CustomNavbar extends StatefulWidget {
+  /// Alto que la página debe reservar arriba para que el contenido no quede
+  /// tapado por la barra (margen superior + barra + aire).
+  static const double reservedHeight = 96;
+
   final VoidCallback onInicioPressed;
   final VoidCallback onSolucionesPressed;
   final VoidCallback onSeguridadPressed;
   final VoidCallback onContactoPressed;
   final VoidCallback onLoginPressed;
   final VoidCallback onRegisterPressed;
-
-  /// Título del link activo (ej. 'Inicio'), para resaltarlo en el menú.
-  /// Opcional: si se omite, ningún link se marca como activo.
   final String? activeLink;
-
-  /// true cuando la página ya se desplazó: la sombra del navbar se intensifica.
   final bool isScrolled;
-
-  /// Progreso de lectura de la página (0.0 - 1.0) para la barra inferior.
   final double scrollProgress;
+
+  /// Opcional: solo actualiza la línea de progreso sin reconstruir el navbar.
+  final ValueListenable<double>? scrollProgressListenable;
 
   const CustomNavbar({
     super.key,
@@ -30,190 +36,246 @@ class CustomNavbar extends StatelessWidget {
     required this.onRegisterPressed,
     this.activeLink,
     this.isScrolled = false,
-    this.scrollProgress = 0.0,
+    this.scrollProgress = 0,
+    this.scrollProgressListenable,
   });
 
-  List<_NavItem> get _navItems => [
-    _NavItem('Inicio', Icons.home_rounded, onInicioPressed),
-    _NavItem('Soluciones', Icons.auto_awesome_rounded, onSolucionesPressed),
-    _NavItem('Seguridad', Icons.shield_rounded, onSeguridadPressed),
-    _NavItem('Contacto', Icons.mail_rounded, onContactoPressed),
-  ];
+  @override
+  State<CustomNavbar> createState() => _CustomNavbarState();
+}
+
+class _NavEntry {
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+  const _NavEntry(this.label, this.icon, this.onTap);
+}
+
+class _CustomNavbarState extends State<CustomNavbar> {
+  bool _menuOpen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.scrollProgressListenable?.addListener(_handleProgressChange);
+  }
+
+  @override
+  void dispose() {
+    widget.scrollProgressListenable?.removeListener(_handleProgressChange);
+    super.dispose();
+  }
+
+  void _handleProgressChange() {
+    // Conserva el cierre automático del menú móvil al hacer scroll.
+    if (_menuOpen && mounted) setState(() => _menuOpen = false);
+  }
+
+  @override
+  void didUpdateWidget(covariant CustomNavbar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.scrollProgressListenable != widget.scrollProgressListenable) {
+      oldWidget.scrollProgressListenable?.removeListener(_handleProgressChange);
+      widget.scrollProgressListenable?.addListener(_handleProgressChange);
+    }
+    // Si la persona hace scroll con el menú abierto, se cierra solo.
+    if (_menuOpen && oldWidget.scrollProgress != widget.scrollProgress) {
+      _menuOpen = false;
+    }
+  }
+
+  void _run(VoidCallback action) {
+    setState(() => _menuOpen = false);
+    action();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final bool isDesktop = MediaQuery.of(context).size.width > 800;
+    final width = MediaQuery.sizeOf(context).width;
+    final isDesktop = width >= 1140;
+    final showIcons = width >= 1300;
+    final outer = width >= 850 ? 40.0 : 14.0;
+    final scrolled = widget.isScrolled;
+    final menuOpen = _menuOpen && !isDesktop;
 
-    return Stack(
+    final items = <_NavEntry>[
+      _NavEntry('Inicio', Icons.home_rounded, widget.onInicioPressed),
+      _NavEntry(
+        'Soluciones',
+        Icons.layers_outlined,
+        widget.onSolucionesPressed,
+      ),
+      _NavEntry('Seguridad', Icons.shield_outlined, widget.onSeguridadPressed),
+      _NavEntry(
+        'Contacto',
+        Icons.mail_outline_rounded,
+        widget.onContactoPressed,
+      ),
+    ];
+
+    final bar = Row(
       children: [
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeOut,
-          width: double.infinity,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: const Border(
-              bottom: BorderSide(color: Color(0xFFE2E8F0), width: 1.0),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: isScrolled ? 0.08 : 0.03),
-                blurRadius: isScrolled ? 18 : 6,
-                offset: Offset(0, isScrolled ? 6 : 2),
-              ),
-            ],
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1280),
+        _Brand(onTap: widget.onInicioPressed, compact: width < 420),
+        if (isDesktop) ...[
+          const SizedBox(width: 24),
+          const _VDivider(),
+          const SizedBox(width: 12),
+          Expanded(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Logo e Identidad EduPago (con hover que agranda logo + texto)
-                  _LogoBrand(onTap: onInicioPressed),
-
-                  // Menú Navegación Fijo (desktop) con iconos + hover + estado activo
-                  if (isDesktop)
-                    Row(
-                      children: _navItems
-                          .map(
-                            (item) => _NavLink(
-                              title: item.title,
-                              icon: item.icon,
-                              onTap: item.onTap,
-                              isActive: activeLink == item.title,
-                            ),
-                          )
-                          .toList(),
-                    ),
-
-                  // Botones de Acción (desktop) / Menú hamburguesa (mobile)
-                  if (isDesktop)
-                    Row(
-                      children: [
-                        _HoverTextButton(
-                          icon: Icons.login_rounded,
-                          label: 'Iniciar sesión',
-                          onTap: onLoginPressed,
-                        ),
-                        const SizedBox(width: 12),
-                        _GlowingRegisterButton(onTap: onRegisterPressed),
-                      ],
-                    )
-                  else
-                    _MobileMenu(
-                      navItems: _navItems,
-                      activeLink: activeLink,
-                      onLoginPressed: onLoginPressed,
-                      onRegisterPressed: onRegisterPressed,
+                  for (final e in items)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 3),
+                      child: _NavItem(
+                        label: e.label,
+                        icon: e.icon,
+                        showIcon: showIcons,
+                        selected: widget.activeLink == e.label,
+                        onTap: e.onTap,
+                      ),
                     ),
                 ],
               ),
             ),
           ),
-        ),
-        // Barra de progreso de lectura
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: 3,
-          child: IgnorePointer(
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: FractionallySizedBox(
-                widthFactor: scrollProgress.clamp(0.0, 1.0).toDouble(),
-                child: const DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [AppColors.primaryBlue, Color(0xFF60A5FA)],
-                    ),
-                  ),
-                  child: SizedBox.expand(),
-                ),
+          const SizedBox(width: 12),
+          const _VDivider(),
+          const SizedBox(width: 16),
+          _OutlinedAction(
+            label: 'Iniciar sesión',
+            icon: Icons.login_rounded,
+            showIcon: showIcons,
+            onTap: widget.onLoginPressed,
+          ),
+          const SizedBox(width: 10),
+          _PrimaryAction(onTap: widget.onRegisterPressed),
+        ] else ...[
+          const Spacer(),
+          _MenuButton(
+            open: menuOpen,
+            onTap: () => setState(() => _menuOpen = !_menuOpen),
+          ),
+        ],
+      ],
+    );
+
+    final pill = AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOutCubic,
+      height: scrolled ? 62.0 : 72.0,
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(40),
+        border: Border.all(color: const Color(0xFFE3ECFA)),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.darkNavy.withValues(alpha: scrolled ? 0.14 : 0.08),
+            blurRadius: scrolled ? 28 : 20,
+            offset: const Offset(0, 9),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(40),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: isDesktop ? 26 : 16),
+                child: bar,
               ),
             ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: 3,
+              child: widget.scrollProgressListenable == null
+                  ? _ProgressLine(progress: widget.scrollProgress)
+                  : ValueListenableBuilder<double>(
+                      valueListenable: widget.scrollProgressListenable!,
+                      builder: (context, progress, _) =>
+                          _ProgressLine(progress: progress),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(outer, 12, outer, 0),
+      child: Align(
+        alignment: Alignment.topCenter,
+        heightFactor: 1,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1630),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              pill,
+              if (menuOpen)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: _MobilePanel(
+                    items: items,
+                    activeLink: widget.activeLink,
+                    onSelect: _run,
+                    onLoginPressed: widget.onLoginPressed,
+                    onRegisterPressed: widget.onRegisterPressed,
+                  ),
+                ),
+            ],
           ),
         ),
-      ],
+      ),
     );
   }
 }
 
-class _NavItem {
-  final String title;
-  final IconData icon;
-  final VoidCallback onTap;
-
-  _NavItem(this.title, this.icon, this.onTap);
-}
-
-/// Logo + nombre "EduPago": al pasar el mouse, ambos se agrandan levemente;
-/// al hacer clic, redirige a Inicio vía [onTap].
-class _LogoBrand extends StatefulWidget {
-  final VoidCallback onTap;
-
-  const _LogoBrand({required this.onTap});
+class _VDivider extends StatelessWidget {
+  const _VDivider();
 
   @override
-  State<_LogoBrand> createState() => _LogoBrandState();
+  Widget build(BuildContext context) =>
+      Container(width: 1, height: 32, color: const Color(0xFFD5E2F5));
 }
 
-class _LogoBrandState extends State<_LogoBrand> {
+class _Brand extends StatelessWidget {
+  final VoidCallback onTap;
+  final bool compact;
+  const _Brand({required this.onTap, required this.compact});
+
   @override
-  Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.onTap,
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label: 'EduPago, ir al inicio',
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(30),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Logo con sombra suave (sin efectos de hover).
-            SizedBox(
-              width: 54,
-              height: 54,
-              child: Stack(
-                alignment: Alignment.center,
-                clipBehavior: Clip.none,
-                children: [
-                  Positioned(
-                    top: 8,
-                    child: ImageFiltered(
-                      imageFilter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-                      child: Opacity(
-                        opacity: 0.28,
-                        child: Image.asset(
-                          'assets/images/logo_edupago.png',
-                          width: 48,
-                          height: 48,
-                          color: Colors.black,
-                          fit: BoxFit.contain,
-                        ),
-                      ),
-                    ),
-                  ),
-                  Image.asset(
-                    'assets/images/logo_edupago.png',
-                    width: 62,
-                    height: 62,
-                    fit: BoxFit.contain,
-                  ),
-                ],
+            Image.asset(
+              'assets/images/logo_edupago.png',
+              width: compact ? 40 : 45,
+              height: 45,
+              fit: BoxFit.contain,
+              errorBuilder: (_, __, ___) => const Icon(
+                Icons.school_rounded,
+                color: AppColors.primaryBlue,
+                size: 36,
               ),
             ),
-            const SizedBox(width: 10),
-            RichText(
-              text: TextSpan(
-                style: TextStyle(
-                  fontFamily: Theme.of(
-                    context,
-                  ).textTheme.bodyMedium?.fontFamily,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: -0.5,
-                ),
+            const SizedBox(width: 7),
+            Text.rich(
+              const TextSpan(
                 children: [
                   TextSpan(
                     text: 'Edu',
@@ -225,386 +287,371 @@ class _LogoBrandState extends State<_LogoBrand> {
                   ),
                 ],
               ),
+              style: TextStyle(
+                fontSize: compact ? 21 : 24,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -0.9,
+              ),
             ),
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
 }
 
-/// Link de navegación con icono, hover y estado activo.
-class _NavLink extends StatefulWidget {
-  final String title;
-  final IconData icon;
-  final VoidCallback onTap;
-  final bool isActive;
-
-  const _NavLink({
-    required this.title,
-    required this.icon,
-    required this.onTap,
-    this.isActive = false,
-  });
-
-  @override
-  State<_NavLink> createState() => _NavLinkState();
-}
-
-class _NavLinkState extends State<_NavLink> {
-  bool _isHovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final bool highlighted = widget.isActive || _isHovered;
-    final Color fgColor = highlighted
-        ? AppColors.primaryBlue
-        : AppColors.darkNavy;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _isHovered = true),
-        onExit: (_) => setState(() => _isHovered = false),
-        child: GestureDetector(
-          onTap: widget.onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 280),
-            curve: Curves.easeOutCubic,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            transform: Matrix4.translationValues(0, _isHovered ? -2.5 : 0, 0),
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(widget.icon, size: 16, color: fgColor),
-                    const SizedBox(width: 6),
-                    Text(
-                      widget.title,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: fgColor,
-                      ),
-                    ),
-                  ],
-                ),
-                // Subrayado que crece desde el centro (hover / link activo)
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: -6,
-                  child: Center(
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 250),
-                      curve: Curves.easeOutCubic,
-                      width: widget.isActive ? 26 : 0,
-                      height: 2.5,
-                      decoration: BoxDecoration(
-                        color: AppColors.primaryBlue,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// "Iniciar sesión" con icono y hover sutil.
-class _HoverTextButton extends StatefulWidget {
-  final IconData icon;
+class _NavItem extends StatelessWidget {
   final String label;
+  final IconData icon;
+  final bool selected;
+  final bool showIcon;
   final VoidCallback onTap;
-
-  const _HoverTextButton({
-    required this.icon,
+  const _NavItem({
     required this.label,
+    required this.icon,
+    required this.selected,
+    required this.showIcon,
     required this.onTap,
   });
 
   @override
-  State<_HoverTextButton> createState() => _HoverTextButtonState();
-}
-
-class _HoverTextButtonState extends State<_HoverTextButton> {
-  bool _isHovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final Color fgColor = _isHovered
-        ? AppColors.primaryBlue
-        : AppColors.darkNavy;
-
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 280),
-          curve: Curves.easeOutCubic,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          transform: Matrix4.translationValues(0, _isHovered ? -2.5 : 0, 0),
-          child: Stack(
-            clipBehavior: Clip.none,
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    selected: selected,
+    label: label,
+    child: _HoverSurface(
+      onTap: onTap,
+      hoverScale: 1, // Links estables: sin salto ni reentrada del puntero.
+      builder: (hovered) {
+        final color = selected || hovered
+            ? AppColors.primaryBlue
+            : AppColors.darkNavy;
+        return Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: showIcon ? 14 : 16,
+            vertical: 11,
+          ),
+          decoration: BoxDecoration(
+            // Solo la sección activa tiene fondo. Hover = color de texto/icono.
+            color: selected ? const Color(0xFFE5F0FF) : Colors.transparent,
+            borderRadius: BorderRadius.circular(30),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(widget.icon, size: 16, color: fgColor),
-                  const SizedBox(width: 6),
-                  Text(
-                    widget.label,
-                    style: TextStyle(
-                      color: fgColor,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-              // Mismo subrayado animado que los links del menú
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: -6,
-                child: Center(
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 250),
-                    curve: Curves.easeOutCubic,
-                    width: _isHovered ? 26 : 0,
-                    height: 2.5,
-                    decoration: BoxDecoration(
-                      color: AppColors.primaryBlue,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
+              if (showIcon) ...[
+                Icon(icon, size: 20, color: color),
+                const SizedBox(width: 8),
+              ],
+              Text(
+                label,
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: color,
+                  fontSize: 13.5,
                 ),
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
+        );
+      },
+    ),
+  );
 }
 
-/// Botón "Crear cuenta" con glow sutil que se intensifica en hover.
-class _GlowingRegisterButton extends StatefulWidget {
+class _OutlinedAction extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool showIcon;
+  final bool expand;
   final VoidCallback onTap;
-
-  const _GlowingRegisterButton({required this.onTap});
-
-  @override
-  State<_GlowingRegisterButton> createState() => _GlowingRegisterButtonState();
-}
-
-class _GlowingRegisterButtonState extends State<_GlowingRegisterButton> {
-  bool _isHovered = false;
-  bool _isPressed = false;
+  const _OutlinedAction({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    this.showIcon = true,
+    this.expand = false,
+  });
 
   @override
-  Widget build(BuildContext context) {
-    final radius = BorderRadius.circular(10);
-
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() {
-        _isHovered = false;
-        _isPressed = false;
-      }),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        onTapDown: (_) => setState(() => _isPressed = true),
-        onTapUp: (_) => setState(() => _isPressed = false),
-        onTapCancel: () => setState(() => _isPressed = false),
-        child: AnimatedScale(
-          scale: _isPressed ? 0.97 : 1.0,
-          duration: const Duration(milliseconds: 120),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 280),
-            curve: Curves.easeOutCubic,
-            transform: Matrix4.translationValues(0, _isHovered ? -3 : 0, 0),
-            decoration: BoxDecoration(
-              borderRadius: radius,
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: _isHovered
-                    ? const [Color(0xFF3B82F6), Color(0xFF1D4ED8)]
-                    : [AppColors.primaryBlue, AppColors.primaryBlue],
-              ),
-            ),
-            child: ClipRRect(
-              borderRadius: radius,
-              child: Stack(
-                children: [
-                  // Brillo que cruza el botón al pasar el mouse
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: TweenAnimationBuilder<double>(
-                        tween: Tween<double>(begin: 0, end: _isHovered ? 1 : 0),
-                        duration: const Duration(milliseconds: 700),
-                        curve: Curves.easeInOut,
-                        builder: (context, t, _) {
-                          return FractionallySizedBox(
-                            alignment: Alignment.centerLeft,
-                            widthFactor: 0.35,
-                            child: FractionalTranslation(
-                              translation: Offset(-1 + 4 * t, 0),
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      Colors.white.withValues(alpha: 0),
-                                      Colors.white.withValues(alpha: 0.28),
-                                      Colors.white.withValues(alpha: 0),
-                                    ],
-                                  ),
-                                ),
-                                child: const SizedBox.expand(),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 16,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text(
-                          'Crear cuenta',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        AnimatedSlide(
-                          offset: Offset(_isHovered ? 0.4 : 0, 0),
-                          duration: const Duration(milliseconds: 250),
-                          curve: Curves.easeOutCubic,
-                          child: const Icon(
-                            Icons.arrow_forward,
-                            size: 16,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+  Widget build(BuildContext context) => _HoverSurface(
+    onTap: onTap,
+    hoverScale: expand ? 1 : 1.025,
+    builder: (hovered) => AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: hovered ? AppColors.primaryBlue : const Color(0xFFB2C7E9),
+        ),
+        borderRadius: BorderRadius.circular(30),
+        color: hovered ? const Color(0xFFF1F7FF) : Colors.white,
+      ),
+      child: Row(
+        mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          if (showIcon) ...[
+            Icon(icon, size: 19, color: AppColors.darkNavy),
+            const SizedBox(width: 8),
+          ],
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppColors.darkNavy,
+              fontWeight: FontWeight.w800,
+              fontSize: 13.5,
             ),
           ),
-        ),
+        ],
       ),
-    );
-  }
+    ),
+  );
 }
 
-/// Menú hamburguesa para mobile: antes los links de navegación simplemente
-/// desaparecían en pantallas angostas sin ninguna forma de acceder a ellos.
-class _MobileMenu extends StatelessWidget {
-  final List<_NavItem> navItems;
+class _PrimaryAction extends StatelessWidget {
+  final VoidCallback onTap;
+  final bool expand;
+  const _PrimaryAction({required this.onTap, this.expand = false});
+
+  @override
+  Widget build(BuildContext context) => _HoverSurface(
+    onTap: onTap,
+    hoverScale: expand ? 1 : 1.025,
+    builder: (hovered) => AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+      decoration: BoxDecoration(
+        color: hovered ? AppColors.primaryDark : AppColors.primaryBlue,
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primaryBlue.withValues(
+              alpha: hovered ? 0.30 : 0.16,
+            ),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            'Crear cuenta',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+              fontSize: 13.5,
+            ),
+          ),
+          SizedBox(width: 10),
+          Icon(Icons.arrow_forward_rounded, size: 19, color: Colors.white),
+        ],
+      ),
+    ),
+  );
+}
+
+class _HoverSurface extends StatefulWidget {
+  final VoidCallback onTap;
+  final Widget Function(bool hovered) builder;
+  final double hoverScale;
+  const _HoverSurface({
+    required this.onTap,
+    required this.builder,
+    this.hoverScale = 1.025,
+  });
+
+  @override
+  State<_HoverSurface> createState() => _HoverSurfaceState();
+}
+
+class _HoverSurfaceState extends State<_HoverSurface> {
+  bool hovered = false;
+
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+    cursor: SystemMouseCursors.click,
+    onEnter: (_) => setState(() => hovered = true),
+    onExit: (_) => setState(() => hovered = false),
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: widget.onTap,
+      // Sin overlay, splash ni highlight Material: elimina el flash gris.
+      child: AnimatedScale(
+        duration: const Duration(milliseconds: 180),
+        scale: hovered ? widget.hoverScale : 1,
+        child: widget.builder(hovered),
+      ),
+    ),
+  );
+}
+
+class _MenuButton extends StatelessWidget {
+  final bool open;
+  final VoidCallback onTap;
+  const _MenuButton({required this.open, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label: open ? 'Cerrar menú' : 'Abrir menú',
+    child: _HoverSurface(
+      onTap: onTap,
+      hoverScale: 1,
+      builder: (hovered) => AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        width: 46,
+        height: 46,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: open || hovered
+              ? const Color(0xFFE5F0FF)
+              : const Color(0xFFF1F6FF),
+        ),
+        child: Icon(
+          open ? Icons.close_rounded : Icons.menu_rounded,
+          color: AppColors.darkNavy,
+          size: 25,
+        ),
+      ),
+    ),
+  );
+}
+
+class _MobilePanel extends StatelessWidget {
+  final List<_NavEntry> items;
   final String? activeLink;
+  final void Function(VoidCallback action) onSelect;
   final VoidCallback onLoginPressed;
   final VoidCallback onRegisterPressed;
 
-  const _MobileMenu({
-    required this.navItems,
+  const _MobilePanel({
+    required this.items,
     required this.activeLink,
+    required this.onSelect,
     required this.onLoginPressed,
     required this.onRegisterPressed,
   });
 
   @override
-  Widget build(BuildContext context) {
-    return PopupMenuButton<VoidCallback>(
-      tooltip: 'Abrir menú',
-      icon: const Icon(Icons.menu_rounded, color: AppColors.darkNavy),
-      offset: const Offset(0, 48),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      onSelected: (callback) => callback(),
-      itemBuilder: (context) => [
-        for (final item in navItems)
-          PopupMenuItem<VoidCallback>(
-            value: item.onTap,
-            child: Row(
-              children: [
-                Icon(
-                  item.icon,
-                  size: 18,
-                  color: activeLink == item.title
-                      ? AppColors.primaryBlue
-                      : AppColors.textMuted,
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  item.title,
-                  style: TextStyle(
-                    fontWeight: activeLink == item.title
-                        ? FontWeight.w700
-                        : FontWeight.w500,
-                    color: activeLink == item.title
-                        ? AppColors.primaryBlue
-                        : AppColors.darkNavy,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        const PopupMenuItem<VoidCallback>(enabled: false, child: Divider()),
-        PopupMenuItem<VoidCallback>(
-          value: onLoginPressed,
-          child: const Row(
-            children: [
-              Icon(Icons.login_rounded, size: 18, color: AppColors.textMuted),
-              SizedBox(width: 12),
-              Text(
-                'Iniciar sesión',
-                style: TextStyle(color: AppColors.darkNavy),
-              ),
-            ],
-          ),
-        ),
-        PopupMenuItem<VoidCallback>(
-          value: onRegisterPressed,
-          child: Row(
-            children: [
-              const Icon(
-                Icons.person_add_alt_1_rounded,
-                size: 18,
-                color: AppColors.primaryBlue,
-              ),
-              const SizedBox(width: 12),
-              Text(
-                'Crear cuenta',
-                style: TextStyle(
-                  color: AppColors.primaryBlue,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(28),
+      border: Border.all(color: const Color(0xFFE3ECFA)),
+      boxShadow: [
+        BoxShadow(
+          color: AppColors.darkNavy.withValues(alpha: 0.12),
+          blurRadius: 28,
+          offset: const Offset(0, 12),
         ),
       ],
-    );
-  }
+    ),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final e in items)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: _PanelRow(
+              entry: e,
+              selected: activeLink == e.label,
+              onTap: () => onSelect(e.onTap),
+            ),
+          ),
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+          child: Divider(height: 1, color: Color(0xFFE3ECFA)),
+        ),
+        _OutlinedAction(
+          label: 'Iniciar sesión',
+          icon: Icons.login_rounded,
+          expand: true,
+          onTap: () => onSelect(onLoginPressed),
+        ),
+        const SizedBox(height: 8),
+        _PrimaryAction(expand: true, onTap: () => onSelect(onRegisterPressed)),
+      ],
+    ),
+  );
+}
+
+class _PanelRow extends StatelessWidget {
+  final _NavEntry entry;
+  final bool selected;
+  final VoidCallback onTap;
+  const _PanelRow({
+    required this.entry,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    selected: selected,
+    label: entry.label,
+    child: _HoverSurface(
+      onTap: onTap,
+      hoverScale: 1,
+      builder: (hovered) {
+        final color = selected || hovered
+            ? AppColors.primaryBlue
+            : AppColors.darkNavy;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: selected
+                ? const Color(0xFFE5F0FF)
+                : hovered
+                ? const Color(0xFFF1F6FF)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(
+            children: [
+              Icon(entry.icon, size: 21, color: color),
+              const SizedBox(width: 14),
+              Text(
+                entry.label,
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 15,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    ),
+  );
+}
+
+/// La barra se repinta sin reconstruir enlaces, logo ni botones.
+class _ProgressLine extends StatelessWidget {
+  const _ProgressLine({required this.progress});
+
+  final double progress;
+
+  @override
+  Widget build(BuildContext context) => RepaintBoundary(
+    child: FractionallySizedBox(
+      alignment: Alignment.centerLeft,
+      widthFactor: progress.clamp(0.0, 1.0).toDouble(),
+      child: const DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [AppColors.primaryBlue, Color(0xFF61B9FF)],
+          ),
+        ),
+      ),
+    ),
+  );
 }
