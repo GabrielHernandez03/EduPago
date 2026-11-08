@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../main.dart';
+import '../widgets/auth_shared_widgets.dart';
 import 'login_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -53,7 +54,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // Contraseña: causa concreta de rechazo
   bool _showPasswordErrors = false;
   String? _passwordServerError;
-  bool _isLogoHovered = false;
+
+  // Pestaña superior (0 = Registro, 1 = Iniciar sesión)
+  int _authTab = 0;
+  bool _leavingToLogin = false;
 
   // Paso 2: Inputs y FocusNodes para navegación con Enter
   final _nombresController = TextEditingController();
@@ -609,6 +613,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
+  // Deja que la pastilla termine de deslizarse y luego pasa a Login con fundido.
+  void _onAuthTabChanged(int index) {
+    if (index == 0 || _leavingToLogin) return;
+    _leavingToLogin = true;
+    setState(() => _authTab = 1);
+    Future.delayed(const Duration(milliseconds: 200), () {
+      if (!mounted) return;
+      Navigator.pushReplacement(context, authFadeRoute(const LoginScreen()));
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final double screenWidth = MediaQuery.of(context).size.width;
@@ -621,325 +636,59 @@ class _RegisterScreenState extends State<RegisterScreen> {
           if (isDesktop)
             Expanded(
               flex: 5,
-              child: Container(
-                color: AppColors.darkNavy,
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: Opacity(
-                        opacity: 0.15,
-                        child: Image.asset(
-                          'assets/images/register_img1.webp',
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.all(60.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          MouseRegion(
-                            onEnter: (_) =>
-                                setState(() => _isLogoHovered = true),
-                            onExit: (_) =>
-                                setState(() => _isLogoHovered = false),
-                            cursor: SystemMouseCursors.click,
-                            child: GestureDetector(
-                              onTap: () => Navigator.pop(context),
-                              child: AnimatedScale(
-                                scale: _isLogoHovered ? 1.05 : 1.0,
-                                duration: const Duration(milliseconds: 200),
-                                curve: Curves.easeInOut,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.all(8),
-                                      decoration: BoxDecoration(
-                                        gradient: LinearGradient(
-                                          colors: [
-                                            Colors.white.withValues(
-                                              alpha: _isLogoHovered
-                                                  ? 0.22
-                                                  : 0.15,
-                                            ),
-                                            AppColors.primaryBlue.withValues(
-                                              alpha: _isLogoHovered
-                                                  ? 0.55
-                                                  : 0.4,
-                                            ),
-                                          ],
-                                          begin: Alignment.topLeft,
-                                          end: Alignment.bottomRight,
-                                        ),
-                                        borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(
-                                          color: Colors.white.withValues(
-                                            alpha: _isLogoHovered ? 0.35 : 0.2,
-                                          ),
-                                        ),
-                                      ),
-                                      child: Image.asset(
-                                        'assets/images/logo_edupago.png',
-                                        width: 46,
-                                        height: 46,
-                                        fit: BoxFit.contain,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    RichText(
-                                      text: TextSpan(
-                                        style: TextStyle(
-                                          fontFamily: Theme.of(
-                                            context,
-                                          ).textTheme.bodyMedium?.fontFamily,
-                                          fontSize: 22,
-                                          fontWeight: FontWeight.w900,
-                                          letterSpacing: -0.5,
-                                          decoration: TextDecoration.none,
-                                        ),
-                                        children: [
-                                          const TextSpan(
-                                            text: 'Edu',
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                            ),
-                                          ),
-                                          TextSpan(
-                                            text: 'Pago',
-                                            style: TextStyle(
-                                              color: AppColors.primaryBlue,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Registrate Ahora!',
-                                style: TextStyle(
-                                  color: AppColors.primaryBlue,
-                                  fontSize: 48,
-                                  height: 0.8,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 22),
-                              const Text(
-                                '¿Tu familia ya forma parte de\nnuestra comunidad?',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 28,
-                                  fontWeight: FontWeight.bold,
-                                  height: 1.2,
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'Activa tu acceso con la cédula previamente registrada por la\ninstitución y gestiona todo desde un solo lugar.',
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.7),
-                                  fontSize: 15,
-                                  height: 1.5,
-                                ),
-                              ),
-                              const SizedBox(height: 32),
-                              _buildFeatureItem(
-                                Icons.verified_user_outlined,
-                                'Identidad pre-validada',
-                              ),
-                              _buildFeatureItem(
-                                Icons.people_outline,
-                                'Hijos vinculados automáticamente',
-                              ),
-                              _buildFeatureItem(
-                                Icons.lock_outline,
-                                'Acceso seguro y privado',
-                              ),
-                            ],
-                          ),
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.shield_outlined,
-                                color: Colors.white54,
-                                size: 16,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Protección de datos y acceso basado en identidad',
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.6),
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+              child: AuthBrandPanel(
+                imageAsset: 'assets/images/register_img1.webp',
+                onLogoTap: () => Navigator.pop(context),
+                headline: 'Registrate Ahora!',
+                subtitle: '¿Tu familia ya forma parte de\nnuestra comunidad?',
+                description:
+                    'Activa tu acceso con la cédula previamente registrada por la institución y gestiona todo desde un solo lugar.',
+                features: const [
+                  AuthFeature(
+                    Icons.verified_user_outlined,
+                    'Identidad pre-validada',
+                  ),
+                  AuthFeature(
+                    Icons.people_outline,
+                    'Hijos vinculados automáticamente',
+                  ),
+                  AuthFeature(Icons.lock_outline, 'Acceso seguro y privado'),
+                ],
+                footnote: 'Protección de datos y acceso basado en identidad',
               ),
             ),
           Expanded(
-            flex: 6,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 30),
-              child: Center(
-                child: Container(
-                  constraints: const BoxConstraints(maxWidth: 440),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: TextButton.icon(
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(
-                            Icons.arrow_back,
-                            size: 16,
-                            color: AppColors.textMuted,
-                          ),
-                          label: const Text(
-                            'Volver al inicio',
-                            style: TextStyle(
-                              color: AppColors.textMuted,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (_currentStep == 1) ...[
-                        const SizedBox(height: 20),
-                        Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: AppColors.backgroundLight,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: AppColors.cardBorder),
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 10,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(8),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withValues(
-                                          alpha: 0.05,
-                                        ),
-                                        blurRadius: 4,
-                                        offset: const Offset(0, 2),
-                                      ),
-                                    ],
-                                  ),
-                                  child: const Center(
-                                    child: Text(
-                                      'Formulario de Registro',
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.bold,
-                                        color: AppColors.primaryBlue,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              Expanded(
-                                child: GestureDetector(
-                                  onTap: () {
-                                    Navigator.pushReplacement(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) =>
-                                            const LoginScreen(),
-                                      ),
-                                    );
-                                  },
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 10,
-                                    ),
-                                    color: Colors.transparent,
-                                    child: const Center(
-                                      child: Text(
-                                        'Iniciar Sesión',
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w500,
-                                          color: AppColors.textMuted,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 32),
-                      if (_currentStep == 1)
-                        _buildStep1Widget()
-                      else
-                        _buildStep2Widget(),
-                      const SizedBox(height: 36),
-                      const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.lock_outline,
-                                size: 13,
-                                color: AppColors.textMuted,
-                              ),
-                              SizedBox(width: 4),
-                              Text(
-                                'Conexión Encriptada TLS 1.3',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: AppColors.textMuted,
-                                ),
-                              ),
-                            ],
-                          ),
-                          SizedBox(width: 16),
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.shield_outlined,
-                                size: 13,
-                                color: AppColors.textMuted,
-                              ),
-                              SizedBox(width: 4),
-                              Text(
-                                'Datos protegidos',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: AppColors.textMuted,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ],
+            flex: 5,
+            child: AuthFormPanel(
+              isDesktop: isDesktop,
+              onBack: () => Navigator.pop(context),
+              // AnimatedSize suaviza el cambio de altura de la tarjeta y
+              // AnimatedSwitcher hace el fundido + desplazamiento entre pasos.
+              child: AnimatedSize(
+                duration: const Duration(milliseconds: 380),
+                curve: Curves.easeInOutCubic,
+                alignment: Alignment.topCenter,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 320),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeIn,
+                  layoutBuilder: (current, previous) => Stack(
+                    alignment: Alignment.topCenter,
+                    children: [...previous, if (current != null) current],
+                  ),
+                  transitionBuilder: (child, animation) => FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0.03, 0),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: child,
+                    ),
+                  ),
+                  child: KeyedSubtree(
+                    key: ValueKey<int>(_currentStep),
+                    child: _buildStepContent(),
                   ),
                 ),
               ),
@@ -947,6 +696,30 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  // Contenido de la tarjeta según el paso actual.
+  Widget _buildStepContent() {
+    if (_currentStep != 1) return _buildStep2Widget();
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        AuthSegmentedSelector(
+          segments: const [
+            AuthSegment(
+              label: 'Formulario de Registro',
+              color: AppColors.primaryBlue,
+            ),
+            AuthSegment(label: 'Iniciar Sesión', color: AppColors.primaryBlue),
+          ],
+          selectedIndex: _authTab,
+          onChanged: _onAuthTabChanged,
+        ),
+        const SizedBox(height: 28),
+        _buildStep1Widget(),
+      ],
     );
   }
 
@@ -1870,26 +1643,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),
         borderSide: const BorderSide(color: AppColors.primaryBlue, width: 1.5),
-      ),
-    );
-  }
-
-  Widget _buildFeatureItem(IconData icon, String text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Row(
-        children: [
-          Icon(icon, color: Colors.white70, size: 20),
-          const SizedBox(width: 12),
-          Text(
-            text,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
       ),
     );
   }
