@@ -16,6 +16,7 @@ import '../../../students/presentation/widgets/students_import_card.dart';
 import '../../../students/presentation/widgets/admin_students_section.dart';
 import '../../../payments/presentation/widgets/payment_reconciliation_widget.dart';
 import '../../../billing/presentation/widgets/generate_billing_dialog.dart';
+import '../../../billing/presentation/widgets/concepts_dialog.dart';
 
 import '../../../../core/widgets/dashboard_shell.dart';
 import '../../../../core/widgets/skeleton_loader.dart';
@@ -75,7 +76,8 @@ class _PagoRow {
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final BcvService _bcvService = BcvService();
-  final AdminDashboardRepository _adminRepository = SupabaseAdminDashboardRepository();
+  final AdminDashboardRepository _adminRepository =
+      SupabaseAdminDashboardRepository();
 
   static const _navItems = <DashboardNavItem>[
     DashboardNavItem(Icons.home_outlined, Icons.home, 'Resumen'),
@@ -1192,7 +1194,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return _card(
       padding: const EdgeInsets.all(12),
       child: _grid(
-        wideCols: 4,
+        wideCols: 5,
         narrowCols: 2,
         gap: 12,
         items: [
@@ -1219,6 +1221,28 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   ),
                 );
               }
+            },
+          ),
+          _quickTile(
+            leading: const Icon(
+              Icons.tune_outlined,
+              color: AppColors.primaryBlue,
+              size: 18,
+            ),
+            leadingBg: const Color(0xFFDBEAFE),
+            title: 'Configurar conceptos de cobro',
+            subtitle: 'Montos y vencimientos',
+            bg: Colors.white,
+            border: AppColors.cardBorder,
+            titleColor: AppColors.darkNavy,
+            subColor: AppColors.textMuted,
+            onTap: () {
+              final colegioId = _colegioId;
+              if (colegioId == null) return;
+              showDialog<bool>(
+                context: context,
+                builder: (_) => ConceptsDialog(colegioId: colegioId),
+              );
             },
           ),
           _quickTile(

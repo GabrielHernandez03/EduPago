@@ -85,32 +85,9 @@ class SupabaseBillingRepository implements BillingRepository {
 
       final result = BillingResult.fromRpcResponse(response);
 
-      // 6. Registrar auditoría.
-      //
-      // Esta operación puede requerir permisos RLS.
-      // Si falla, se registra la advertencia.
-      try {
-        await client.from('auditoria').insert({
-          'colegio_id': request.colegioId,
-          'usuario_id': currentUser.id,
-          'accion': 'GENERACION_CUOTAS_MENSUALES',
-          'tabla': 'cuotas',
-          'registro_id': request.periodo,
-          'datos_despues': {
-            'periodo': request.periodo,
-            'concepto': request.concepto,
-            'monto_usd': request.montoUsd,
-            'cuotas_generadas': result.generadas,
-            'cuotas_omitidas': result.omitidas,
-            'estudiantes_activos': result.activos,
-          },
-        });
-      } catch (auditError) {
-        debugPrint(
-          'Advertencia: No se pudo guardar '
-          'la auditoría: $auditError',
-        );
-      }
+      // 6. La auditoría la registra la propia función SQL
+      // `generar_facturacion` dentro de la misma transacción.
+      // El cliente no inserta en `auditoria` (evita duplicados y fallos RLS).
 
       return result;
     } on PostgrestException catch (error) {

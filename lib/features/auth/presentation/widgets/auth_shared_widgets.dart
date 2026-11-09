@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
+import 'package:flutter/services.dart' show TextInputFormatter;
 import '../../../../core/theme/app_colors.dart';
 
 /// Transición con fundido para pasar entre Login <-> Registro.
@@ -454,7 +455,7 @@ class AuthFormPanel extends StatefulWidget {
     required this.onBack,
     required this.child,
     this.isDesktop = true,
-    this.maxWidth = 600, // 640 - 2*32 de padding = 576 de contenido útil
+    this.maxWidth = 640, // 640 - 2*32 de padding = 576 de contenido útil
   });
 
   final VoidCallback onBack;
@@ -535,7 +536,15 @@ class _AuthFormPanelState extends State<AuthFormPanel> {
                       children: [
                         AuthBackLink(onTap: widget.onBack),
                         const SizedBox(height: 14),
-                        SizedBox(width: double.infinity, child: widget.child),
+                        SizedBox(
+                          width: double.infinity,
+                          child: AnimatedSize(
+                            duration: const Duration(milliseconds: 220),
+                            curve: Curves.easeOutCubic,
+                            alignment: Alignment.topCenter,
+                            child: widget.child,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -826,6 +835,7 @@ class LiquidSegmentedSelector extends StatefulWidget {
     required this.onChanged,
     this.height = 50,
     this.trackColor = AppColors.backgroundLight,
+    this.hasError = false,
   });
 
   final List<AuthSegment> segments;
@@ -833,6 +843,7 @@ class LiquidSegmentedSelector extends StatefulWidget {
   final ValueChanged<int> onChanged;
   final double height;
   final Color trackColor;
+  final bool hasError;
 
   @override
   State<LiquidSegmentedSelector> createState() =>
@@ -1004,7 +1015,9 @@ class _LiquidSegmentedSelectorState extends State<LiquidSegmentedSelector>
           decoration: BoxDecoration(
             color: widget.trackColor,
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: AppColors.cardBorder),
+            border: Border.all(
+              color: widget.hasError ? kAuthError : AppColors.cardBorder,
+            ),
           ),
           child: LayoutBuilder(
             builder: (context, c) {
@@ -1134,4 +1147,343 @@ class _PathClipper extends CustomClipper<Path> {
 
   @override
   bool shouldReclip(covariant _PathClipper oldClipper) => true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Campos de texto y mensajes de error (compartidos por Login y Registro)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Rojo de error: borde del campo y mensaje debajo.
+const Color kAuthError = Color(0xFFDC2626);
+const Color _kAuthSuccessText = Color(0xFF15803D);
+
+/// Correo: formato real (RFC 5322 práctico), con subdominios.
+final RegExp kAuthEmailRegex = RegExp(
+  r"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*"
+  r"@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}$",
+);
+
+const TextStyle _kFieldMessageStyle = TextStyle(
+  color: kAuthError,
+  fontSize: 11.5,
+  height: 1.25,
+  fontWeight: FontWeight.w500,
+);
+
+/// Decoración común: borde gris, azul (acento) al enfocar y ROJO cuando hay
+/// error. El mensaje de error sale debajo del campo.
+InputDecoration authInputDecoration({
+  required String hint,
+  IconData? icon,
+  Widget? prefix,
+  Widget? suffix,
+  Color activeColor = AppColors.primaryBlue,
+  bool forceError = false,
+  double vPad = 13,
+}) {
+  OutlineInputBorder border(Color color, [double width = 1]) =>
+      OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: color, width: width),
+      );
+
+  return InputDecoration(
+    hintText: hint,
+    hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 14),
+    prefixIcon:
+        prefix ??
+        (icon != null
+            ? Icon(icon, color: AppColors.textMuted, size: 19)
+            : null),
+    prefixIconConstraints: prefix != null
+        ? const BoxConstraints(minWidth: 0, minHeight: 0)
+        : null,
+    suffixIcon: suffix,
+    filled: true,
+    fillColor: Colors.white,
+    contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: vPad),
+    errorStyle: _kFieldMessageStyle,
+    errorMaxLines: 3,
+    border: border(AppColors.cardBorder),
+    enabledBorder: forceError
+        ? border(kAuthError, 1.5)
+        : border(AppColors.cardBorder),
+    focusedBorder: border(forceError ? kAuthError : activeColor, 1.5),
+    errorBorder: border(kAuthError, 1.5),
+    focusedErrorBorder: border(kAuthError, 1.5),
+  );
+}
+
+/// Mensaje de error suelto (mismo estilo que el de un campo), para cosas que
+/// no son un TextFormField: casilla de términos, selector de portal...
+class AuthFieldError extends StatelessWidget {
+  const AuthFieldError(this.text, {super.key, this.left = 12});
+
+  final String text;
+  final double left;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(top: 5, left: left),
+      child: Text(text, style: _kFieldMessageStyle),
+    );
+  }
+}
+
+/// Aviso de error general (no pertenece a un campo concreto), p. ej. "demasiados
+/// intentos". Va justo encima del botón principal.
+class AuthErrorBanner extends StatelessWidget {
+  const AuthErrorBanner({super.key, required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF2F2),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFFECACA)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.error_outline, size: 17, color: kAuthError),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                fontSize: 12,
+                height: 1.35,
+                color: Color(0xFF991B1B),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Campo con etiqueta, borde rojo + mensaje debajo cuando hay error, y un
+/// "check" verde opcional cuando el valor fue aceptado.
+///
+/// Cuándo se valida:
+///  - al SALIR del campo (blur);
+///  - después, en vivo mientras se corrige;
+///  - y siempre al enviar el formulario (Form.validate).
+/// Así no aparece un error en rojo mientras la persona todavía está escribiendo
+/// por primera vez.
+///
+/// [serverError] sirve para errores que vienen del servidor (correo ya
+/// registrado, credenciales incorrectas...): se muestran en el mismo campo y
+/// se limpian solos cuando el padre pone `null`.
+class AuthTextField extends StatefulWidget {
+  const AuthTextField({
+    super.key,
+    required this.controller,
+    required this.focusNode,
+    required this.label,
+    required this.hint,
+    this.icon,
+    this.prefix,
+    this.suffix,
+    this.validator,
+    this.serverError,
+    this.forceErrorBorder = false,
+    this.successText,
+    this.revalidateWhen,
+    this.obscureText = false,
+    this.keyboardType,
+    this.textInputAction,
+    this.autofillHints,
+    this.inputFormatters,
+    this.onChanged,
+    this.onFieldSubmitted,
+    this.activeColor = AppColors.primaryBlue,
+    this.compact = false,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final String label;
+  final String hint;
+  final IconData? icon;
+  final Widget? prefix;
+  final Widget? suffix;
+  final String? Function(String?)? validator;
+  final String? serverError;
+
+  /// Borde rojo SIN mensaje propio (el mensaje lo muestra otro campo).
+  final bool forceErrorBorder;
+
+  /// Texto verde con check que aparece al salir del campo si el valor es válido.
+  final String? successText;
+
+  /// Si cambia (p. ej. la contraseña original), este campo se vuelve a validar.
+  final Listenable? revalidateWhen;
+
+  final bool obscureText;
+  final TextInputType? keyboardType;
+  final TextInputAction? textInputAction;
+  final Iterable<String>? autofillHints;
+  final List<TextInputFormatter>? inputFormatters;
+  final ValueChanged<String>? onChanged;
+  final ValueChanged<String>? onFieldSubmitted;
+  final Color activeColor;
+  final bool compact;
+
+  @override
+  State<AuthTextField> createState() => _AuthTextFieldState();
+}
+
+class _AuthTextFieldState extends State<AuthTextField> {
+  final GlobalKey<FormFieldState<String>> _fieldKey =
+      GlobalKey<FormFieldState<String>>();
+  bool _touched = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.focusNode.addListener(_onFocusChanged);
+    widget.revalidateWhen?.addListener(_onDependencyChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant AuthTextField old) {
+    super.didUpdateWidget(old);
+    if (old.focusNode != widget.focusNode) {
+      old.focusNode.removeListener(_onFocusChanged);
+      widget.focusNode.addListener(_onFocusChanged);
+    }
+    if (old.revalidateWhen != widget.revalidateWhen) {
+      old.revalidateWhen?.removeListener(_onDependencyChanged);
+      widget.revalidateWhen?.addListener(_onDependencyChanged);
+    }
+    // Llegó (o se quitó) un error del servidor: mostrarlo/limpiarlo ya.
+    if (old.serverError != widget.serverError) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _revalidate();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.focusNode.removeListener(_onFocusChanged);
+    widget.revalidateWhen?.removeListener(_onDependencyChanged);
+    super.dispose();
+  }
+
+  void _revalidate() {
+    _fieldKey.currentState?.validate();
+    if (mounted) setState(() {});
+  }
+
+  void _onFocusChanged() {
+    if (!mounted) return;
+    if (!widget.focusNode.hasFocus) {
+      _touched = true; // al salir del campo se valida
+      _revalidate();
+    } else if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _onDependencyChanged() {
+    if (mounted && _touched) _revalidate();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool focused = widget.focusNode.hasFocus;
+    final bool showSuccess =
+        !focused &&
+        _touched &&
+        widget.successText != null &&
+        widget.controller.text.isNotEmpty &&
+        _fieldKey.currentState?.hasError == false;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          widget.label,
+          style: TextStyle(
+            fontSize: widget.compact ? 12 : 13,
+            fontWeight: FontWeight.bold,
+            color: AppColors.darkNavy,
+          ),
+        ),
+        SizedBox(height: widget.compact ? 6 : 8),
+        TextFormField(
+          key: _fieldKey,
+          controller: widget.controller,
+          focusNode: widget.focusNode,
+          obscureText: widget.obscureText,
+          keyboardType: widget.keyboardType,
+          textInputAction: widget.textInputAction,
+          autofillHints: widget.autofillHints,
+          inputFormatters: widget.inputFormatters,
+          onFieldSubmitted: widget.onFieldSubmitted,
+          onChanged: (value) {
+            // En vivo solo si ya se validó antes o ya hay un error que corregir
+            if (_touched || _fieldKey.currentState?.hasError == true) {
+              _revalidate();
+            }
+            widget.onChanged?.call(value);
+          },
+          validator: (value) =>
+              widget.validator?.call(value) ?? widget.serverError,
+          decoration: authInputDecoration(
+            hint: widget.hint,
+            icon: widget.icon,
+            prefix: widget.prefix,
+            suffix: widget.suffix,
+            activeColor: widget.activeColor,
+            forceError: widget.forceErrorBorder,
+            vPad: widget.compact ? 12 : 14,
+          ),
+        ),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+          alignment: Alignment.topLeft,
+          child: showSuccess
+              ? Padding(
+                  padding: const EdgeInsets.only(top: 5, left: 12),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.check_circle,
+                        size: 14,
+                        color: AppColors.successGreen,
+                      ),
+                      const SizedBox(width: 5),
+                      Flexible(
+                        child: Text(
+                          widget.successText!,
+                          style: const TextStyle(
+                            color: _kAuthSuccessText,
+                            fontSize: 11.5,
+                            height: 1.25,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : const SizedBox(width: double.infinity),
+        ),
+      ],
+    );
+  }
 }

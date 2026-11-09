@@ -29,6 +29,12 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscurePassword = true;
   bool _isLoading = false;
 
+  // Errores del servidor, mostrados en el campo al que corresponden
+  bool _credentialsError = false; // contraseña (y borde del correo) en rojo
+  String? _emailServerError; // correo sin confirmar
+  String? _portalError; // la cuenta es del otro portal -> bajo el selector
+  String? _formError; // errores generales -> aviso sobre el botón
+
   static const List<AuthSegment> _segments = [
     AuthSegment(
       label: 'Portal Representante',
@@ -51,130 +57,145 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
+  void _clearServerErrors() {
+    _credentialsError = false;
+    _emailServerError = null;
+    _portalError = null;
+    _formError = null;
+  }
+
+  // Limpia errores del servidor al editar (solo reconstruye si había alguno)
+  void _onEdited() {
+    if (_credentialsError ||
+        _emailServerError != null ||
+        _portalError != null ||
+        _formError != null) {
+      setState(_clearServerErrors);
+    }
+  }
+
   // Inicio de sesión con Supabase Auth y redirección basada en roles
   Future<void> _submitLogin() async {
-    if (_formKey.currentState!.validate()) {
-      setState(() {
-        _isLoading = true;
-      });
+    if (_isLoading) return;
+    setState(_clearServerErrors);
+    // Espera a que los campos se reconstruyan sin los errores viejos del
+    // servidor; si no, validate() los vería como si fueran actuales y
+    // bloquearía el reintento.
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    if (!_formKey.currentState!.validate()) return;
 
-      try {
-        final response = await supabase.auth.signInWithPassword(
-          email: _emailController.text.trim(),
-          password: _passwordController.text,
+    setState(() => _isLoading = true);
+
+    try {
+      final response = await supabase.auth.signInWithPassword(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      );
+
+      if (response.user == null || !mounted) {
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
+
+      final user = response.user!;
+
+      final perfil = await supabase
+          .from('perfiles')
+          .select('rol, activo')
+          .eq('id', user.id)
+          .maybeSingle();
+
+      if (perfil == null || perfil['activo'] != true) {
+        await supabase.auth.signOut();
+        if (!mounted) return;
+        setState(() {
+          _isLoading = false;
+          _formError =
+              'Tu cuenta no tiene un perfil activo. Contacta a la administración.';
+        });
+        return;
+      }
+
+      final bool esCuentaAdmin = perfil['rol'] == 'administrador';
+
+      if (_isRepresentanteRole && esCuentaAdmin) {
+        await supabase.auth.signOut();
+        if (!mounted) return;
+        setState(() {
+          _isLoading = false;
+          _portalError =
+              'Esta cuenta pertenece al portal Administrativo. Selecciona esa opción para continuar.';
+        });
+        return;
+      }
+
+      if (!_isRepresentanteRole && !esCuentaAdmin) {
+        await supabase.auth.signOut();
+        if (!mounted) return;
+        setState(() {
+          _isLoading = false;
+          _portalError =
+              'Esta cuenta pertenece al Portal Representante. Selecciona esa opción para continuar.';
+        });
+        return;
+      }
+
+      // Auditoría: todas las validaciones pasaron, el inicio de sesión es
+      // exitoso -> se guarda fecha, hora e IP antes de entrar al panel.
+      await _registrarInicioSesion();
+      await IdleSessionStore.touch(); // reinicia el reloj de inactividad
+
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+
+      _passwordController.clear();
+
+      if (esCuentaAdmin) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
         );
-
-        if (response.user == null || !mounted) {
-          setState(() => _isLoading = false);
-          return;
-        }
-
-        final user = response.user!;
-
-        final perfil = await supabase
-            .from('perfiles')
-            .select('rol, activo')
-            .eq('id', user.id)
-            .maybeSingle();
-
-        if (perfil == null || perfil['activo'] != true) {
-          await supabase.auth.signOut();
-          if (!mounted) return;
-          setState(() => _isLoading = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Tu cuenta no tiene un perfil activo. Contacta a la administración.',
-              ),
-              backgroundColor: Colors.redAccent,
-            ),
-          );
-          return;
-        }
-
-        final bool esCuentaAdmin = perfil['rol'] == 'administrador';
-
-        if (_isRepresentanteRole && esCuentaAdmin) {
-          await supabase.auth.signOut();
-          if (!mounted) return;
-          setState(() => _isLoading = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Esta cuenta pertenece al portal Administrativo. Selecciona esa opción para continuar.',
-              ),
-              backgroundColor: Colors.redAccent,
-            ),
-          );
-          return;
-        }
-
-        if (!_isRepresentanteRole && !esCuentaAdmin) {
-          await supabase.auth.signOut();
-          if (!mounted) return;
-          setState(() => _isLoading = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Esta cuenta pertenece al Portal Representante. Selecciona esa opción para continuar.',
-              ),
-              backgroundColor: Colors.redAccent,
-            ),
-          );
-          return;
-        }
-
-        // Auditoría: todas las validaciones pasaron, el inicio de sesión es
-        // exitoso -> se guarda fecha, hora e IP antes de entrar al panel.
-        await _registrarInicioSesion();
-        await IdleSessionStore.touch(); // reinicia el reloj de inactividad
-
-        if (!mounted) return;
-        setState(() {
-          _isLoading = false;
-        });
-
-        _passwordController.clear();
-
-        if (esCuentaAdmin) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const AdminDashboardScreen(),
-            ),
-          );
-        } else {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const RepresentativeDashboardScreen(),
-            ),
-          );
-        }
-      } on AuthException catch (e) {
-        if (!mounted) return;
-        setState(() {
-          _isLoading = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(_loginErrorMessage(e.message)),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      } catch (e) {
-        debugPrint('login error: $e');
-        if (!mounted) return;
-        setState(() {
-          _isLoading = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Ocurrió un error inesperado. Intenta de nuevo.'),
-            backgroundColor: Colors.redAccent,
+      } else {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const RepresentativeDashboardScreen(),
           ),
         );
       }
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _applyAuthError(e.message);
+      });
+    } catch (e) {
+      debugPrint('login error: $e');
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _formError = 'Ocurrió un error inesperado. Intenta de nuevo.';
+      });
+    }
+  }
+
+  /// Reparte el error de Supabase en el campo que corresponde.
+  /// No revela si el correo existe: el servidor responde lo mismo para
+  /// "correo inexistente" y "contraseña incorrecta", así que se marcan ambos
+  /// campos y el mensaje va bajo la contraseña.
+  void _applyAuthError(String message) {
+    final m = message.toLowerCase();
+    if (m.contains('invalid login credentials')) {
+      _credentialsError = true;
+    } else if (m.contains('email not confirmed')) {
+      _emailServerError =
+          'Debes confirmar tu correo antes de iniciar sesión. Revisa tu bandeja de entrada.';
+    } else if (m.contains('rate limit') || m.contains('too many')) {
+      _formError =
+          'Demasiados intentos. Espera unos minutos antes de volver a intentarlo.';
+    } else {
+      _formError = 'No pudimos iniciar sesión. Intenta de nuevo.';
     }
   }
 
@@ -192,22 +213,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  /// Mensaje claro sin revelar si el correo existe: el servidor responde lo
-  /// mismo para "correo inexistente" y "contraseña incorrecta".
-  String _loginErrorMessage(String message) {
-    final m = message.toLowerCase();
-    if (m.contains('invalid login credentials')) {
-      return 'Correo o contraseña incorrectos.';
-    }
-    if (m.contains('email not confirmed')) {
-      return 'Debes confirmar tu correo antes de iniciar sesión. Revisa tu bandeja de entrada.';
-    }
-    if (m.contains('rate limit') || m.contains('too many')) {
-      return 'Demasiados intentos. Espera unos minutos antes de volver a intentarlo.';
-    }
-    return 'No pudimos iniciar sesión. Intenta de nuevo.';
-  }
-
   void _showForgotPasswordModal() {
     showDialog(
       context: context,
@@ -216,33 +221,6 @@ class _LoginScreenState extends State<LoginScreen> {
       builder: (BuildContext context) {
         return const ForgotPasswordDialog();
       },
-    );
-  }
-
-  // Decoración común de los campos (evita repetir 40 líneas por input)
-  InputDecoration _fieldDecoration({
-    required String hint,
-    required IconData icon,
-    required Color activeColor,
-    Widget? suffix,
-  }) {
-    OutlineInputBorder border(Color color, [double width = 1]) =>
-        OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: color, width: width),
-        );
-
-    return InputDecoration(
-      hintText: hint,
-      hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 14),
-      prefixIcon: Icon(icon, color: AppColors.textMuted, size: 20),
-      suffixIcon: suffix,
-      filled: true,
-      fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      border: border(AppColors.cardBorder),
-      enabledBorder: border(AppColors.cardBorder),
-      focusedBorder: border(activeColor, 1.5),
     );
   }
 
@@ -358,9 +336,14 @@ class _LoginScreenState extends State<LoginScreen> {
         // ── Selector líquido de portal ──
         LiquidSegmentedSelector(
           segments: _segments,
+          hasError: _portalError != null,
           selectedIndex: _isRepresentanteRole ? 0 : 1,
-          onChanged: (i) => setState(() => _isRepresentanteRole = i == 0),
+          onChanged: (i) => setState(() {
+            _isRepresentanteRole = i == 0;
+            _portalError = null;
+          }),
         ),
+        if (_portalError != null) AuthFieldError(_portalError!, left: 4),
         const SizedBox(height: 20),
 
         // ── Formulario ──
@@ -369,70 +352,58 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Correo electrónico',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.darkNavy,
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextFormField(
+              AuthTextField(
                 controller: _emailController,
                 focusNode: _emailFocusNode,
+                label: 'Correo electrónico',
+                hint: 'nombre@correo.com',
+                icon: Icons.email_outlined,
+                activeColor: activeColor,
                 keyboardType: TextInputType.emailAddress,
                 autofillHints: const [AutofillHints.email],
                 textInputAction: TextInputAction.next,
                 onFieldSubmitted: (_) =>
                     FocusScope.of(context).requestFocus(_passwordFocusNode),
-                decoration: _fieldDecoration(
-                  hint: 'nombre@correo.com',
-                  icon: Icons.email_outlined,
-                  activeColor: activeColor,
-                ),
+                onChanged: (_) => _onEdited(),
+                serverError: _emailServerError,
+                // Si las credenciales fallan, el borde del correo también se
+                // marca (el mensaje va bajo la contraseña).
+                forceErrorBorder: _credentialsError,
                 validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Ingresa tu correo electrónico';
-                  }
-                  if (!value.contains('@')) {
+                  final v = value?.trim() ?? '';
+                  if (v.isEmpty) return 'Ingresa tu correo electrónico';
+                  if (!kAuthEmailRegex.hasMatch(v)) {
                     return 'Ingresa un correo válido';
                   }
                   return null;
                 },
               ),
               const SizedBox(height: 14),
-              const Text(
-                'Contraseña',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.darkNavy,
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextFormField(
+              AuthTextField(
                 controller: _passwordController,
                 focusNode: _passwordFocusNode,
+                label: 'Contraseña',
+                hint: 'Mínimo 8 caracteres',
+                icon: Icons.lock_outline,
+                activeColor: activeColor,
                 obscureText: _obscurePassword,
                 autofillHints: const [AutofillHints.password],
                 textInputAction: TextInputAction.done,
                 onFieldSubmitted: (_) => _submitLogin(),
-                decoration: _fieldDecoration(
-                  hint: 'Mínimo 8 caracteres',
-                  icon: Icons.lock_outline,
-                  activeColor: activeColor,
-                  suffix: IconButton(
-                    icon: Icon(
-                      _obscurePassword
-                          ? Icons.visibility_outlined
-                          : Icons.visibility_off_outlined,
-                    ),
-                    color: AppColors.textMuted,
-                    iconSize: 20,
-                    onPressed: () =>
-                        setState(() => _obscurePassword = !_obscurePassword),
+                onChanged: (_) => _onEdited(),
+                serverError: _credentialsError
+                    ? 'Correo o contraseña incorrectos.'
+                    : null,
+                suffix: IconButton(
+                  icon: Icon(
+                    _obscurePassword
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
                   ),
+                  color: AppColors.textMuted,
+                  iconSize: 20,
+                  onPressed: () =>
+                      setState(() => _obscurePassword = !_obscurePassword),
                 ),
                 validator: (value) {
                   if (value == null || value.isEmpty) {
@@ -466,6 +437,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
               ),
+              if (_formError != null) ...[
+                const SizedBox(height: 12),
+                AuthErrorBanner(message: _formError!),
+              ],
               const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
