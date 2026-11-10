@@ -432,10 +432,16 @@ class _RepresentativeCalendarSectionState
     );
   }
 
+  String _eventTitle(CalendarEvent event) => switch (event.kind) {
+    CalendarEventKind.paid => 'Fecha del pago',
+    CalendarEventKind.reported => 'Reporte enviado',
+    _ => event.title,
+  };
+
   String _movementCategory(CalendarEvent event) => switch (event.kind) {
     CalendarEventKind.generated => 'CUOTA GENERADA',
     CalendarEventKind.due => 'FECHA DE VENCIMIENTO',
-    CalendarEventKind.paid => 'PAGO REALIZADO',
+    CalendarEventKind.paid => 'FECHA DECLARADA DEL PAGO',
     CalendarEventKind.reported => 'REPORTE ENVIADO',
     CalendarEventKind.approved => 'PAGO APROBADO',
     CalendarEventKind.rejected => 'PAGO RECHAZADO',
@@ -446,8 +452,10 @@ class _RepresentativeCalendarSectionState
   String _movementDescription(CalendarEvent event) => switch (event.kind) {
     CalendarEventKind.generated => 'Se generó una nueva cuota',
     CalendarEventKind.due => 'Fecha límite de la cuota',
-    CalendarEventKind.paid => 'Fecha del pago registrado',
-    CalendarEventKind.reported => 'El representante envió el reporte',
+    CalendarEventKind.paid =>
+      'Fecha indicada por el representante al pagar. No implica aprobación del colegio.',
+    CalendarEventKind.reported =>
+      'Fecha en que se envió el comprobante a EduPago para su revisión. Puede ser distinta a la fecha del pago.',
     CalendarEventKind.approved => 'El colegio aprobó el pago',
     CalendarEventKind.rejected => 'El colegio rechazó el pago',
   };
@@ -458,7 +466,7 @@ class _RepresentativeCalendarSectionState
     return Semantics(
       button: canOpen,
       label:
-          '${_movementCategory(event)}. ${event.title}. '
+          '${_movementCategory(event)}. ${_eventTitle(event)}. '
           '${event.details}. ${event.amount ?? ''}. ${_formatTime(event.date)}',
       child: Material(
         color: Colors.white,
@@ -531,7 +539,7 @@ class _RepresentativeCalendarSectionState
                                   ),
                                   const SizedBox(height: 7),
                                   Text(
-                                    event.title,
+                                    _eventTitle(event),
                                     style: const TextStyle(
                                       color: _navy,
                                       fontSize: 13,
@@ -1430,7 +1438,7 @@ class _RepresentativeCalendarSectionState
       },
       {
         'label': 'Pagos',
-        'sub': 'Pagos reportados y realizados',
+        'sub': 'Fechas de pago, reportes y revisiones',
         'icon': Icons.receipt_long_rounded,
         'color': _blue,
       },
@@ -1754,7 +1762,8 @@ class _RepresentativeCalendarSectionState
                       );
                     final accessibleLabel =
                         '${_formatDate(date)}. '
-                        '${dayEvents.length} ${dayEvents.length == 1 ? 'evento' : 'eventos'}';
+                        '${dayEvents.length} ${dayEvents.length == 1 ? 'movimiento' : 'movimientos'}. '
+                        'Pulsa para ver el detalle';
                     return Semantics(
                       button: true,
                       selected: isSelected,
@@ -1796,8 +1805,8 @@ class _RepresentativeCalendarSectionState
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   Container(
-                                    width: compact ? 22 : 26,
-                                    height: compact ? 22 : 26,
+                                    width: compact ? 22 : 24,
+                                    height: compact ? 22 : 24,
                                     alignment: Alignment.center,
                                     decoration: BoxDecoration(
                                       shape: BoxShape.circle,
@@ -1807,52 +1816,68 @@ class _RepresentativeCalendarSectionState
                                           ? const Color(0xFFFFE0B2)
                                           : Colors.transparent,
                                     ),
-                                    child: Text(
-                                      '$number',
-                                      style: TextStyle(
-                                        fontSize: compact ? 11.5 : 12.5,
-                                        color: isSelected
-                                            ? Colors.white
-                                            : hasDue
-                                            ? _orange
-                                            : _navy,
-                                        fontWeight:
-                                            isSelected || isToday || hasDue
-                                            ? FontWeight.w800
-                                            : FontWeight.w600,
+                                    child: FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      child: Text(
+                                        '$number',
+                                        style: TextStyle(
+                                          fontSize: compact ? 11.5 : 12.5,
+                                          color: isSelected
+                                              ? Colors.white
+                                              : hasDue
+                                              ? _orange
+                                              : _navy,
+                                          fontWeight:
+                                              isSelected || isToday || hasDue
+                                              ? FontWeight.w800
+                                              : FontWeight.w600,
+                                        ),
                                       ),
                                     ),
                                   ),
                                   const SizedBox(height: 2),
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      for (final kind in kinds.take(3))
-                                        Container(
-                                          width: kind == CalendarEventKind.due
-                                              ? 12
-                                              : 5,
-                                          height: 5,
-                                          margin: const EdgeInsets.symmetric(
-                                            horizontal: 1.2,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            borderRadius: BorderRadius.circular(
-                                              999,
-                                            ),
-                                            color: _tone(kind),
-                                          ),
+                                  // Altura fija: el número de movimientos nunca
+                                  // aumenta la altura ni desborda la celda.
+                                  SizedBox(
+                                    height: 8,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 3,
+                                      ),
+                                      child: FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            for (final kind in kinds.take(3))
+                                              Container(
+                                                width: 5,
+                                                height: 5,
+                                                margin:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 1,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  shape: BoxShape.circle,
+                                                  color: _tone(kind),
+                                                ),
+                                              ),
+                                            if (dayEvents.length > 1) ...[
+                                              const SizedBox(width: 3),
+                                              Text(
+                                                '${dayEvents.length}',
+                                                style: const TextStyle(
+                                                  color: _navy,
+                                                  fontSize: 8,
+                                                  height: 1,
+                                                  fontWeight: FontWeight.w800,
+                                                ),
+                                              ),
+                                            ],
+                                          ],
                                         ),
-                                      if (kinds.length > 3)
-                                        const Text(
-                                          '+',
-                                          style: TextStyle(
-                                            color: _muted,
-                                            fontSize: 8,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                    ],
+                                      ),
+                                    ),
                                   ),
                                 ],
                               ),
@@ -1880,9 +1905,16 @@ class _RepresentativeCalendarSectionState
                   const SizedBox(width: 14),
                   _legend('Vencimiento', _orange),
                   const SizedBox(width: 14),
-                  _legend('Pago reportado', _indigo),
+                  Tooltip(
+                    message: 'Día en que se envió el comprobante a EduPago.',
+                    child: _legend('Reporte enviado', _indigo),
+                  ),
                   const SizedBox(width: 14),
-                  _legend('Pago realizado', _violet),
+                  Tooltip(
+                    message:
+                        'Fecha de pago declarada por el representante; no significa aprobado.',
+                    child: _legend('Fecha del pago', _violet),
+                  ),
                   const SizedBox(width: 14),
                   _legend('Aprobado', _green),
                   const SizedBox(width: 14),
@@ -1892,8 +1924,8 @@ class _RepresentativeCalendarSectionState
             ),
             const SizedBox(height: 6),
             const Text(
-              'Las fechas corresponden a movimientos registrados. '
-              'Consulta el estado de cuenta para confirmar los saldos.',
+              'El contador indica movimientos, no pagos distintos. '
+              'Pulsa un día para ver todos sus detalles.',
               style: TextStyle(color: _muted, fontSize: 11, height: 1.45),
             ),
           ],
@@ -2560,7 +2592,7 @@ class _RepresentativeCalendarSectionState
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      event.title,
+                      _eventTitle(event),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(

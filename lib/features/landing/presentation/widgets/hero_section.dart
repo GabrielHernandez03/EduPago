@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/motion.dart';
+import 'landing_section_background.dart';
 
 /// Portada principal de EduPago.
 /// Las fotografías se reutilizan de los assets existentes del proyecto.
@@ -77,13 +78,9 @@ class HeroSection extends StatelessWidget {
       constraints: BoxConstraints(minHeight: mobile ? 0 : targetHeight),
       child: Stack(
         children: [
-          // Dos olas rellenas dibujadas en Flutter, sin PNG ni degradados.
+          // Fondo del diseño (imagen original), primera variante.
           const Positioned.fill(
-            child: IgnorePointer(
-              child: RepaintBoundary(
-                child: CustomPaint(painter: _HeroBackgroundPainter()),
-              ),
-            ),
+            child: LandingBackdrop(style: LandingWaveStyle.hero),
           ),
           Center(
             child: ConstrainedBox(
@@ -642,68 +639,4 @@ class _PaymentBadge extends StatelessWidget {
       ],
     ),
   );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Fondo vectorial. La referencia tiene CUATRO siluetas:
-// 1) celeste superior izquierda, 2) azul superior izquierda,
-// 3) celeste inferior ancha, 4) azul inferior derecha.
-// Son curvas Bézier rellenas, SIN PNG y SIN degradados.
-// ─────────────────────────────────────────────────────────────────────────────
-class _HeroBackgroundPainter extends CustomPainter {
-  const _HeroBackgroundPainter();
-
-  static const Color _background = Color(0xFFF2F7FD);
-  static const Color _strongBlue = Color(0xFF075FFF);
-  static const Color _lightBlue = Color(0xFFBEDCFF);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (size.isEmpty) return;
-    final w = size.width;
-    final h = size.height;
-
-    canvas.drawRect(Offset.zero & size, Paint()..color = _background);
-
-    // ARRIBA A LA IZQUIERDA — primero el celeste de mayor profundidad.
-    final upperLight = Path()
-      ..moveTo(0, 0)
-      ..lineTo(w * 0.44, 0)
-      ..cubicTo(w * 0.30, h * 0.035, w * 0.15, h * 0.265, 0, h * 0.275)
-      ..close();
-    canvas.drawPath(upperLight, Paint()..color = _lightBlue);
-
-    // Azul superior, menor y superpuesto al celeste.
-    final upperBlue = Path()
-      ..moveTo(0, 0)
-      ..lineTo(w * 0.32, 0)
-      ..cubicTo(w * 0.23, h * 0.025, w * 0.105, h * 0.205, 0, h * 0.205)
-      ..close();
-    canvas.drawPath(upperBlue, Paint()..color = _strongBlue);
-
-    // ABAJO — la capa celeste amplia que faltaba.
-    // Comienza a la izquierda y se hunde suavemente antes de subir
-    // hacia la esquina inferior derecha, como en la referencia.
-    final lowerLight = Path()
-      ..moveTo(0, h * 0.865)
-      ..cubicTo(w * 0.21, h * 1.025, w * 0.47, h * 1.055, w * 0.68, h * 0.875)
-      ..cubicTo(w * 0.84, h * 0.72, w * 0.91, h * 0.585, w, h * 0.655)
-      ..lineTo(w, h)
-      ..lineTo(0, h)
-      ..close();
-    canvas.drawPath(lowerLight, Paint()..color = _lightBlue);
-
-    // Azul fuerte inferior derecho — deja visible la franja celeste
-    // por encima y también a la izquierda de la curva.
-    final lowerBlue = Path()
-      ..moveTo(w * 0.48, h)
-      ..cubicTo(w * 0.64, h * 0.99, w * 0.78, h * 0.815, w * 0.88, h * 0.735)
-      ..cubicTo(w * 0.94, h * 0.69, w * 0.98, h * 0.68, w, h * 0.71)
-      ..lineTo(w, h)
-      ..close();
-    canvas.drawPath(lowerBlue, Paint()..color = _strongBlue);
-  }
-
-  @override
-  bool shouldRepaint(covariant _HeroBackgroundPainter oldDelegate) => false;
 }

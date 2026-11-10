@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../services/notification_service.dart';
 import '../theme/app_colors.dart';
 import 'notification_bell.dart';
+import '../../features/landing/presentation/widgets/landing_section_background.dart';
 
 //
 // Ubicación sugerida: lib/core/widgets/dashboard_shell.dart
@@ -59,10 +60,20 @@ const Color _danger = Color(0xFFDC2626);
 const Duration _hoverDuration = Duration(milliseconds: 150);
 
 // Barra lateral: tamaños y animación de contraer / expandir.
-const double _sidebarExpandedW = 266.0;
+const double _sidebarExpandedW = 250.0;
 const double _sidebarCollapsedW = 78.0;
 // Red de seguridad: con los rebotes actuales la barra no baja de ~68 px.
 const double _sidebarMinW = 62.0;
+
+// Margen visual del menú flotante. El ancho expandido compensa los
+// 16 px adicionales de separación izquierda para conservar el área principal.
+const double _sidebarInsetLeft = 32.0;
+const double _sidebarInsetRight = 8.0;
+const double _sidebarInsetVertical = 16.0;
+
+// Ondas originales de la landing con una intensidad del 20 %.
+// 0.0 = invisibles; 1.0 = intensidad completa de la landing.
+const double _dashboardBackdropOpacity = 0.50;
 
 // Si es true, la animación se desactiva cuando el sistema pide "reducir
 // movimiento" (en Windows: Accesibilidad > Efectos visuales > Efectos de
@@ -88,8 +99,7 @@ const double _fadeSpan = 0.50;
 /// Sobrepaso aprox.: 0.5 → 16 % · 0.6 → 9.5 % · 0.7 → 4.6 % · 0.8 → 1.5 %
 class _SpringCurve extends Curve {
   final double damping;
-  const _SpringCurve({this.damping = 0.6})
-    : assert(damping > 0 && damping < 1);
+  const _SpringCurve({this.damping = 0.6}) : assert(damping > 0 && damping < 1);
 
   @override
   double transformInternal(double t) {
@@ -363,9 +373,44 @@ class _DashboardShellState extends State<DashboardShell>
       child: Column(
         children: [
           _buildTopHeader(w, isDesktop),
-          // Navegación duplicada eliminada: el menú lateral ya indica la
-          // sección actual. El contenido empieza justo bajo el encabezado.
-          Expanded(child: widget.body),
+          // Desvanece el contenido al llegar a la cabecera para evitar
+          // el corte horizontal brusco durante el desplazamiento.
+          // El fondo compartido queda fuera de la máscara y sigue continuo.
+          Expanded(
+            child: ShaderMask(
+              blendMode: BlendMode.dstIn,
+              shaderCallback: (bounds) {
+                final fadeStop = bounds.height > 0
+                    ? (32.0 / bounds.height).clamp(0.0, 1.0).toDouble()
+                    : 1.0;
+                return LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  // Progresión suave: la opacidad acelera y desacelera
+                  // gradualmente, sin un final de degradado marcado.
+                  colors: const [
+                    Colors.transparent,
+                    Color(0xFF1BFFFFFF),
+                    Color(0xFF5AFFFFFF),
+                    Color(0xFFA5FFFFFF),
+                    Color(0xFFE4FFFFFF),
+                    Colors.white,
+                    Colors.white,
+                  ],
+                  stops: [
+                    0.0,
+                    fadeStop * 0.2,
+                    fadeStop * 0.4,
+                    fadeStop * 0.6,
+                    fadeStop * 0.8,
+                    fadeStop,
+                    1.0,
+                  ],
+                ).createShader(bounds);
+              },
+              child: widget.body,
+            ),
+          ),
         ],
       ),
     );
@@ -392,44 +437,63 @@ class _DashboardShellState extends State<DashboardShell>
             : Drawer(
                 width: 280,
                 backgroundColor: _navy,
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.horizontal(
+                    right: Radius.circular(26),
+                  ),
+                ),
                 child: SafeArea(
                   child: _buildSidebar(expanded: true, inDrawer: true),
                 ),
               ),
-        // t: 0 = barra contraída, 1 = expandida. Se anima sola cada vez que
-        // cambia `expanded` (botón de la flecha o cambio de tamaño de ventana).
-        body: TweenAnimationBuilder<double>(
-          tween: Tween<double>(end: expanded ? 1.0 : 0.0),
-          duration: reduceMotion
-              ? Duration.zero
-              : (expanded ? _expandDuration : _collapseDuration),
-          curve: expanded ? _expandCurve : _collapseCurve,
-          child: main,
-          builder: (context, t, mainChild) {
-            // t puede pasarse de [0, 1] durante el rebote: de ahí el efecto.
-            final sidebarW =
-                (_sidebarCollapsedW +
-                        (_sidebarExpandedW - _sidebarCollapsedW) * t)
-                    .clamp(_sidebarMinW, _sidebarExpandedW + 40)
-                    .toDouble();
-            return Stack(
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (isDesktop) _buildAnimatedSidebar(t, sidebarW),
-                    mainChild!,
-                  ],
+        // Las ondas de la landing se reutilizan, sin imágenes ni assets.
+        // Quedan DETRÁS del contenido y no interceptan clics/scroll.
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            const Positioned.fill(
+              child: IgnorePointer(
+                child: Opacity(
+                  opacity: _dashboardBackdropOpacity,
+                  child: LandingBackdrop(style: LandingWaveStyle.hero),
                 ),
-                if (isDesktop)
-                  Positioned(
-                    left: sidebarW - 12,
-                    top: 64,
-                    child: _buildCollapseButton(expanded, t),
-                  ),
-              ],
-            );
-          },
+              ),
+            ),
+            // t: 0 = barra contraída, 1 = expandida.
+            TweenAnimationBuilder<double>(
+              tween: Tween<double>(end: expanded ? 1.0 : 0.0),
+              duration: reduceMotion
+                  ? Duration.zero
+                  : (expanded ? _expandDuration : _collapseDuration),
+              curve: expanded ? _expandCurve : _collapseCurve,
+              child: main,
+              builder: (context, t, mainChild) {
+                // El resorte puede sobrepasar [0,1] levemente.
+                final sidebarW =
+                    (_sidebarCollapsedW +
+                            (_sidebarExpandedW - _sidebarCollapsedW) * t)
+                        .clamp(_sidebarMinW, _sidebarExpandedW + 40)
+                        .toDouble();
+                return Stack(
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (isDesktop) _buildAnimatedSidebar(t, sidebarW),
+                        mainChild!,
+                      ],
+                    ),
+                    if (isDesktop)
+                      Positioned(
+                        left: _sidebarInsetLeft + sidebarW - 12,
+                        top: 104,
+                        child: _buildCollapseButton(expanded, t),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ],
         ),
       ),
     );
@@ -500,7 +564,7 @@ class _DashboardShellState extends State<DashboardShell>
   /// Barra lateral de escritorio animada.
   ///
   /// El ancho sigue a [t] (con rebote). Dentro hay DOS capas a su tamaño real
-  /// (contraída de 76 px y expandida de 250 px) con un fundido cruzado entre
+  /// (contraída de 78 px y expandida de 250 px) con un fundido cruzado entre
   /// ellas. Los íconos están casi en el mismo punto en ambas, así que se ve
   /// como si se quedaran quietos mientras las etiquetas aparecen y se
   /// desvelan con el borde de la barra. No hay corte ni parpadeo.
@@ -533,24 +597,51 @@ class _DashboardShellState extends State<DashboardShell>
       );
     }
 
+    // El menú expandido y sus márgenes ocupan 290 px en total,
+    // conservando el espacio original disponible para el dashboard.
+    // El borde y la sombra pertenecen SOLO al contenedor externo;
+    // las ondas y las dos capas animadas quedan recortadas al mismo radio.
     return RepaintBoundary(
       child: SizedBox(
-        width: width,
-        child: DecoratedBox(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [AppColors.sidebarTop, AppColors.sidebarBottom],
-            ),
+        width: width + _sidebarInsetLeft + _sidebarInsetRight,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            _sidebarInsetLeft,
+            _sidebarInsetVertical,
+            _sidebarInsetRight,
+            _sidebarInsetVertical,
           ),
-          child: ClipRect(
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                layer(expanded: false, opacity: 1 - p, active: p < 0.5),
-                layer(expanded: true, opacity: p, active: p >= 0.5),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: _navy,
+              borderRadius: BorderRadius.circular(34),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.88),
+                width: 2,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.darkNavy.withValues(alpha: 0.20),
+                  blurRadius: 28,
+                  spreadRadius: 1,
+                  offset: const Offset(6, 10),
+                ),
+                BoxShadow(
+                  color: AppColors.darkNavy.withValues(alpha: 0.10),
+                  blurRadius: 8,
+                  offset: const Offset(2, 3),
+                ),
               ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(32),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  layer(expanded: false, opacity: 1 - p, active: p < 0.5),
+                  layer(expanded: true, opacity: p, active: p >= 0.5),
+                ],
+              ),
             ),
           ),
         ),
@@ -649,12 +740,12 @@ class _DashboardShellState extends State<DashboardShell>
         label: 'EduPago, ir al inicio',
         child: Material(
           color: Colors.transparent,
-          borderRadius: BorderRadius.circular(15),
+          borderRadius: BorderRadius.circular(22),
           child: InkWell(
             onTap: widget.navItems.isEmpty ? null : () => _select(0, inDrawer),
             hoverColor: Colors.transparent,
             splashColor: Colors.white.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(15),
+            borderRadius: BorderRadius.circular(22),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 190),
               curve: Curves.easeOutCubic,
@@ -671,7 +762,7 @@ class _DashboardShellState extends State<DashboardShell>
                       ? const [Color(0xFF2F568B), Color(0xFF224777)]
                       : const [Color(0xFF254B7F), Color(0xFF1B3868)],
                 ),
-                borderRadius: BorderRadius.circular(15),
+                borderRadius: BorderRadius.circular(22),
                 border: Border.all(
                   color: Colors.white.withValues(alpha: hovered ? 0.34 : 0.12),
                 ),
@@ -810,14 +901,14 @@ class _DashboardShellState extends State<DashboardShell>
           padding: const EdgeInsets.only(bottom: 8),
           child: InkWell(
             onTap: () => _select(index, inDrawer),
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(18),
             hoverColor: Colors.transparent,
             child: AnimatedContainer(
               duration: _hoverDuration,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
               decoration: BoxDecoration(
                 color: bg,
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(18),
               ),
               child: Row(
                 children: [
@@ -1194,13 +1285,14 @@ class _DashboardShellState extends State<DashboardShell>
     final compact = Breakpoints.isCompact(w);
     final showUserText = w > 1040;
     final showActions = w > 1180;
+
     return Container(
-      height: 86,
-      padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 30),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: AppColors.cardBorder)),
+      height: 90,
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 12 : 24,
+        vertical: 12,
       ),
+      color: Colors.transparent,
       child: Row(
         children: [
           if (!isDesktop) ...[
@@ -1214,37 +1306,52 @@ class _DashboardShellState extends State<DashboardShell>
           Expanded(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 680),
-              child: TextField(
-                textInputAction: TextInputAction.search,
-                onSubmitted: _searchSections,
-                decoration: InputDecoration(
-                  hintText: compact
-                      ? 'Buscar sección...'
-                      : 'Buscar sección del menú...',
-                  hintStyle: const TextStyle(
-                    color: AppColors.textMuted,
-                    fontSize: 14,
-                  ),
-                  prefixIcon: const Icon(
-                    Icons.search_rounded,
-                    size: 23,
-                    color: Color(0xFF6381B5),
-                  ),
-                  filled: true,
-                  fillColor: const Color(0xFFF2F6FC),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 15,
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(15),
-                    borderSide: const BorderSide(color: Color(0xFFEDF1F9)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(15),
-                    borderSide: const BorderSide(
-                      color: AppColors.primaryBlue,
-                      width: 1.6,
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(32),
+                  border: Border.all(color: Colors.white),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.darkNavy.withValues(alpha: 0.035),
+                      blurRadius: 13,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: TextField(
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: _searchSections,
+                  decoration: InputDecoration(
+                    hintText: compact
+                        ? 'Buscar sección...'
+                        : 'Buscar sección del menú...',
+                    hintStyle: const TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 14,
+                    ),
+                    prefixIcon: const Icon(
+                      Icons.search_rounded,
+                      size: 23,
+                      color: Color(0xFF6381B5),
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 15,
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(27),
+                      borderSide: const BorderSide(color: Color(0xFFE5EDF9)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(27),
+                      borderSide: const BorderSide(
+                        color: AppColors.primaryBlue,
+                        width: 1.6,
+                      ),
                     ),
                   ),
                 ),
@@ -1252,69 +1359,83 @@ class _DashboardShellState extends State<DashboardShell>
             ),
           ),
           if (showActions)
-            for (final a in widget.headerActions) ...[
+            for (final action in widget.headerActions) ...[
               const SizedBox(width: 12),
-              a,
+              action,
             ],
           const SizedBox(width: 20),
-          NotificationBell(
-            key: const ValueKey('notification-bell'),
-            onOpen: widget.onNotificationTap,
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: NotificationBell(
+              key: const ValueKey('notification-bell'),
+              onOpen: widget.onNotificationTap,
+            ),
           ),
           const SizedBox(width: 16),
           Container(width: 1, height: 34, color: AppColors.cardBorder),
           const SizedBox(width: 16),
-          _userMenu(
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 21,
-                  backgroundColor: AppColors.primaryBlue,
-                  child: Text(
-                    widget.userInitials,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(color: Colors.white),
+            ),
+            child: _userMenu(
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 21,
+                    backgroundColor: AppColors.primaryBlue,
+                    child: Text(
+                      widget.userInitials,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
                     ),
                   ),
-                ),
-                if (showUserText) ...[
-                  const SizedBox(width: 12),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 155),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.userName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: AppColors.darkNavy,
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
+                  if (showUserText) ...[
+                    const SizedBox(width: 12),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 155),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            widget.userName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppColors.darkNavy,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          widget.userRole,
-                          style: const TextStyle(
-                            color: AppColors.textMuted,
-                            fontSize: 12,
+                          const SizedBox(height: 3),
+                          Text(
+                            widget.userRole,
+                            style: const TextStyle(
+                              color: AppColors.textMuted,
+                              fontSize: 12,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  const Icon(
-                    Icons.keyboard_arrow_down_rounded,
-                    color: AppColors.darkNavy,
-                  ),
+                    const SizedBox(width: 10),
+                    const Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      color: AppColors.darkNavy,
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ],

@@ -85,16 +85,16 @@ class CtaAndFooterSection extends StatelessWidget {
                     // pantallas angostas. Sin Flex + stretch: evita pedir una
                     // altura infinita dentro del scroll.
                     if (narrow) ...[
-                      familyCard,
+                      RepaintBoundary(child: familyCard),
                       const SizedBox(height: 16.74),
-                      schoolCard,
+                      RepaintBoundary(child: schoolCard),
                     ] else
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(child: familyCard),
+                          Expanded(child: RepaintBoundary(child: familyCard)),
                           const SizedBox(width: 18.6),
-                          Expanded(child: schoolCard),
+                          Expanded(child: RepaintBoundary(child: schoolCard)),
                         ],
                       ),
                   ],

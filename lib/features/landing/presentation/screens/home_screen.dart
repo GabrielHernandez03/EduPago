@@ -61,20 +61,31 @@ class _HomeScreenState extends State<HomeScreen> {
     _preload();
   }
 
-  /// Espera (máx. 6 s) a que logo, fotos del hero y fuentes estén en memoria.
-  /// Muestra la pantalla de carga al menos 700 ms para evitar parpadeos.
+  /// La landing NO se muestra hasta que logo, fotos del hero y fuentes estén
+  /// decodificados en memoria (máx. 20 s por si la conexión es muy lenta).
+  /// La pantalla de carga se ve al menos 700 ms para evitar parpadeos.
+  ///
+  /// IMPORTANTE: las fotos se precargan con la MISMA clave de caché que usa
+  /// HeroSection (ResizeImage con photoCacheWidth). Si se precargan sin
+  /// redimensionar, la clave es otra y el hero vuelve a decodificar la foto
+  /// al aparecer (se ve la tarjeta blanca un instante).
   Future<void> _preload() async {
     final started = DateTime.now();
     try {
+      final photoWidth = HeroSection.photoCacheWidth(context);
       final tasks = <Future<void>>[
-        for (final asset in <String>[
-          'assets/images/logo_edupago.png',
-          ...HeroSection.imageAssets,
-        ])
-          precacheImage(AssetImage(asset), context).catchError((_) {}),
+        precacheImage(
+          const AssetImage('assets/images/logo_edupago.png'),
+          context,
+        ).catchError((_) {}),
+        for (final asset in HeroSection.imageAssets)
+          precacheImage(
+            ResizeImage.resizeIfNeeded(photoWidth, null, AssetImage(asset)),
+            context,
+          ).catchError((_) {}),
         GoogleFonts.pendingFonts().then<void>((_) {}).catchError((_) {}),
       ];
-      await Future.wait<void>(tasks).timeout(const Duration(seconds: 6));
+      await Future.wait<void>(tasks).timeout(const Duration(seconds: 20));
     } catch (_) {
       // Si algo falla o tarda demasiado, se muestra la página igualmente.
     }
@@ -263,21 +274,30 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      HeroSection(
-                        key: _inicioKey,
-                        topInset: CustomNavbar.reservedHeight,
-                        onStartPressed: _navigateToRegister,
-                        onLoginPressed: _navigateToLogin,
+                      RepaintBoundary(
+                        child: HeroSection(
+                          key: _inicioKey,
+                          topInset: CustomNavbar.reservedHeight,
+                          onStartPressed: _navigateToRegister,
+                          onLoginPressed: _navigateToLogin,
+                        ),
                       ),
-                      const StatsBarSection(),
-                      FeaturesSection(key: _solucionesKey),
-                      SecuritySection(key: _seguridadKey),
-                      ContactSection(key: _contactoKey),
-                      CtaAndFooterSection(
-                        onRegisterPressed: _navigateToRegister,
-                        onContactPressed: () => _scrollToSection(_contactoKey),
-                        onSecurityPressed: () =>
-                            _scrollToSection(_seguridadKey),
+                      RepaintBoundary(child: const StatsBarSection()),
+                      RepaintBoundary(
+                        child: FeaturesSection(key: _solucionesKey),
+                      ),
+                      RepaintBoundary(
+                        child: SecuritySection(key: _seguridadKey),
+                      ),
+                      RepaintBoundary(child: ContactSection(key: _contactoKey)),
+                      RepaintBoundary(
+                        child: CtaAndFooterSection(
+                          onRegisterPressed: _navigateToRegister,
+                          onContactPressed: () =>
+                              _scrollToSection(_contactoKey),
+                          onSecurityPressed: () =>
+                              _scrollToSection(_seguridadKey),
+                        ),
                       ),
                     ],
                   ),
@@ -289,25 +309,28 @@ class _HomeScreenState extends State<HomeScreen> {
               top: 0,
               left: 0,
               right: 0,
-              child: AnimatedBuilder(
-                animation: Listenable.merge([
-                  _activeLink,
-                  _scrolled,
-                  _progress,
-                ]),
-                builder: (context, _) {
-                  return CustomNavbar(
-                    activeLink: _activeLink.value,
-                    isScrolled: _scrolled.value,
-                    scrollProgress: _progress.value,
-                    onInicioPressed: () => _scrollToSection(_inicioKey),
-                    onSolucionesPressed: () => _scrollToSection(_solucionesKey),
-                    onSeguridadPressed: () => _scrollToSection(_seguridadKey),
-                    onContactoPressed: () => _scrollToSection(_contactoKey),
-                    onLoginPressed: _navigateToLogin,
-                    onRegisterPressed: _navigateToRegister,
-                  );
-                },
+              child: RepaintBoundary(
+                child: AnimatedBuilder(
+                  animation: Listenable.merge([
+                    _activeLink,
+                    _scrolled,
+                    _progress,
+                  ]),
+                  builder: (context, _) {
+                    return CustomNavbar(
+                      activeLink: _activeLink.value,
+                      isScrolled: _scrolled.value,
+                      scrollProgress: _progress.value,
+                      onInicioPressed: () => _scrollToSection(_inicioKey),
+                      onSolucionesPressed: () =>
+                          _scrollToSection(_solucionesKey),
+                      onSeguridadPressed: () => _scrollToSection(_seguridadKey),
+                      onContactoPressed: () => _scrollToSection(_contactoKey),
+                      onLoginPressed: _navigateToLogin,
+                      onRegisterPressed: _navigateToRegister,
+                    );
+                  },
+                ),
               ),
             ),
           ],

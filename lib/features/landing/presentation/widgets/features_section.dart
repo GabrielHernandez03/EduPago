@@ -87,7 +87,9 @@ class FeaturesSection extends StatelessWidget {
                             child: RevealOnScroll(
                               delay: Duration(milliseconds: (i % 3) * 100),
                               startScale: 0.97,
-                              child: _FeatureCard(item: _features[i]),
+                              child: RepaintBoundary(
+                                child: _FeatureCard(item: _features[i]),
+                              ),
                             ),
                           ),
                       ],
@@ -131,7 +133,7 @@ class FeaturesSection extends StatelessWidget {
                         children: [
                           for (var i = 0; i < steps.length; i++) ...[
                             if (i != 0) const SizedBox(height: 14.88),
-                            _StepCard(step: steps[i]),
+                            RepaintBoundary(child: _StepCard(step: steps[i])),
                           ],
                         ],
                       );
@@ -144,7 +146,11 @@ class FeaturesSection extends StatelessWidget {
                         children: [
                           for (var i = 0; i < steps.length; i++) ...[
                             if (i != 0) const SizedBox(width: 16.74),
-                            Expanded(child: _StepCard(step: steps[i])),
+                            Expanded(
+                              child: RepaintBoundary(
+                                child: _StepCard(step: steps[i]),
+                              ),
+                            ),
                           ],
                         ],
                       ),

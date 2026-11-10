@@ -67,83 +67,80 @@ class ContactSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final mobile = MediaQuery.sizeOf(context).width < 600;
 
-    // Dos capas del mismo fondo reutilizable:
-    // contacto = ola superior izquierda; faq = ola inferior derecha.
-    // Así las preguntas conservan su ola sin dividir el apartado.
+    // Una sola capa de fondo para Contacto + Preguntas frecuentes.
     return LandingSectionBackground(
-      style: LandingWaveStyle.faq,
-      child: LandingSectionBackground(
-        style: LandingWaveStyle.contact,
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(
-            mobile ? 18.6 : 44.64,
-            mobile ? 53.94 : 72.54,
-            mobile ? 18.6 : 44.64,
-            mobile ? 74.4 : 93,
-          ),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 967.2),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const RevealOnScroll(
-                    child: Column(
-                      children: [
-                        Text(
-                          'Contáctanos',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 33.48,
-                            fontWeight: FontWeight.w900,
-                            color: AppColors.darkNavy,
-                            letterSpacing: -0.8,
-                          ),
+      style: LandingWaveStyle.contact,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          mobile ? 18.6 : 44.64,
+          mobile ? 53.94 : 72.54,
+          mobile ? 18.6 : 44.64,
+          mobile ? 74.4 : 93,
+        ),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 967.2),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const RevealOnScroll(
+                  child: Column(
+                    children: [
+                      Text(
+                        'Contáctanos',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 33.48,
+                          fontWeight: FontWeight.w900,
+                          color: AppColors.darkNavy,
+                          letterSpacing: -0.8,
                         ),
-                        SizedBox(height: 8.37),
-                        Text(
-                          'Nuestro equipo está listo para ayudarte',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: AppColors.textMuted,
-                            fontSize: 14.88,
-                          ),
+                      ),
+                      SizedBox(height: 8.37),
+                      Text(
+                        'Nuestro equipo está listo para ayudarte',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 14.88,
                         ),
-                        SizedBox(height: 6.51),
-                        Text(
-                          'Toca un dato para copiarlo',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Color(0xFF8095B8),
-                            fontStyle: FontStyle.italic,
-                            fontSize: 11.16,
-                          ),
+                      ),
+                      SizedBox(height: 6.51),
+                      Text(
+                        'Toca un dato para copiarlo',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Color(0xFF8095B8),
+                          fontStyle: FontStyle.italic,
+                          fontSize: 11.16,
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 29.76),
+                ),
+                const SizedBox(height: 29.76),
 
-                  // Tres tarjetas alineadas en escritorio; 2 o 1 en pantallas
-                  // pequeñas. El Wrap nunca usa Expanded sin ancho definido.
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final width = constraints.maxWidth;
-                      final columns = width >= 890 ? 3 : (width >= 570 ? 2 : 1);
-                      const gap = 16.74;
-                      final cardWidth = (width - gap * (columns - 1)) / columns;
+                // Tres tarjetas alineadas en escritorio; 2 o 1 en pantallas
+                // pequeñas. El Wrap nunca usa Expanded sin ancho definido.
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final width = constraints.maxWidth;
+                    final columns = width >= 890 ? 3 : (width >= 570 ? 2 : 1);
+                    const gap = 16.74;
+                    final cardWidth = (width - gap * (columns - 1)) / columns;
 
-                      return Wrap(
-                        alignment: WrapAlignment.center,
-                        spacing: gap,
-                        runSpacing: gap,
-                        children: [
-                          for (var i = 0; i < _integrantes.length; i++)
-                            SizedBox(
-                              width: cardWidth,
-                              child: RevealOnScroll(
-                                delay: Duration(milliseconds: 100 + i * 90),
-                                startScale: 0.98,
+                    return Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: gap,
+                      runSpacing: gap,
+                      children: [
+                        for (var i = 0; i < _integrantes.length; i++)
+                          SizedBox(
+                            width: cardWidth,
+                            child: RevealOnScroll(
+                              delay: Duration(milliseconds: 100 + i * 90),
+                              startScale: 0.98,
+                              child: RepaintBoundary(
                                 child: _ContactCard(
                                   icon: Icons.person_rounded,
                                   title: _integrantes[i].nombre,
@@ -157,16 +154,18 @@ class ContactSection extends StatelessWidget {
                                 ),
                               ),
                             ),
-                        ],
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 20.46),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 372),
-                    child: RevealOnScroll(
-                      delay: const Duration(milliseconds: 350),
-                      startScale: 0.98,
+                          ),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 20.46),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 372),
+                  child: RevealOnScroll(
+                    delay: const Duration(milliseconds: 350),
+                    startScale: 0.98,
+                    child: RepaintBoundary(
                       child: _ContactCard(
                         icon: Icons.mail_outline_rounded,
                         title: 'Correo general',
@@ -177,62 +176,64 @@ class ContactSection extends StatelessWidget {
                       ),
                     ),
                   ),
+                ),
 
-                  // Preguntas frecuentes: DEBAJO de las cuatro tarjetas.
-                  SizedBox(height: mobile ? 66.96 : 87.42),
-                  const RevealOnScroll(
-                    child: Column(
-                      children: [
-                        Text(
-                          'PREGUNTAS FRECUENTES',
-                          style: TextStyle(
-                            color: AppColors.primaryBlue,
-                            fontSize: 11.16,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 1.1,
-                          ),
+                // Preguntas frecuentes: DEBAJO de las cuatro tarjetas.
+                SizedBox(height: mobile ? 66.96 : 87.42),
+                const RevealOnScroll(
+                  child: Column(
+                    children: [
+                      Text(
+                        'PREGUNTAS FRECUENTES',
+                        style: TextStyle(
+                          color: AppColors.primaryBlue,
+                          fontSize: 11.16,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.1,
                         ),
-                        SizedBox(height: 11.16),
-                        Text(
-                          'Resolvemos tus dudas.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: AppColors.darkNavy,
-                            fontSize: 29.76,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: -0.6,
-                          ),
+                      ),
+                      SizedBox(height: 11.16),
+                      Text(
+                        'Resolvemos tus dudas.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: AppColors.darkNavy,
+                          fontSize: 29.76,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -0.6,
                         ),
-                        SizedBox(height: 7.44),
-                        Text(
-                          'Lo esencial antes de empezar con EduPago.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: AppColors.textMuted,
-                            fontSize: 13.02,
-                          ),
+                      ),
+                      SizedBox(height: 7.44),
+                      Text(
+                        'Lo esencial antes de empezar con EduPago.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 13.02,
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 25.11),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 762.6),
-                    child: Column(
-                      children: [
-                        for (var i = 0; i < _preguntas.length; i++)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 10.23),
-                            child: RevealOnScroll(
-                              delay: Duration(milliseconds: (i % 4) * 65),
+                ),
+                const SizedBox(height: 25.11),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 762.6),
+                  child: Column(
+                    children: [
+                      for (var i = 0; i < _preguntas.length; i++)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 10.23),
+                          child: RevealOnScroll(
+                            delay: Duration(milliseconds: (i % 4) * 65),
+                            child: RepaintBoundary(
                               child: _FaqTile(entry: _preguntas[i]),
                             ),
                           ),
-                      ],
-                    ),
+                        ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),
