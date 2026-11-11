@@ -990,43 +990,53 @@ class _RepresentativeCalendarSectionState
   }) => _CalendarHover(
     child: Container(
       constraints: const BoxConstraints(minHeight: 100),
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 17),
+      clipBehavior: Clip.antiAlias,
       decoration: _cardDecoration(),
-      child: Row(
+      child: Stack(
+        alignment: Alignment.centerLeft,
         children: [
-          Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              color: tint,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(icon, color: accent, size: 23),
-          ),
-          const SizedBox(width: 13),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+          // Círculo decorativo en la esquina superior derecha; crece al hover.
+          Positioned.fill(child: _CornerCircle(color: accent)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 17),
+            child: Row(
               children: [
-                Text(
-                  value,
-                  style: const TextStyle(
-                    color: _navy,
-                    fontSize: 25,
-                    fontWeight: FontWeight.w800,
-                    height: 1.1,
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: tint,
+                    borderRadius: BorderRadius.circular(14),
                   ),
+                  child: Icon(icon, color: accent, size: 23),
                 ),
-                const SizedBox(height: 5),
-                Text(
-                  title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: _muted,
-                    fontSize: 11.5,
-                    height: 1.3,
+                const SizedBox(width: 13),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        value,
+                        style: const TextStyle(
+                          color: _navy,
+                          fontSize: 25,
+                          fontWeight: FontWeight.w800,
+                          height: 1.1,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _muted,
+                          fontSize: 11.5,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -3212,4 +3222,73 @@ class _CalendarHoverState extends State<_CalendarHover> {
       ),
     );
   }
+}
+
+/// Círculo decorativo anclado a la esquina superior derecha de una tarjeta.
+/// Crece un 25 % cuando el cursor pasa por encima, sin mover el contenido.
+class _CornerCircle extends StatefulWidget {
+  const _CornerCircle({required this.color});
+
+  final Color color;
+
+  @override
+  State<_CornerCircle> createState() => _CornerCircleState();
+}
+
+class _CornerCircleState extends State<_CornerCircle> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    return MouseRegion(
+      opaque: false,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: IgnorePointer(
+        child: TweenAnimationBuilder<double>(
+          tween: Tween<double>(end: _hovered ? 1.25 : 1.0),
+          duration: reduceMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 330),
+          curve: Curves.easeOutCubic,
+          builder: (context, scale, _) =>
+              CustomPaint(painter: _CornerCirclePainter(widget.color, scale)),
+        ),
+      ),
+    );
+  }
+}
+
+class _CornerCirclePainter extends CustomPainter {
+  const _CornerCirclePainter(this.color, this.scale);
+
+  final Color color;
+  final double scale;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    if (w <= 0 || h <= 0) return;
+    // Radio proporcional a la altura de la tarjeta; el centro se ancla a la
+    // esquina superior derecha en proporción al radio, así el círculo se ve
+    // igual de equilibrado en tarjetas bajas y altas.
+    final radius = (h * 0.5).clamp(34.0, 75.0).toDouble();
+    canvas.save();
+    // Escala anclada en la esquina superior derecha.
+    canvas.translate(w, 0);
+    canvas.scale(scale, scale);
+    canvas.translate(-w, 0);
+    canvas.drawCircle(
+      Offset(w - radius * 0.45, radius * 0.2),
+      radius,
+      Paint()..color = color.withValues(alpha: 0.10),
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _CornerCirclePainter old) =>
+      old.color != color || old.scale != scale;
 }

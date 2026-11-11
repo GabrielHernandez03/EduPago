@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../academics/presentation/widgets/academic_widgets.dart';
 import '../../data/student_repository.dart';
 import '../../data/supabase_student_repository.dart';
 import '../../domain/student_account.dart';
@@ -79,7 +80,9 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
       _error = null;
     });
     try {
-      final snapshot = await _repository.fetchDirectory(colegioId: widget.colegioId);
+      final snapshot = await _repository.fetchDirectory(
+        colegioId: widget.colegioId,
+      );
       if (!mounted || request != _request) return;
       setState(() {
         _students = snapshot.students;
@@ -96,20 +99,21 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
       setState(() {
         _loading = false;
         _refreshing = false;
-        _error = 'No se pudo cargar el directorio o los datos de cuotas. Verifica la conexión y los permisos del colegio.';
+        _error =
+            'No se pudo cargar el directorio o los datos de cuotas. Verifica la conexión y los permisos del colegio.';
       });
     }
   }
 
   List<String> get _grades =>
-      _students.map((s) => s.grade).toSet().toList()..sort();
+      _students.map((s) => s.grade).toSet().toList()..sort(compareSchoolGrade);
   List<String> get _sections =>
       _students
           .where((s) => _grade == 'todos' || s.grade == _grade)
           .map((s) => s.section)
           .toSet()
           .toList()
-        ..sort();
+        ..sort(compareSchoolText);
 
   List<StudentAccount> get _visible {
     final filtered = _students.where((s) {
@@ -124,16 +128,30 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
         s.grade,
         s.section,
         s.identification,
-        studentText(s.data, ['codigo_escolar', 'matricula', 'codigo_estudiante']),
+        studentText(s.data, [
+          'codigo_escolar',
+          'matricula',
+          'codigo_estudiante',
+        ]),
         ...s.representatives.map(
-          (r) => '${studentText(r, ['nombres'])} ${studentText(r, ['apellidos'])}',
+          (r) =>
+              '${studentText(r, ['nombres'])} ${studentText(r, ['apellidos'])}',
         ),
       ].any((v) => v.toLowerCase().contains(_search));
     }).toList();
-    // Los morosos más antiguos se muestran primero si se filtra Morosos.
-    if (_status == 'moroso') {
-      filtered.sort((a, b) => b.maxOverdueDays.compareTo(a.maxOverdueDays));
-    }
+    // Orden estable por grado (1 a 6), sección y nombre, antes de paginar.
+    filtered.sort(
+      (a, b) => compareSchoolStudent(
+        gradeA: a.grade,
+        sectionA: a.section,
+        nameA: a.name,
+        idA: a.id,
+        gradeB: b.grade,
+        sectionB: b.section,
+        nameB: b.name,
+        idB: b.id,
+      ),
+    );
     return filtered;
   }
 
@@ -194,9 +212,8 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
   );
 
   Widget _statCard(String label, String value, IconData icon, Color accent) =>
-      Container(
+      SchoolCard(
         padding: const EdgeInsets.all(16),
-        decoration: _card(),
         child: Row(
           children: [
             Container(
@@ -260,127 +277,153 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
     onChanged: onChange,
   );
 
-  Widget _filters() => Container(
-    padding: const EdgeInsets.all(16),
-    decoration: _card(),
-    child: LayoutBuilder(
-      builder: (context, box) {
-        final narrow = box.maxWidth < 700;
-        final search = TextField(
-          controller: _searchController,
-          decoration: InputDecoration(
-            hintText: 'Buscar estudiante, cédula o representante',
-            prefixIcon: const Icon(Icons.search_rounded, color: _blue),
-            suffixIcon: _search.isNotEmpty
-                ? IconButton(
-                    tooltip: 'Limpiar búsqueda',
-                    icon: const Icon(Icons.close_rounded),
-                    onPressed: _searchController.clear,
-                  )
-                : null,
-            filled: true,
-            fillColor: const Color(0xFFF4F7FD),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(11),
-              borderSide: const BorderSide(color: _border),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(11),
-              borderSide: const BorderSide(color: _blue, width: 1.8),
-            ),
-          ),
-        );
-        final grade = _picker(
-          label: 'Grado',
-          value: _grade,
-          items: [
-            const DropdownMenuItem(
-              value: 'todos',
-              child: Text('Todos los grados'),
-            ),
-            for (final v in _grades)
-              DropdownMenuItem(
-                value: v,
-                child: Text(v, overflow: TextOverflow.ellipsis),
+  Widget _filters() => SchoolCard(
+    padding: const EdgeInsets.all(18),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SchoolHeading(
+          title: 'Buscar y filtrar',
+          icon: Icons.manage_search_rounded,
+        ),
+        const SizedBox(height: 18),
+        LayoutBuilder(
+          builder: (context, box) {
+            final narrow = box.maxWidth < 700;
+            final search = TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Buscar estudiante, cédula o representante',
+                prefixIcon: const Icon(Icons.search_rounded, color: _blue),
+                suffixIcon: _search.isNotEmpty
+                    ? IconButton(
+                        tooltip: 'Limpiar búsqueda',
+                        icon: const Icon(Icons.close_rounded),
+                        onPressed: _searchController.clear,
+                      )
+                    : null,
+                filled: true,
+                fillColor: const Color(0xFFF4F7FD),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(11),
+                  borderSide: const BorderSide(color: _border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(11),
+                  borderSide: const BorderSide(color: _blue, width: 1.8),
+                ),
               ),
-          ],
-          onChange: (v) => setState(() {
-            _grade = v ?? 'todos';
-            _section = 'todos';
-            _page = 0;
-          }),
-        );
-        final section = _picker(
-          label: 'Sección',
-          value: _section,
-          items: [
-            const DropdownMenuItem(
-              value: 'todos',
-              child: Text('Todas las secciones'),
-            ),
-            for (final v in _sections)
-              DropdownMenuItem(
-                value: v,
-                child: Text(v, overflow: TextOverflow.ellipsis),
-              ),
-          ],
-          onChange: (v) => setState(() {
-            _section = v ?? 'todos';
-            _page = 0;
-          }),
-        );
-        final status = _picker(
-          label: 'Estado',
-          value: _status,
-          items: const [
-            DropdownMenuItem(value: 'todos', child: Text('Todos')),
-            DropdownMenuItem(value: 'solvente', child: Text('Solventes')),
-            DropdownMenuItem(value: 'pendiente', child: Text('Pendientes')),
-            DropdownMenuItem(value: 'moroso', child: Text('Morosos')),
-            DropdownMenuItem(value: 'sin_cuotas', child: Text('Sin cuotas')),
-            DropdownMenuItem(
-              value: 'sin_datos',
-              child: Text('Sin información'),
-            ),
-          ],
-          onChange: (v) => setState(() {
-            _status = v ?? 'todos';
-            _page = 0;
-          }),
-        );
-        if (narrow) {
-          return Column(
-            children: [
-              search,
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(child: grade),
-                  const SizedBox(width: 10),
-                  Expanded(child: section),
-                ],
-              ),
-              const SizedBox(height: 12),
-              status,
-            ],
-          );
-        }
-        return Column(
-          children: [
-            search,
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(child: grade),
-                const SizedBox(width: 12),
-                Expanded(child: section),
-                const SizedBox(width: 12),
-                Expanded(child: status),
+            );
+            final grade = _picker(
+              label: 'Grado',
+              value: _grade,
+              items: [
+                const DropdownMenuItem(
+                  value: 'todos',
+                  child: Text('Todos los grados'),
+                ),
+                for (final v in _grades)
+                  DropdownMenuItem(
+                    value: v,
+                    child: Text(v, overflow: TextOverflow.ellipsis),
+                  ),
               ],
-            ),
-          ],
-        );
-      },
+              onChange: (v) => setState(() {
+                _grade = v ?? 'todos';
+                _section = 'todos';
+                _page = 0;
+              }),
+            );
+            final section = _picker(
+              label: 'Sección',
+              value: _section,
+              items: [
+                const DropdownMenuItem(
+                  value: 'todos',
+                  child: Text('Todas las secciones'),
+                ),
+                for (final v in _sections)
+                  DropdownMenuItem(
+                    value: v,
+                    child: Text(v, overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChange: (v) => setState(() {
+                _section = v ?? 'todos';
+                _page = 0;
+              }),
+            );
+            final status = _picker(
+              label: 'Estado',
+              value: _status,
+              items: const [
+                DropdownMenuItem(value: 'todos', child: Text('Todos')),
+                DropdownMenuItem(value: 'solvente', child: Text('Solventes')),
+                DropdownMenuItem(value: 'pendiente', child: Text('Pendientes')),
+                DropdownMenuItem(value: 'moroso', child: Text('Morosos')),
+                DropdownMenuItem(
+                  value: 'sin_cuotas',
+                  child: Text('Sin cuotas'),
+                ),
+                DropdownMenuItem(
+                  value: 'sin_datos',
+                  child: Text('Sin información'),
+                ),
+              ],
+              onChange: (v) => setState(() {
+                _status = v ?? 'todos';
+                _page = 0;
+              }),
+            );
+            if (box.maxWidth < 400 ||
+                MediaQuery.textScalerOf(context).scale(14) > 20) {
+              return Column(
+                children: [
+                  search,
+                  const SizedBox(height: 14),
+                  grade,
+                  const SizedBox(height: 14),
+                  section,
+                  const SizedBox(height: 14),
+                  status,
+                ],
+              );
+            }
+            if (narrow) {
+              return Column(
+                children: [
+                  search,
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(child: grade),
+                      const SizedBox(width: 10),
+                      Expanded(child: section),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  status,
+                ],
+              );
+            }
+            return Column(
+              children: [
+                search,
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(child: grade),
+                    const SizedBox(width: 12),
+                    Expanded(child: section),
+                    const SizedBox(width: 12),
+                    Expanded(child: status),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
+      ],
     ),
   );
 
@@ -401,239 +444,257 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
     final activePage = pages == 0 ? 0 : _page.clamp(0, pages - 1).toInt();
     final current = visible.skip(activePage * _perPage).take(_perPage).toList();
 
-    return RefreshIndicator(
-      color: _blue,
-      onRefresh: _fetch,
-      child: SingleChildScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: EdgeInsets.fromLTRB(
-          MediaQuery.sizeOf(context).width < 640 ? 18 : 36,
-          24,
-          MediaQuery.sizeOf(context).width < 640 ? 18 : 36,
-          48,
-        ),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1200),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Wrap(
-                  alignment: WrapAlignment.spaceBetween,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 16,
-                  runSpacing: 12,
+    return LayoutBuilder(
+      builder: (context, layout) {
+        final wideTable =
+            layout.maxWidth >= 1000 &&
+            MediaQuery.textScalerOf(context).scale(14) <= 18;
+        return RefreshIndicator(
+          color: _blue,
+          onRefresh: _fetch,
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.fromLTRB(
+              layout.maxWidth < 640 ? 18 : 36,
+              24,
+              layout.maxWidth < 640 ? 18 : 36,
+              48,
+            ),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1200),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Estudiantes',
-                          style: TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.w800,
-                            color: _navy,
+                    LayoutBuilder(
+                      builder: (context, box) {
+                        const heading = SchoolHeading(
+                          title: 'Estudiantes',
+                          icon: Icons.people,
+                          primary: true,
+                          subtitle:
+                              'Directorio académico y estado de cuenta por estudiante.',
+                        );
+                        final action = OutlinedButton.icon(
+                          onPressed: _refreshing ? null : _fetch,
+                          icon: _refreshing
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.refresh_rounded, size: 18),
+                          label: Text(
+                            _refreshing ? 'Actualizando...' : 'Actualizar',
                           ),
-                        ),
-                        SizedBox(height: 5),
-                        Text(
-                          'Directorio académico y estado de cuenta por estudiante.',
-                          style: TextStyle(color: _muted, fontSize: 13),
-                        ),
-                      ],
+                        );
+                        if (box.maxWidth < 650 ||
+                            MediaQuery.textScalerOf(context).scale(14) > 20) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              heading,
+                              const SizedBox(height: 14),
+                              action,
+                            ],
+                          );
+                        }
+                        return Row(
+                          children: [
+                            const Expanded(child: heading),
+                            const SizedBox(width: 18),
+                            action,
+                          ],
+                        );
+                      },
                     ),
-                    OutlinedButton.icon(
-                      onPressed: _refreshing ? null : _fetch,
-                      icon: _refreshing
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.refresh_rounded, size: 18),
-                      label: Text(
-                        _refreshing ? 'Actualizando...' : 'Actualizar',
+                    const SizedBox(height: 22),
+                    if (_error != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEF2F2),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(_error!, style: const TextStyle(color: _red)),
+                            const SizedBox(height: 8),
+                            TextButton.icon(
+                              onPressed: _fetch,
+                              icon: const Icon(Icons.refresh_rounded),
+                              label: const Text('Reintentar'),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 22),
-                if (_error != null) ...[
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFEF2F2),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(_error!, style: const TextStyle(color: _red)),
-                        const SizedBox(height: 8),
-                        TextButton.icon(
-                          onPressed: _fetch,
-                          icon: const Icon(Icons.refresh_rounded),
-                          label: const Text('Reintentar'),
+                      const SizedBox(height: 16),
+                    ],
+                    if (_loading) ...[
+                      const SizedBox(height: 100),
+                      const Center(
+                        child: CircularProgressIndicator(color: _blue),
+                      ),
+                    ] else ...[
+                      LayoutBuilder(
+                        builder: (context, box) {
+                          final w = box.maxWidth;
+                          final columns = w < 540 ? 1 : (w < 850 ? 2 : 4);
+                          final width = (w - (columns - 1) * 12) / columns;
+                          return Wrap(
+                            spacing: 12,
+                            runSpacing: 12,
+                            children: [
+                              SizedBox(
+                                width: width,
+                                child: _statCard(
+                                  'Estudiantes',
+                                  '${_students.length}',
+                                  Icons.people_outline,
+                                  _blue,
+                                ),
+                              ),
+                              SizedBox(
+                                width: width,
+                                child: _statCard(
+                                  'Solventes',
+                                  '${stats['solvente']}',
+                                  Icons.verified_outlined,
+                                  _green,
+                                ),
+                              ),
+                              SizedBox(
+                                width: width,
+                                child: _statCard(
+                                  'Pendientes',
+                                  '${stats['pendiente']}',
+                                  Icons.schedule_rounded,
+                                  _orange,
+                                ),
+                              ),
+                              SizedBox(
+                                width: width,
+                                child: _statCard(
+                                  'Morosos',
+                                  '${stats['moroso']}',
+                                  Icons.warning_amber_rounded,
+                                  _red,
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                      if (!_balancesAvailable || stats['sin_datos']! > 0) ...[
+                        const SizedBox(height: 12),
+                        _warning(
+                          'Algunos saldos no pudieron verificarse. Los estudiantes afectados aparecen como «Sin información», no como solventes.',
                         ),
                       ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-                if (_loading) ...[
-                  const SizedBox(height: 100),
-                  const Center(child: CircularProgressIndicator(color: _blue)),
-                ] else ...[
-                  LayoutBuilder(
-                    builder: (context, box) {
-                      final w = box.maxWidth;
-                      final columns = w < 540 ? 1 : (w < 850 ? 2 : 4);
-                      final width = (w - (columns - 1) * 12) / columns;
-                      return Wrap(
-                        spacing: 12,
-                        runSpacing: 12,
+                      const SizedBox(height: 18),
+                      _filters(),
+                      const SizedBox(height: 16),
+                      Row(
                         children: [
-                          SizedBox(
-                            width: width,
-                            child: _statCard(
-                              'Estudiantes',
-                              '${_students.length}',
-                              Icons.people_outline,
-                              _blue,
+                          Expanded(
+                            child: SchoolHeading(
+                              title:
+                                  '${visible.length} de ${_students.length} estudiantes',
+                              icon: Icons.format_list_bulleted_rounded,
                             ),
                           ),
-                          SizedBox(
-                            width: width,
-                            child: _statCard(
-                              'Solventes',
-                              '${stats['solvente']}',
-                              Icons.verified_outlined,
-                              _green,
+                          if (_grade != 'todos' ||
+                              _section != 'todos' ||
+                              _status != 'todos' ||
+                              _search.isNotEmpty)
+                            TextButton(
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() {
+                                  _grade = 'todos';
+                                  _section = 'todos';
+                                  _status = 'todos';
+                                  _page = 0;
+                                });
+                              },
+                              child: const Text('Limpiar filtros'),
                             ),
-                          ),
-                          SizedBox(
-                            width: width,
-                            child: _statCard(
-                              'Pendientes',
-                              '${stats['pendiente']}',
-                              Icons.schedule_rounded,
-                              _orange,
-                            ),
-                          ),
-                          SizedBox(
-                            width: width,
-                            child: _statCard(
-                              'Morosos',
-                              '${stats['moroso']}',
-                              Icons.warning_amber_rounded,
-                              _red,
-                            ),
-                          ),
                         ],
-                      );
-                    },
-                  ),
-                  if (!_balancesAvailable || stats['sin_datos']! > 0) ...[
-                    const SizedBox(height: 12),
-                    _warning(
-                      'Algunos saldos no pudieron verificarse. Los estudiantes afectados aparecen como «Sin información», no como solventes.',
-                    ),
-                  ],
-                  const SizedBox(height: 18),
-                  _filters(),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          '${visible.length} de ${_students.length} estudiantes',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            color: _navy,
-                          ),
-                        ),
                       ),
-                      if (_grade != 'todos' ||
-                          _section != 'todos' ||
-                          _status != 'todos' ||
-                          _search.isNotEmpty)
-                        TextButton(
-                          onPressed: () {
-                            _searchController.clear();
-                            setState(() {
-                              _grade = 'todos';
-                              _section = 'todos';
-                              _status = 'todos';
-                              _page = 0;
-                            });
-                          },
-                          child: const Text('Limpiar filtros'),
+                      const SizedBox(height: 10),
+                      if (current.isEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 50,
+                            horizontal: 20,
+                          ),
+                          decoration: _card(),
+                          child: Column(
+                            children: [
+                              const Icon(
+                                Icons.school_outlined,
+                                color: _muted,
+                                size: 40,
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                _students.isEmpty
+                                    ? 'No hay estudiantes registrados.'
+                                    : 'No se encontraron estudiantes con esos filtros.',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(color: _muted),
+                              ),
+                            ],
+                          ),
+                        )
+                      else ...[
+                        if (wideTable) _headerTable(),
+                        for (final student in current)
+                          _studentCard(student, wide: wideTable),
+                      ],
+                      if (pages > 1)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 10),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              IconButton(
+                                tooltip: 'Página anterior',
+                                onPressed: activePage > 0
+                                    ? () =>
+                                          setState(() => _page = activePage - 1)
+                                    : null,
+                                icon: const Icon(Icons.chevron_left_rounded),
+                              ),
+                              Text(
+                                'Página ${activePage + 1} de $pages',
+                                style: const TextStyle(
+                                  color: _muted,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Página siguiente',
+                                onPressed: activePage + 1 < pages
+                                    ? () =>
+                                          setState(() => _page = activePage + 1)
+                                    : null,
+                                icon: const Icon(Icons.chevron_right_rounded),
+                              ),
+                            ],
+                          ),
                         ),
                     ],
-                  ),
-                  const SizedBox(height: 10),
-                  if (current.isEmpty)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 50,
-                        horizontal: 20,
-                      ),
-                      decoration: _card(),
-                      child: Column(
-                        children: [
-                          const Icon(
-                            Icons.school_outlined,
-                            color: _muted,
-                            size: 40,
-                          ),
-                          const SizedBox(height: 10),
-                          Text(
-                            _students.isEmpty
-                                ? 'No hay estudiantes registrados.'
-                                : 'No se encontraron estudiantes con esos filtros.',
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(color: _muted),
-                          ),
-                        ],
-                      ),
-                    )
-                  else ...[
-                    if (MediaQuery.sizeOf(context).width >= 920) _headerTable(),
-                    for (final student in current) _studentCard(student),
                   ],
-                  if (pages > 1)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 10),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          IconButton(
-                            tooltip: 'Página anterior',
-                            onPressed: activePage > 0
-                                ? () => setState(() => _page = activePage - 1)
-                                : null,
-                            icon: const Icon(Icons.chevron_left_rounded),
-                          ),
-                          Text(
-                            'Página ${activePage + 1} de $pages',
-                            style: const TextStyle(color: _muted, fontSize: 12),
-                          ),
-                          IconButton(
-                            tooltip: 'Página siguiente',
-                            onPressed: activePage + 1 < pages
-                                ? () => setState(() => _page = activePage + 1)
-                                : null,
-                            icon: const Icon(Icons.chevron_right_rounded),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-              ],
+                ),
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -708,9 +769,8 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
     ),
   );
 
-  Widget _studentCard(StudentAccount s) {
+  Widget _studentCard(StudentAccount s, {required bool wide}) {
     final status = s.status(_balancesAvailable);
-    final wide = MediaQuery.sizeOf(context).width >= 920;
     final student = Row(
       children: [
         CircleAvatar(
@@ -793,10 +853,9 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
         ),
       ),
     );
-    return Container(
+    return SchoolCard(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(15),
-      decoration: _card(),
       child: wide
           ? Row(
               children: [
@@ -837,11 +896,23 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
                   ],
                 ),
                 const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(child: debt),
-                    action,
-                  ],
+                LayoutBuilder(
+                  builder: (context, box) {
+                    if (box.maxWidth < 380 ||
+                        MediaQuery.textScalerOf(context).scale(14) > 18) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [debt, const SizedBox(height: 14), action],
+                      );
+                    }
+                    return Row(
+                      children: [
+                        Expanded(child: debt),
+                        const SizedBox(width: 12),
+                        action,
+                      ],
+                    );
+                  },
                 ),
               ],
             ),
@@ -1179,7 +1250,11 @@ class _StudentDetailsDialog extends StatelessWidget {
           _detailField('Sección', student.section),
           _detailField(
             'Matrícula',
-            studentText(data, ['matricula', 'codigo_escolar', 'codigo_estudiante']),
+            studentText(data, [
+              'matricula',
+              'codigo_escolar',
+              'codigo_estudiante',
+            ]),
           ),
           Padding(
             padding: const EdgeInsets.only(top: 2),
@@ -1256,7 +1331,10 @@ class _StudentDetailsDialog extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         _detailField('Cédula', studentText(rep, ['cedula', 'ci'])),
-        _detailField('Teléfono', studentText(rep, ['telefono_whatsapp', 'telefono'])),
+        _detailField(
+          'Teléfono',
+          studentText(rep, ['telefono_whatsapp', 'telefono']),
+        ),
         _detailField('Correo', studentText(rep, ['email', 'correo'])),
       ],
     );
@@ -1831,7 +1909,9 @@ class _StudentDetailsDialog extends StatelessWidget {
 
   Widget _applicationRow(Map<String, dynamic> app) {
     final payment = paymentById[studentText(app, ['pago_id'])];
-    final reference = payment == null ? '' : studentText(payment, ['referencia']);
+    final reference = payment == null
+        ? ''
+        : studentText(payment, ['referencia']);
     final date = payment == null ? '' : studentText(payment, ['fecha_pago']);
     final amount =
         studentNumber(app['monto_usd_aplicado']) ??

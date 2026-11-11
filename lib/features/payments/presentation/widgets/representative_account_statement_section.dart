@@ -340,7 +340,7 @@ class _RepresentativeAccountStatementSectionState
               Positioned.fill(
                 child: IgnorePointer(
                   child: TweenAnimationBuilder<double>(
-                    tween: Tween<double>(end: hovered ? 1.13 : 1.0),
+                    tween: Tween<double>(end: hovered ? 1.25 : 1.0),
                     duration: reduceMotion
                         ? Duration.zero
                         : const Duration(milliseconds: 330),
@@ -1104,7 +1104,7 @@ class _RepresentativeAccountStatementSectionState
       return ('Vencida', AppColors.errorRed, Icons.error_outline_rounded);
     }
     if (c.aplicadoUsd > kToleranciaSaldoUsd) {
-      return ('Parcial', AppColors.warningAmber, Icons.timelapse_rounded);
+      return ('Parcial', AppColors.primaryBlue, Icons.timelapse_rounded);
     }
     return ('Pendiente', AppColors.warningAmber, Icons.schedule_rounded);
   }
@@ -1593,8 +1593,9 @@ class _FamilyMarkPainter extends CustomPainter {
   bool shouldRepaint(_FamilyMarkPainter old) => old.background != background;
 }
 
-// Tres capas orgánicas muy tenues, limitadas a la esquina superior derecha.
-// El color se parametriza para respetar el estado de solvencia.
+// Círculo decorativo en la esquina superior derecha. El color se parametriza
+// para respetar el estado de solvencia. Con `scale` > 1 (hover) crece anclado
+// a la esquina, sin mover el contenido de la tarjeta.
 class _FeatureCornerCurvesPainter extends CustomPainter {
   final Color color;
   final double scale;
@@ -1606,33 +1607,19 @@ class _FeatureCornerCurvesPainter extends CustomPainter {
     final h = size.height;
     if (w <= 0 || h <= 0) return;
 
-    // Se ancla en la esquina superior derecha: al aumentar de 1 a 1.13,
-    // las ondas avanzan suavemente hacia abajo y hacia la izquierda.
+    // Radio proporcional a la altura para que encaje en tarjetas bajas.
+    final radius = (h * 0.5).clamp(34.0, 75.0).toDouble();
+
     canvas.save();
+    // Escala anclada en la esquina superior derecha.
     canvas.translate(w, 0);
     canvas.scale(scale, scale);
     canvas.translate(-w, 0);
-
-    final outer = Path()
-      ..moveTo(w - 210, 0)
-      ..cubicTo(w - 165, 55, w - 118, 127, w, 96)
-      ..lineTo(w, 0)
-      ..close();
-    canvas.drawPath(outer, Paint()..color = color.withValues(alpha: 0.060));
-
-    final mid = Path()
-      ..moveTo(w - 138, 0)
-      ..cubicTo(w - 111, 44, w - 66, 85, w, 60)
-      ..lineTo(w, 0)
-      ..close();
-    canvas.drawPath(mid, Paint()..color = color.withValues(alpha: 0.055));
-
-    final inner = Path()
-      ..moveTo(w - 68, 0)
-      ..cubicTo(w - 48, 28, w - 24, 44, w, 35)
-      ..lineTo(w, 0)
-      ..close();
-    canvas.drawPath(inner, Paint()..color = color.withValues(alpha: 0.055));
+    canvas.drawCircle(
+      Offset(w - radius * 0.45, radius * 0.2),
+      radius,
+      Paint()..color = color.withValues(alpha: 0.10),
+    );
     canvas.restore();
   }
 

@@ -21,9 +21,25 @@ const _kCedPrefixes = {
   'P-': 'Pasaporte',
 };
 
+/// Pasos del registro:
+///  1. cédula (verificación contra la institución)
+///  2. datos de contacto (nombres, correo, teléfono)
+///  3. contraseña y términos
+const int _kTotalSteps = 3;
+
+const List<AuthStepInfo> _kStepsInfo = [
+  AuthStepInfo(
+    'Verifica tu cédula',
+    'Confirmamos que figuras como representante.',
+  ),
+  AuthStepInfo('Tus datos', 'Nombre, correo y teléfono de contacto.'),
+  AuthStepInfo('Tu contraseña', 'Crea tu acceso y confirma tu correo.'),
+];
+
 class _RegisterScreenState extends State<RegisterScreen> {
   final _step1FormKey = GlobalKey<FormState>();
   final _step2FormKey = GlobalKey<FormState>();
+  final _step3FormKey = GlobalKey<FormState>();
 
   // Paso 1: Cédula y FocusNode
   final _cedulaController = TextEditingController();
@@ -61,11 +77,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String? _formError; // errores generales -> aviso sobre el botón
   bool _termsError = false;
 
-  // Pestaña superior (0 = Registro, 1 = Iniciar sesión)
-  int _authTab = 0;
-  bool _leavingToLogin = false;
-
-  // Paso 2: Inputs y FocusNodes para navegación con Enter
+  // Paso 2 y 3: Inputs y FocusNodes para navegación con Enter
   final _nombresController = TextEditingController();
   final _apellidosController = TextEditingController();
   final _emailController = TextEditingController();
@@ -94,7 +106,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void initState() {
     super.initState();
-    // El checklist de la contraseña solo se ve mientras el campo tiene foco.
     _passwordFocusNode.addListener(_onPasswordFocusChanged);
   }
 
@@ -147,17 +158,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  // --- VALIDAR CÉDULA (llama a la función segura de Supabase)
+  // --- PASO 1: VALIDAR CÉDULA (llama a la función segura de Supabase)
   Future<void> validateCedula() async {
-    if (!_step1FormKey.currentState!.validate()) return;
-
+    if (_isLoading) return;
     setState(() {
-      _isLoading = true;
       _cedulaError = false;
       _cedulaYaRegistrada = false;
       _cedulaCustomError = null;
       _formError = null;
     });
+    // Espera a que el campo se reconstruya sin los errores viejos del servidor;
+    // si no, validate() los vería como actuales y bloquearía el reintento.
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    if (!_step1FormKey.currentState!.validate()) return;
+
+    setState(() => _isLoading = true);
 
     try {
       final res = await supabase.rpc(
@@ -215,7 +231,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  // --- CREAR CUENTA EN SUPABASE AUTH
+  // --- PASO 2 -> 3: datos de contacto válidos, pasa a la contraseña
+  void _continueToPassword() {
+    if (!_step2FormKey.currentState!.validate()) return;
+    setState(() {
+      _currentStep = 3;
+      _formError = null;
+    });
+  }
+
+  // --- PASO 3: CREAR CUENTA EN SUPABASE AUTH
   Future<void> submitRegistration() async {
     if (_isLoading) return;
     setState(() {
@@ -228,7 +253,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     await WidgetsBinding.instance.endOfFrame;
     if (!mounted) return;
 
-    final bool formOk = _step2FormKey.currentState!.validate();
+    final bool formOk = _step3FormKey.currentState!.validate();
     if (!_termsAccepted) setState(() => _termsError = true);
 
     if (!formOk || !_termsAccepted) {
@@ -268,8 +293,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
           user != null && (user.identities?.isEmpty ?? false);
 
       if (emailYaRegistrado) {
+        // El correo se edita en el paso 2: se vuelve allí para mostrar el error.
         setState(() {
           _isLoading = false;
+          _currentStep = 2;
           _emailServerError =
               'Este correo ya está asociado a una cuenta. Inicia sesión o recupera tu contraseña.';
         });
@@ -300,7 +327,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
           _showPasswordErrors = true;
         } else if (m.contains('already registered') ||
             m.contains('already been registered')) {
-          // Correo repetido -> en el campo de correo
+          // Correo repetido -> en el campo de correo (paso 2)
+          _currentStep = 2;
           _emailServerError =
               'Este correo ya está asociado a una cuenta. Inicia sesión o recupera tu contraseña.';
         } else if (e.message.contains('Database error')) {
@@ -333,171 +361,47 @@ class _RegisterScreenState extends State<RegisterScreen> {
       context: context,
       barrierDismissible: false,
       barrierColor: Colors.black.withValues(alpha: 0.5),
-      builder: (context) {
-        return Dialog(
-          backgroundColor: Colors.white,
-          surfaceTintColor: Colors.transparent,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Container(
-            width: 440,
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+      builder: (dialogContext) {
+        return AuthStatusDialog(
+          icon: Icons.mark_email_unread_outlined,
+          tone: AuthTone.warning,
+          badge: 'Pendiente de verificación',
+          title: 'Confirma tu correo electrónico',
+          message: Text.rich(
+            TextSpan(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFFBEB),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: const Icon(
-                    Icons.mail_outline,
-                    color: Color(0xFFD97706),
-                    size: 30,
-                  ),
+                const TextSpan(
+                  text: 'Hemos enviado un enlace de confirmación a\n',
                 ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFEF3C7),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: const Text(
-                    'PENDIENTE VERIFICACIÓN',
-                    style: TextStyle(
-                      color: Color(0xFFB45309),
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Confirma tu correo electrónico',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
+                TextSpan(
+                  text: _emailController.text,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
                     color: AppColors.darkNavy,
                   ),
                 ),
-                const SizedBox(height: 10),
-                RichText(
-                  textAlign: TextAlign.center,
-                  text: TextSpan(
-                    style: const TextStyle(
-                      color: AppColors.textMuted,
-                      fontSize: 13,
-                      height: 1.4,
-                    ),
-                    children: [
-                      const TextSpan(
-                        text: 'Hemos enviado un enlace de confirmación a\n',
-                      ),
-                      TextSpan(
-                        text: _emailController.text,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.darkNavy,
-                        ),
-                      ),
-                      const TextSpan(
-                        text:
-                            '.\nPor favor, abre tu correo para activar tu cuenta.',
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFFBEB),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFFFDE68A)),
-                  ),
-                  child: const Row(
-                    children: [
-                      Icon(
-                        Icons.access_time,
-                        color: Color(0xFFD97706),
-                        size: 20,
-                      ),
-                      SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'El enlace expira en 15 minutos',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF92400E),
-                              ),
-                            ),
-                            Text(
-                              'Revisa también tu carpeta de correo no deseado (Spam).',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Color(0xFFB45309),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.pop(context);
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const LoginScreen(),
-                        ),
-                      );
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryBlue,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      elevation: 0,
-                    ),
-                    child: const Text(
-                      'Entendido, ir a Iniciar Sesión',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _showExpiredTokenModal();
-                  },
-                  child: const Text(
-                    'Ver estado de enlace expirado / Reenviar',
-                    style: TextStyle(color: AppColors.textMuted, fontSize: 12),
-                  ),
+                const TextSpan(
+                  text: '.\nAbre tu correo para activar tu cuenta.',
                 ),
               ],
             ),
           ),
+          noticeTitle: 'El enlace expira en 15 minutos',
+          noticeText: 'Revisa también tu carpeta de correo no deseado (spam).',
+          primaryLabel: 'Entendido, ir a iniciar sesión',
+          onPrimary: () {
+            Navigator.pop(dialogContext);
+            if (!mounted) return;
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (context) => const LoginScreen()),
+            );
+          },
+          secondaryLabel: 'Mi enlace expiró / reenviar correo',
+          onSecondary: () {
+            Navigator.pop(dialogContext);
+            _showExpiredTokenModal();
+          },
         );
       },
     );
@@ -509,463 +413,105 @@ class _RegisterScreenState extends State<RegisterScreen> {
       context: context,
       barrierDismissible: false,
       barrierColor: Colors.black.withValues(alpha: 0.5),
-      builder: (context) {
-        return Dialog(
-          backgroundColor: Colors.white,
-          surfaceTintColor: Colors.transparent,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
+      builder: (dialogContext) {
+        return AuthStatusDialog(
+          icon: Icons.timer_off_outlined,
+          tone: AuthTone.danger,
+          badge: 'Enlace expirado',
+          title: 'El enlace de confirmación expiró',
+          message: const Text(
+            'Por seguridad, los enlaces solo son válidos durante 15 minutos. '
+            'Solicita uno nuevo para continuar.',
           ),
-          child: Container(
-            width: 440,
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFFBEB),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: const Icon(
-                    Icons.access_time,
-                    color: Color(0xFFD97706),
-                    size: 30,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFEE2E2),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: const Text(
-                    'TOKEN EXPIRADO',
-                    style: TextStyle(
-                      color: Color(0xFFDC2626),
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'El enlace de confirmación ha\nexpirado',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.darkNavy,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Por seguridad, los enlaces solo son válidos durante 15 minutos.\nSolicita uno nuevo para continuar.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: AppColors.textMuted,
-                    fontSize: 13,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFFBEB),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFFFDE68A)),
-                  ),
-                  child: const Row(
-                    children: [
-                      Icon(
-                        Icons.access_time,
-                        color: Color(0xFFD97706),
-                        size: 20,
-                      ),
-                      SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Enlace vencido',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF92400E),
-                              ),
-                            ),
-                            Text(
-                              'Tu cuenta todavía no ha sido activada.',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Color(0xFFB45309),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton(
-                    onPressed: () async {
-                      Navigator.pop(context);
-                      try {
-                        await supabase.auth.resend(
-                          type: OtpType.signup,
-                          email: _emailController.text.trim(),
-                        );
-                        if (mounted) {
-                          _showPendingVerificationModal();
-                        }
-                      } on AuthException catch (e) {
-                        _showSnack(e.message);
-                      } catch (e) {
-                        debugPrint('resend error: $e');
-                        _showSnack(
-                          'No pudimos reenviar el correo. Intenta de nuevo.',
-                        );
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryBlue,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      elevation: 0,
-                    ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          'Reenviar Correo de Verificación',
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                        SizedBox(width: 8),
-                        Icon(Icons.arrow_forward, size: 18),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          noticeTitle: 'Enlace vencido',
+          noticeText: 'Tu cuenta todavía no ha sido activada.',
+          primaryLabel: 'Reenviar correo de verificación',
+          onPrimary: () async {
+            Navigator.pop(dialogContext);
+            try {
+              await supabase.auth.resend(
+                type: OtpType.signup,
+                email: _emailController.text.trim(),
+              );
+              if (mounted) {
+                _showPendingVerificationModal();
+              }
+            } on AuthException catch (e) {
+              _showSnack(e.message);
+            } catch (e) {
+              debugPrint('resend error: $e');
+              _showSnack('No pudimos reenviar el correo. Intenta de nuevo.');
+            }
+          },
         );
       },
     );
   }
 
-  // Deja que la pastilla termine de deslizarse y luego pasa a Login con fundido.
-  void _onAuthTabChanged(int index) {
-    if (index == 0 || _leavingToLogin) return;
-    _leavingToLogin = true;
-    setState(() => _authTab = 1);
-    Future.delayed(const Duration(milliseconds: 200), () {
-      if (!mounted) return;
-      Navigator.pushReplacement(context, authFadeRoute(const LoginScreen()));
-    });
+  void _goToLogin() {
+    Navigator.pushReplacement(context, authFadeRoute(const LoginScreen()));
   }
 
+  // ---------------------------------------------------------------------
+  // BUILD
+  // ---------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
-    final double screenWidth = MediaQuery.of(context).size.width;
-    final bool isDesktop = screenWidth > 900;
-
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: Row(
+    return AuthShell(
+      onBack: () => Navigator.pop(context),
+      intro: AuthBrandIntro(
+        lead: 'Activa tu cuenta',
+        title: 'Gestiona los pagos de tu familia en tres pasos.',
+        description:
+            'Usa la cédula que la institución ya registró y gestiona los pagos de tu familia desde un solo lugar.',
         children: [
-          if (isDesktop)
-            Expanded(
-              flex: 5,
-              child: AuthBrandPanel(
-                imageAsset: 'assets/images/register_img1.webp',
-                onLogoTap: () => Navigator.pop(context),
-                headline: 'Registrate Ahora!',
-                subtitle: '¿Tu familia ya forma parte de\nnuestra comunidad?',
-                description:
-                    'Activa tu acceso con la cédula previamente registrada por la institución y gestiona todo desde un solo lugar.',
-                features: const [
-                  AuthFeature(
-                    Icons.verified_user_outlined,
-                    'Identidad pre-validada',
-                  ),
-                  AuthFeature(
-                    Icons.people_outline,
-                    'Hijos vinculados automáticamente',
-                  ),
-                  AuthFeature(Icons.lock_outline, 'Acceso seguro y privado'),
-                ],
-                footnote: 'Protección de datos y acceso basado en identidad',
-              ),
-            ),
-          Expanded(
-            flex: 5,
-            child: AuthFormPanel(
-              isDesktop: isDesktop,
-              onBack: () => Navigator.pop(context),
-              // La altura de la tarjeta la anima AuthFormPanel; aquí solo el
-              // fundido + desplazamiento entre pasos.
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 320),
-                switchInCurve: Curves.easeOutCubic,
-                switchOutCurve: Curves.easeIn,
-                layoutBuilder: (current, previous) => Stack(
-                  alignment: Alignment.topCenter,
-                  children: [...previous, if (current != null) current],
-                ),
-                transitionBuilder: (child, animation) => FadeTransition(
-                  opacity: animation,
-                  child: SlideTransition(
-                    position: Tween<Offset>(
-                      begin: const Offset(0.03, 0),
-                      end: Offset.zero,
-                    ).animate(animation),
-                    child: child,
-                  ),
-                ),
-                child: KeyedSubtree(
-                  key: ValueKey<int>(_currentStep),
-                  child: _buildStepContent(),
-                ),
-              ),
-            ),
-          ),
+          AuthStepsOverview(current: _currentStep, steps: _kStepsInfo),
         ],
       ),
-    );
-  }
-
-  // Contenido de la tarjeta según el paso actual.
-  Widget _buildStepContent() {
-    if (_currentStep != 1) return _buildStep2Widget();
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        AuthSegmentedSelector(
-          segments: const [
-            AuthSegment(
-              label: 'Formulario de Registro',
-              color: AppColors.primaryBlue,
-            ),
-            AuthSegment(label: 'Iniciar Sesión', color: AppColors.primaryBlue),
-          ],
-          selectedIndex: _authTab,
-          onChanged: _onAuthTabChanged,
+      // La altura de la tarjeta la anima AuthCard; aquí solo el fundido +
+      // desplazamiento entre pasos.
+      child: AnimatedSwitcher(
+        duration: authMotion(context, 300),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeIn,
+        layoutBuilder: (current, previous) => Stack(
+          alignment: Alignment.topCenter,
+          children: [...previous, if (current != null) current],
         ),
-        const SizedBox(height: 28),
-        _buildStep1Widget(),
-      ],
-    );
-  }
-
-  // Enlace de acción pequeño bajo un campo con error
-  Widget _inlineLink(String text, VoidCallback onTap, {IconData? icon}) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 4),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(6),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (icon != null) ...[
-                Icon(icon, size: 15, color: AppColors.primaryBlue),
-                const SizedBox(width: 6),
-              ],
-              Text(
-                text,
-                style: const TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.primaryBlue,
-                ),
-              ),
-            ],
+        transitionBuilder: (child, animation) => FadeTransition(
+          opacity: animation,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0.03, 0),
+              end: Offset.zero,
+            ).animate(animation),
+            child: child,
           ),
+        ),
+        child: KeyedSubtree(
+          key: ValueKey<int>(_currentStep),
+          child: _buildStepContent(),
         ),
       ),
     );
   }
 
-  Widget _buildStep1Widget() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'PASO 1 DE 2',
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 1.0,
-            color: AppColors.primaryBlue,
-          ),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'Activa tu cuenta familiar',
-          style: TextStyle(
-            fontSize: 26,
-            fontWeight: FontWeight.bold,
-            color: AppColors.darkNavy,
-          ),
-        ),
-        const SizedBox(height: 6),
-        const Text(
-          'Primero verificaremos que estés registrado como representante en la institución.',
-          style: TextStyle(
-            color: AppColors.textMuted,
-            fontSize: 13,
-            height: 1.4,
-          ),
-        ),
-        const SizedBox(height: 22),
-        Form(
-          key: _step1FormKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Cédula de Identidad del Representante',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.darkNavy,
-                ),
-              ),
-              const SizedBox(height: 8),
-              _CedulaField(
-                controller: _cedulaController,
-                focusNode: _cedulaFocusNode,
-                prefix: _selectedPrefix,
-                helperText:
-                    'Debe coincidir con la cédula registrada en el expediente escolar.',
-                serverError: _cedulaServerError,
-                onPrefixChanged: (p) {
-                  setState(() {
-                    _selectedPrefix = p;
-                    if (p != 'J-') {
-                      _cedulaController.text = _cedulaController.text
-                          .replaceAll(RegExp(r'\D'), '');
-                    }
-                    _cedulaError = false;
-                    _cedulaYaRegistrada = false;
-                    _cedulaCustomError = null;
-                  });
-                },
-                onChanged: (_) {
-                  if (_cedulaError ||
-                      _cedulaYaRegistrada ||
-                      _cedulaCustomError != null ||
-                      _formError != null) {
-                    setState(() {
-                      _cedulaError = false;
-                      _cedulaYaRegistrada = false;
-                      _cedulaCustomError = null;
-                      _formError = null;
-                    });
-                  }
-                },
-                onSubmitted: () => validateCedula(),
-                validator: (val) {
-                  final cleaned = val?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
-                  if (val == null || val.trim().isEmpty) {
-                    return 'Ingresa tu número de cédula';
-                  }
-                  if (!_onlyDigitsRegex.hasMatch(cleaned) ||
-                      cleaned.length < 6 ||
-                      cleaned.length > 9) {
-                    return 'Cédula inválida (solo números, 6-9 dígitos)';
-                  }
-                  return null;
-                },
-              ),
-              if (_cedulaError)
-                _inlineLink(
-                  'Contactar a Administración / Soporte',
-                  _contactSupport,
-                  icon: Icons.support_agent_outlined,
-                ),
-              if (_cedulaYaRegistrada)
-                _inlineLink(
-                  'Ir a Iniciar Sesión',
-                  () => Navigator.pushReplacement(
-                    context,
-                    authFadeRoute(const LoginScreen()),
-                  ),
-                  icon: Icons.login,
-                ),
-              if (_formError != null) ...[
-                const SizedBox(height: 14),
-                AuthErrorBanner(message: _formError!),
-              ],
-              const SizedBox(height: 18),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : validateCedula,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primaryBlue,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    elevation: 0,
-                  ),
-                  child: _isLoading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              'Validar Cédula e Iniciar Registro',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            SizedBox(width: 8),
-                            Icon(Icons.arrow_forward, size: 18),
-                          ],
-                        ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
+  Widget _buildStepContent() {
+    switch (_currentStep) {
+      case 2:
+        return _buildStep2Widget();
+      case 3:
+        return _buildStep3Widget();
+      default:
+        return _buildStep1Widget();
+    }
   }
 
-  // Dos campos en fila (como antes); solo en pantallas angostas se apilan.
+  // Dos campos en fila; en espacios angostos se apilan.
   Widget _pair(Widget left, Widget right) {
     return LayoutBuilder(
       builder: (context, c) {
-        if (c.maxWidth < 460) {
+        if (c.maxWidth < 400) {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [left, const SizedBox(height: 16), right],
@@ -983,98 +529,159 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  Widget _buildStep2Widget() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  /// Botones de navegación de los pasos 2 y 3: "Atrás" + acción principal.
+  Widget _navRow({required VoidCallback onBack, required Widget primary}) {
+    return Row(
       children: [
-        const Text(
-          'PASO 2 DE 2',
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 1.0,
-            color: AppColors.primaryBlue,
-          ),
+        AuthOutlineButton(
+          label: 'Atrás',
+          icon: Icons.arrow_back_rounded,
+          height: 52,
+          onPressed: _isLoading ? null : onBack,
         ),
-        const SizedBox(height: 8),
-        const Text(
-          'Completa tus datos',
-          style: TextStyle(
-            fontSize: 26,
-            fontWeight: FontWeight.bold,
-            color: AppColors.darkNavy,
-          ),
-        ),
-        const SizedBox(height: 6),
-        const Text(
-          'Tu identidad fue confirmada. Crea tus credenciales de acceso.',
-          style: TextStyle(
-            color: AppColors.textMuted,
-            fontSize: 13,
-            height: 1.4,
-          ),
-        ),
+        const SizedBox(width: 12),
+        Expanded(child: primary),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // PASO 1 · CÉDULA
+  // ---------------------------------------------------------------------
+  Widget _buildStep1Widget() {
+    final bool isJ = _selectedPrefix == 'J-';
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        const AuthStepper(current: 1, total: _kTotalSteps),
         const SizedBox(height: 20),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF0FDF4),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFBBF7D0)),
-          ),
-          child: Row(
+        const AuthCardHeader(
+          title: 'Verifica tu cédula',
+          subtitle:
+              'Primero comprobamos que estés registrado como representante en la institución.',
+        ),
+        const SizedBox(height: 22),
+        Form(
+          key: _step1FormKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                padding: const EdgeInsets.all(4),
-                decoration: const BoxDecoration(
-                  color: AppColors.successGreen,
-                  shape: BoxShape.circle,
+              AuthTextField(
+                controller: _cedulaController,
+                focusNode: _cedulaFocusNode,
+                label: 'Cédula de identidad del representante',
+                hint: 'Número de cédula',
+                prefix: _DocTypeMenu(
+                  prefix: _selectedPrefix,
+                  onSelected: (p) {
+                    setState(() {
+                      _selectedPrefix = p;
+                      if (p != 'J-') {
+                        _cedulaController.text = _cedulaController.text
+                            .replaceAll(RegExp(r'\D'), '');
+                      }
+                      _cedulaError = false;
+                      _cedulaYaRegistrada = false;
+                      _cedulaCustomError = null;
+                    });
+                  },
                 ),
-                child: const Icon(Icons.check, color: Colors.white, size: 14),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Cédula verificada en la base de datos del colegio',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF166534),
-                      ),
-                    ),
-                    Text(
-                      '$_cedulaNormalizada · Representante pre-registrado',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: Color(0xFF15803D),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              InkWell(
-                onTap: () {
-                  setState(() {
-                    _currentStep = 1;
-                    _formError = null;
-                  });
-                },
-                child: const Text(
-                  'Cambiar',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF166534),
+                helperText:
+                    'Debe coincidir con la cédula registrada en el expediente escolar.',
+                serverError: _cedulaServerError,
+                keyboardType: isJ ? TextInputType.text : TextInputType.number,
+                textInputAction: TextInputAction.done,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                    RegExp(isJ ? r'[0-9-]' : r'[0-9]'),
                   ),
+                  LengthLimitingTextInputFormatter(12),
+                ],
+                onChanged: (_) {
+                  if (_cedulaError ||
+                      _cedulaYaRegistrada ||
+                      _cedulaCustomError != null ||
+                      _formError != null) {
+                    setState(() {
+                      _cedulaError = false;
+                      _cedulaYaRegistrada = false;
+                      _cedulaCustomError = null;
+                      _formError = null;
+                    });
+                  }
+                },
+                onFieldSubmitted: (_) => validateCedula(),
+                validator: (val) {
+                  final cleaned = val?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+                  if (val == null || val.trim().isEmpty) {
+                    return 'Ingresa tu número de cédula';
+                  }
+                  if (!_onlyDigitsRegex.hasMatch(cleaned) ||
+                      cleaned.length < 6 ||
+                      cleaned.length > 9) {
+                    return 'Cédula inválida (solo números, 6-9 dígitos)';
+                  }
+                  return null;
+                },
+              ),
+              if (_cedulaError)
+                AuthTextLink(
+                  label: 'Contactar a administración / soporte',
+                  icon: Icons.support_agent_outlined,
+                  onTap: _contactSupport,
+                  fontSize: 13,
                 ),
+              if (_cedulaYaRegistrada)
+                AuthTextLink(
+                  label: 'Ir a iniciar sesión',
+                  icon: Icons.login_rounded,
+                  onTap: _goToLogin,
+                  fontSize: 13,
+                ),
+              if (_formError != null) ...[
+                const SizedBox(height: 14),
+                AuthErrorBanner(message: _formError!),
+              ],
+              const SizedBox(height: 20),
+              AuthPrimaryButton(
+                label: 'Verificar cédula',
+                loadingLabel: 'Verificando…',
+                loading: _isLoading,
+                onPressed: validateCedula,
               ),
             ],
           ),
         ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 22),
+        AuthSwitchRow(
+          prompt: '¿Ya tienes una cuenta?',
+          action: 'Iniciar sesión',
+          onTap: _goToLogin,
+        ),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // PASO 2 · DATOS DE CONTACTO
+  // ---------------------------------------------------------------------
+  Widget _buildStep2Widget() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        const AuthStepper(current: 2, total: _kTotalSteps),
+        const SizedBox(height: 20),
+        const AuthCardHeader(
+          title: 'Tus datos de contacto',
+          subtitle:
+              'Usaremos tu correo para confirmar la cuenta y tu teléfono como dato de contacto.',
+        ),
+        const SizedBox(height: 18),
+        _verifiedPill(),
+        const SizedBox(height: 20),
         Form(
           key: _step2FormKey,
           onChanged: () {
@@ -1085,12 +692,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
             children: [
               _pair(
                 AuthTextField(
-                  compact: true,
                   controller: _nombresController,
                   focusNode: _nombresFocusNode,
                   label: 'Nombres',
-                  hint: 'Nombres',
+                  hint: 'Tus nombres',
                   icon: Icons.person_outline,
+                  autofillHints: const [AutofillHints.givenName],
                   textInputAction: TextInputAction.next,
                   onFieldSubmitted: (_) =>
                       FocusScope.of(context).requestFocus(_apellidosFocusNode),
@@ -1099,12 +706,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       : null,
                 ),
                 AuthTextField(
-                  compact: true,
                   controller: _apellidosController,
                   focusNode: _apellidosFocusNode,
                   label: 'Apellidos',
-                  hint: 'Apellidos',
+                  hint: 'Tus apellidos',
                   icon: Icons.person_outline,
+                  autofillHints: const [AutofillHints.familyName],
                   textInputAction: TextInputAction.next,
                   onFieldSubmitted: (_) =>
                       FocusScope.of(context).requestFocus(_emailFocusNode),
@@ -1115,7 +722,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               const SizedBox(height: 16),
               AuthTextField(
-                compact: true,
                 controller: _emailController,
                 focusNode: _emailFocusNode,
                 label: 'Correo electrónico',
@@ -1143,26 +749,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               const SizedBox(height: 16),
               AuthTextField(
-                compact: true,
                 controller: _phoneController,
                 focusNode: _phoneFocusNode,
                 label: 'Número de teléfono',
                 hint: '412 555 0174',
                 prefix: Container(
-                  width: 50,
+                  width: 54,
                   alignment: Alignment.center,
                   child: const Text(
                     '+58',
                     style: TextStyle(
-                      fontWeight: FontWeight.bold,
+                      fontWeight: FontWeight.w700,
                       color: AppColors.darkNavy,
                     ),
                   ),
                 ),
                 keyboardType: TextInputType.phone,
-                textInputAction: TextInputAction.next,
-                onFieldSubmitted: (_) =>
-                    FocusScope.of(context).requestFocus(_passwordFocusNode),
+                autofillHints: const [AutofillHints.telephoneNumberNational],
+                textInputAction: TextInputAction.done,
+                onFieldSubmitted: (_) => _continueToPassword(),
                 validator: (val) {
                   var cleaned = val?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
                   if (cleaned.startsWith('0')) cleaned = cleaned.substring(1);
@@ -1175,160 +780,261 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   return null;
                 },
               ),
-              const SizedBox(height: 16),
-              _pair(
-                AuthTextField(
-                  compact: true,
-                  controller: _passwordController,
-                  focusNode: _passwordFocusNode,
-                  label: 'Contraseña',
-                  hint: 'Crea una contraseña',
-                  icon: Icons.lock_outline,
-                  obscureText: _obscurePassword,
-                  autofillHints: const [AutofillHints.newPassword],
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) => FocusScope.of(
-                    context,
-                  ).requestFocus(_confirmPasswordFocusNode),
-                  // Refresca el checklist en vivo y limpia el error del servidor
-                  onChanged: (_) => setState(() => _passwordServerError = null),
-                  serverError: _passwordServerError,
-                  suffix: IconButton(
-                    icon: Icon(
-                      _obscurePassword
-                          ? Icons.visibility_outlined
-                          : Icons.visibility_off_outlined,
-                      size: 18,
-                      color: AppColors.textMuted,
-                    ),
-                    onPressed: () =>
-                        setState(() => _obscurePassword = !_obscurePassword),
-                  ),
-                  validator: _validatePassword,
-                ),
-                AuthTextField(
-                  compact: true,
-                  controller: _confirmPasswordController,
-                  focusNode: _confirmPasswordFocusNode,
-                  label: 'Confirmar contraseña',
-                  hint: 'Repetir contraseña',
-                  icon: Icons.lock_outline,
-                  obscureText: _obscureConfirmPassword,
-                  autofillHints: const [AutofillHints.newPassword],
-                  textInputAction: TextInputAction.done,
-                  onFieldSubmitted: (_) => submitRegistration(),
-                  // Si cambia la contraseña, se re-evalúa "no coinciden"
-                  revalidateWhen: _passwordController,
-                  suffix: IconButton(
-                    icon: Icon(
-                      _obscureConfirmPassword
-                          ? Icons.visibility_outlined
-                          : Icons.visibility_off_outlined,
-                      size: 18,
-                      color: AppColors.textMuted,
-                    ),
-                    onPressed: () => setState(
-                      () => _obscureConfirmPassword = !_obscureConfirmPassword,
-                    ),
-                  ),
-                  validator: (val) {
-                    if (val == null || val.isEmpty) {
-                      return 'Confirma tu contraseña';
-                    }
-                    if (val != _passwordController.text) {
-                      return 'Las contraseñas no coinciden';
-                    }
-                    return null;
-                  },
-                ),
-              ),
-              const SizedBox(height: 12),
-              _buildPasswordChecklist(),
-              const SizedBox(height: 16),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: Checkbox(
-                      value: _termsAccepted,
-                      activeColor: AppColors.primaryBlue,
-                      side: _termsError
-                          ? const BorderSide(color: kAuthError, width: 2)
-                          : null,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      onChanged: (val) => setState(() {
-                        _termsAccepted = val ?? false;
-                        if (_termsAccepted) _termsError = false;
-                      }),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'Acepto los términos del servicio y el tratamiento seguro de mis datos.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              if (_termsError)
-                const AuthFieldError(
-                  'Debes aceptar los términos para continuar.',
-                  left: 28,
-                ),
               if (_formError != null) ...[
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 AuthErrorBanner(message: _formError!),
               ],
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : submitRegistration,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primaryBlue,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    elevation: 0,
-                  ),
-                  child: _isLoading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              'Crear Cuenta y Enviar Correo de Confirmación',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            SizedBox(width: 8),
-                            Icon(Icons.arrow_forward, size: 18),
-                          ],
-                        ),
+              const SizedBox(height: 22),
+              _navRow(
+                onBack: () => setState(() {
+                  _currentStep = 1;
+                  _formError = null;
+                }),
+                primary: AuthPrimaryButton(
+                  label: 'Continuar',
+                  onPressed: _continueToPassword,
                 ),
               ),
             ],
           ),
         ),
+      ],
+    );
+  }
+
+  /// Confirmación de que la cédula fue verificada (paso 2).
+  Widget _verifiedPill() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0FDF4),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFBBF7D0)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 24,
+            height: 24,
+            decoration: const BoxDecoration(
+              color: AppColors.successGreen,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.check, color: Colors.white, size: 15),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Cédula verificada',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF166534),
+                  ),
+                ),
+                Text(
+                  '$_cedulaNormalizada · Representante pre-registrado',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF15803D),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // PASO 3 · CONTRASEÑA Y TÉRMINOS
+  // ---------------------------------------------------------------------
+  Widget _buildStep3Widget() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        const AuthStepper(current: 3, total: _kTotalSteps),
+        const SizedBox(height: 20),
+        const AuthCardHeader(
+          title: 'Crea tu contraseña',
+          subtitle:
+              'Será tu clave para entrar a EduPago. Después te enviaremos un correo para confirmar la cuenta.',
+        ),
+        const SizedBox(height: 22),
+        Form(
+          key: _step3FormKey,
+          onChanged: () {
+            if (_formError != null) setState(() => _formError = null);
+          },
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AuthTextField(
+                controller: _passwordController,
+                focusNode: _passwordFocusNode,
+                label: 'Contraseña',
+                hint: 'Crea una contraseña',
+                icon: Icons.lock_outline,
+                obscureText: _obscurePassword,
+                autofillHints: const [AutofillHints.newPassword],
+                textInputAction: TextInputAction.next,
+                onFieldSubmitted: (_) => FocusScope.of(
+                  context,
+                ).requestFocus(_confirmPasswordFocusNode),
+                // Refresca el checklist en vivo y limpia el error del servidor
+                onChanged: (_) => setState(() => _passwordServerError = null),
+                serverError: _passwordServerError,
+                suffix: AuthVisibilityToggle(
+                  obscured: _obscurePassword,
+                  onPressed: () =>
+                      setState(() => _obscurePassword = !_obscurePassword),
+                ),
+                validator: _validatePassword,
+              ),
+              const SizedBox(height: 16),
+              AuthTextField(
+                controller: _confirmPasswordController,
+                focusNode: _confirmPasswordFocusNode,
+                label: 'Confirmar contraseña',
+                hint: 'Repite tu contraseña',
+                icon: Icons.lock_outline,
+                obscureText: _obscureConfirmPassword,
+                autofillHints: const [AutofillHints.newPassword],
+                textInputAction: TextInputAction.done,
+                onFieldSubmitted: (_) => submitRegistration(),
+                // Si cambia la contraseña, se re-evalúa "no coinciden"
+                revalidateWhen: _passwordController,
+                suffix: AuthVisibilityToggle(
+                  obscured: _obscureConfirmPassword,
+                  onPressed: () => setState(
+                    () => _obscureConfirmPassword = !_obscureConfirmPassword,
+                  ),
+                ),
+                validator: (val) {
+                  if (val == null || val.isEmpty) {
+                    return 'Confirma tu contraseña';
+                  }
+                  if (val != _passwordController.text) {
+                    return 'Las contraseñas no coinciden';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 14),
+              _buildPasswordChecklist(),
+              const SizedBox(height: 12),
+              _buildTerms(),
+              if (_formError != null) ...[
+                const SizedBox(height: 12),
+                AuthErrorBanner(message: _formError!),
+              ],
+              const SizedBox(height: 20),
+              _navRow(
+                onBack: () => setState(() {
+                  _currentStep = 2;
+                  _formError = null;
+                }),
+                primary: AuthPrimaryButton(
+                  label: 'Crear cuenta',
+                  loadingLabel: 'Creando cuenta…',
+                  loading: _isLoading,
+                  icon: Icons.check_rounded,
+                  onPressed: submitRegistration,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Te enviaremos un correo de confirmación para activar tu cuenta.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.4,
+                  color: Color.lerp(
+                    AppColors.textMuted,
+                    AppColors.darkNavy,
+                    0.35,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTerms() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        MergeSemantics(
+          child: Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: () => setState(() {
+                _termsAccepted = !_termsAccepted;
+                if (_termsAccepted) _termsError = false;
+              }),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: Checkbox(
+                        value: _termsAccepted,
+                        activeColor: AppColors.primaryBlue,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
+                        side: _termsError
+                            ? const BorderSide(color: kAuthError, width: 2)
+                            : null,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        onChanged: (val) => setState(() {
+                          _termsAccepted = val ?? false;
+                          if (_termsAccepted) _termsError = false;
+                        }),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          'Acepto los términos del servicio y el tratamiento seguro de mis datos.',
+                          style: TextStyle(
+                            fontSize: 13,
+                            height: 1.4,
+                            color: Color.lerp(
+                              AppColors.textMuted,
+                              AppColors.darkNavy,
+                              0.35,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (_termsError)
+          const AuthFieldError(
+            'Debes aceptar los términos para continuar.',
+            left: 36,
+          ),
       ],
     );
   }
@@ -1410,10 +1116,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(10),
+        color: AppColors.primaryBlue.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.cardBorder),
       ),
       child: Column(
@@ -1423,10 +1129,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
             children: [
               const Expanded(
                 child: Text(
-                  'Tu contraseña debe tener:',
+                  'Tu contraseña debe tener',
                   style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
                     color: AppColors.darkNavy,
                   ),
                 ),
@@ -1435,9 +1141,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 Text(
                   label,
                   style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: barColor,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                    color: barColor == AppColors.cardBorder
+                        ? AppColors.textMuted
+                        : barColor,
                   ),
                 ),
             ],
@@ -1447,246 +1155,149 @@ class _RegisterScreenState extends State<RegisterScreen> {
             borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
               value: p.isEmpty ? 0 : done / rules.length,
-              minHeight: 4,
+              minHeight: 5,
               color: barColor,
               backgroundColor: const Color(0xFFE2E8F0),
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Wrap(
-            spacing: 18,
-            runSpacing: 6,
-            children: [
-              for (final r in rules)
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      r.ok
-                          ? Icons.check_circle
-                          : (_showPasswordErrors
-                                ? Icons.cancel
-                                : Icons.radio_button_unchecked),
-                      size: 14,
-                      color: r.ok
-                          ? green
-                          : (_showPasswordErrors ? red : AppColors.textMuted),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      r.label,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: (!r.ok && _showPasswordErrors)
-                            ? FontWeight.w600
-                            : FontWeight.normal,
-                        color: r.ok
-                            ? const Color(0xFF166534)
-                            : (_showPasswordErrors ? red : AppColors.textMuted),
-                      ),
-                    ),
-                  ],
-                ),
-            ],
+            spacing: 8,
+            runSpacing: 8,
+            children: [for (final r in rules) _ruleChip(r, red, green)],
           ),
         ],
       ),
     );
   }
+
+  Widget _ruleChip(_PwRule r, Color red, Color green) {
+    final bool failed = !r.ok && _showPasswordErrors;
+    final Color fg = r.ok
+        ? const Color(0xFF166534)
+        : (failed ? const Color(0xFF991B1B) : AppColors.textMuted);
+    final Color bg = r.ok
+        ? const Color(0xFFDCFCE7)
+        : (failed ? const Color(0xFFFEE2E2) : Colors.white);
+    final Color border = r.ok
+        ? const Color(0xFFBBF7D0)
+        : (failed ? const Color(0xFFFECACA) : AppColors.cardBorder);
+
+    return Semantics(
+      label: '${r.label}: ${r.ok ? 'cumplido' : 'pendiente'}',
+      excludeSemantics: true,
+      child: AnimatedContainer(
+        duration: authMotion(context, 160),
+        padding: const EdgeInsets.fromLTRB(8, 5, 10, 5),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              r.ok
+                  ? Icons.check_circle
+                  : (failed ? Icons.cancel : Icons.radio_button_unchecked),
+              size: 14,
+              color: r.ok ? green : (failed ? red : AppColors.textMuted),
+            ),
+            const SizedBox(width: 5),
+            Text(
+              r.label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: r.ok || failed ? FontWeight.w700 : FontWeight.w500,
+                color: fg,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-class _CedulaField extends StatelessWidget {
-  final TextEditingController controller;
+/// Selector del tipo de documento (V-, E-, J-, P-) que vive dentro del campo
+/// de cédula, como prefijo.
+class _DocTypeMenu extends StatelessWidget {
+  const _DocTypeMenu({required this.prefix, required this.onSelected});
+
   final String prefix;
-  final ValueChanged<String> onPrefixChanged;
-  final FocusNode? focusNode;
-  final String? Function(String?)? validator;
-  final VoidCallback? onSubmitted;
-  final ValueChanged<String>? onChanged;
-
-  /// Error que viene del servidor (cédula no registrada, ya usada...).
-  final String? serverError;
-
-  /// Texto de ayuda: se muestra solo cuando no hay error.
-  final String? helperText;
-
-  const _CedulaField({
-    super.key,
-    required this.controller,
-    required this.prefix,
-    required this.onPrefixChanged,
-    this.focusNode,
-    this.validator,
-    this.onSubmitted,
-    this.onChanged,
-    this.serverError,
-    this.helperText,
-  });
+  final ValueChanged<String> onSelected;
 
   @override
   Widget build(BuildContext context) {
-    final isJ = prefix == 'J-';
-
-    return FormField<String>(
-      validator: (_) => validator?.call(controller.text),
-      builder: (FormFieldState<String> state) {
-        final String? err = state.errorText ?? serverError;
-        final bool hasErr = err != null;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              height: 48,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: hasErr ? kAuthError : AppColors.cardBorder,
-                  width: hasErr ? 1.5 : 1.0,
-                ),
-              ),
+    return Material(
+      type: MaterialType.transparency,
+      child: PopupMenuButton<String>(
+        tooltip: 'Tipo de documento',
+        initialValue: prefix,
+        onSelected: onSelected,
+        position: PopupMenuPosition.under,
+        offset: const Offset(0, 8),
+        color: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 8,
+        constraints: const BoxConstraints(minWidth: 190, maxWidth: 230),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        itemBuilder: (_) => [
+          for (final e in _kCedPrefixes.entries)
+            PopupMenuItem<String>(
+              value: e.key,
+              height: 42,
               child: Row(
                 children: [
-                  // Botón desplegable del prefijo anclado a la izquierda
-                  PopupMenuButton<String>(
-                    tooltip: 'Tipo de documento',
-                    initialValue: prefix,
-                    onSelected: (val) {
-                      onPrefixChanged(val);
-                      state.didChange(controller.text);
-                    },
-                    position: PopupMenuPosition.under,
-                    offset: const Offset(114, 10),
-                    color: Colors.white,
-                    surfaceTintColor: Colors.transparent,
-                    elevation: 8,
-                    constraints: const BoxConstraints(
-                      minWidth: 180,
-                      maxWidth: 220,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    itemBuilder: (_) => [
-                      for (final e in _kCedPrefixes.entries)
-                        PopupMenuItem<String>(
-                          value: e.key,
-                          height: 40,
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 32,
-                                child: Text(
-                                  e.key,
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.darkNavy,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                e.value,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  color: AppColors.textMuted,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                    ],
-                    child: Padding(
-                      padding: const EdgeInsets.only(left: 14, right: 8),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            prefix,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.darkNavy,
-                            ),
-                          ),
-                          const Icon(
-                            Icons.keyboard_arrow_down_rounded,
-                            size: 18,
-                            color: AppColors.textMuted,
-                          ),
-                          const SizedBox(width: 8),
-                          Container(
-                            width: 1,
-                            height: 22,
-                            color: AppColors.cardBorder,
-                          ),
-                        ],
+                  SizedBox(
+                    width: 32,
+                    child: Text(
+                      e.key,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.darkNavy,
                       ),
                     ),
                   ),
-
-                  // Campo de texto de la cédula
-                  Expanded(
-                    child: TextField(
-                      controller: controller,
-                      focusNode: focusNode,
-                      textInputAction: TextInputAction.done,
-                      keyboardType: isJ
-                          ? TextInputType.text
-                          : TextInputType.number,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.allow(
-                          RegExp(isJ ? r'[0-9-]' : r'[0-9]'),
-                        ),
-                        LengthLimitingTextInputFormatter(12),
-                      ],
-                      onChanged: (val) {
-                        state.didChange(val);
-                        // Si ya había un error local, se re-evalúa en vivo
-                        if (state.hasError) state.validate();
-                        onChanged?.call(val);
-                      },
-                      onSubmitted: (_) => onSubmitted?.call(),
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: AppColors.darkNavy,
-                      ),
-                      decoration: const InputDecoration(
-                        hintText: 'Cédula *',
-                        hintStyle: TextStyle(
-                          color: AppColors.textMuted,
-                          fontSize: 14,
-                        ),
-                        border: InputBorder.none,
-                        enabledBorder: InputBorder.none,
-                        focusedBorder: InputBorder.none,
-                        contentPadding: EdgeInsets.symmetric(horizontal: 10),
-                      ),
+                  const SizedBox(width: 8),
+                  Text(
+                    e.value,
+                    style: const TextStyle(
+                      fontSize: 13.5,
+                      color: AppColors.textMuted,
                     ),
                   ),
                 ],
               ),
             ),
-
-            // Error (rojo) o, si no hay, el texto de ayuda
-            if (err != null)
-              AuthFieldError(err)
-            else if (helperText != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 5, left: 12),
-                child: Text(
-                  helperText!,
-                  style: const TextStyle(
-                    fontSize: 11.5,
-                    height: 1.25,
-                    color: AppColors.textMuted,
-                  ),
+        ],
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                prefix,
+                style: const TextStyle(
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.darkNavy,
                 ),
               ),
-          ],
-        );
-      },
+              const Icon(
+                Icons.keyboard_arrow_down_rounded,
+                size: 18,
+                color: AppColors.textMuted,
+              ),
+              const SizedBox(width: 8),
+              Container(width: 1, height: 22, color: AppColors.cardBorder),
+              const SizedBox(width: 2),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

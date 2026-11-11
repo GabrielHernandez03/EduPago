@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../../../academics/presentation/widgets/representative_documents_section.dart';
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -386,6 +387,7 @@ class _RepresentativeDashboardScreenState
   static const int _tabEstadoCuenta = 1;
   static const int _tabPagos = 2;
   static const int _tabCalendario = 3;
+  static const int _tabDocumentos = 4;
 
   static const _navItems = <DashboardNavItem>[
     DashboardNavItem(Icons.home_outlined, Icons.home_rounded, 'Inicio'),
@@ -550,6 +552,17 @@ class _RepresentativeDashboardScreenState
       );
     }
 
+    if (_selectedNavIndex == _tabDocumentos) {
+      return RepresentativeDocumentsSection(
+        students: _students,
+        initialStudentId:
+            _selectedStudentIndex >= 0 &&
+                _selectedStudentIndex < _students.length
+            ? _students[_selectedStudentIndex]['id'].toString()
+            : null,
+      );
+    }
+
     if (_selectedNavIndex != _tabInicio) {
       return Center(
         child: Padding(
@@ -677,9 +690,9 @@ class _RepresentativeDashboardScreenState
     if (_estadoCuenta == null) _updateFinancialSummary();
   }
 
-  // Ondas en la esquina superior derecha para Estudiante, Solvencia y
-  // Próximo pago. En hover crecen solo un 13 %, sin mover el contenido.
-  // Los accesos rápidos utilizan un diseño independiente, sin ondas.
+  // Círculo en la esquina superior derecha para Estudiante, Solvencia y
+  // Próximo pago. En hover crece un 25 %, sin mover el contenido.
+  // Los accesos rápidos utilizan un diseño independiente, sin círculo.
   Widget _featureCornerCurves(Widget child, {required Color color}) {
     return HoverBuilder(
       builder: (context, hovered) {
@@ -691,7 +704,7 @@ class _RepresentativeDashboardScreenState
               Positioned.fill(
                 child: IgnorePointer(
                   child: TweenAnimationBuilder<double>(
-                    tween: Tween<double>(end: hovered ? 1.13 : 1.0),
+                    tween: Tween<double>(end: hovered ? 1.25 : 1.0),
                     duration: reduceMotion
                         ? Duration.zero
                         : const Duration(milliseconds: 330),
@@ -1204,7 +1217,8 @@ class _RepresentativeDashboardScreenState
         : selected != null
         ? _studentDetails(selected)
         : 'Sin grado ni cédula registrados';
-    final canChoose = linkedCount > 1 ||
+    final canChoose =
+        linkedCount > 1 ||
         (linkedCount == 1 && !_isStudentActive(_students.first));
     // Incluso con un solo estudiante inactivo, se puede abrir el menú
     // para verlo deshabilitado y consultar la vista familiar.
@@ -1668,7 +1682,7 @@ class _RepresentativeDashboardScreenState
           const Color(0xFFDE2626), // rojo: documentos
           const Color(0xFFFFE7E7),
           const Color(0xFFFFF6F6),
-          () => _scrollTo(_documentsSectionKey),
+          () => setState(() => _selectedNavIndex = _tabDocumentos),
         ),
         _quickAction(
           Icons.headset_mic_rounded,
@@ -1711,14 +1725,12 @@ class _RepresentativeDashboardScreenState
             0,
           ),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color.lerp(Colors.white, background, 0.76)!, background],
-            ),
+            color: Colors.white,
             borderRadius: BorderRadius.circular(18),
             border: Border.all(
-              color: accent.withValues(alpha: hovered ? 0.33 : 0.13),
+              color: hovered
+                  ? accent.withValues(alpha: 0.48)
+                  : AppColors.cardBorder,
               width: 1,
             ),
             boxShadow: [
@@ -2251,7 +2263,8 @@ class _RepresentativeDashboardScreenState
             ),
             const SizedBox(height: 10),
             OutlinedButton.icon(
-              onPressed: () => setState(() => _selectedNavIndex = _tabEstadoCuenta),
+              onPressed: () =>
+                  setState(() => _selectedNavIndex = _tabEstadoCuenta),
               icon: const Icon(Icons.description_outlined, size: 18),
               label: const Text(
                 'Ver detalle',
@@ -2381,9 +2394,7 @@ class _RepresentativeDashboardScreenState
                                     Icon(
                                       Icons.event_outlined,
                                       size: 16,
-                                      color: hasOverdueBalance
-                                          ? AppColors.errorRed
-                                          : AppColors.primaryBlue,
+                                      color: AppColors.errorRed,
                                     ),
                                     const SizedBox(width: 6),
                                     Flexible(
@@ -2400,9 +2411,7 @@ class _RepresentativeDashboardScreenState
                                             TextSpan(
                                               text: _fmtFecha(nextDue),
                                               style: TextStyle(
-                                                color: hasOverdueBalance
-                                                    ? AppColors.errorRed
-                                                    : AppColors.primaryBlue,
+                                                color: AppColors.errorRed,
                                                 fontWeight: FontWeight.w800,
                                               ),
                                             ),
@@ -2476,9 +2485,11 @@ class _RepresentativeDashboardScreenState
                   ],
                 ),
               ),
-              color: AppColors.primaryBlue,
+              color: paymentStatusColor,
             ),
           ),
+          // El borde/sombra de hover sigue el color del estado del pago.
+          hoverColor: paymentStatusColor,
         );
       },
     );
@@ -2667,7 +2678,7 @@ class _RepresentativeDashboardScreenState
                   decoration: BoxDecoration(
                     color: total == 0
                         ? AppColors.tint(AppColors.successGreen)
-                        : AppColors.primaryLight,
+                        : AppColors.tint(AppColors.warningAmber),
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
@@ -2679,7 +2690,7 @@ class _RepresentativeDashboardScreenState
                       fontWeight: FontWeight.w800,
                       color: total == 0
                           ? AppColors.successGreen
-                          : AppColors.primaryBlue,
+                          : AppColors.warningAmber,
                     ),
                   ),
                 ),
@@ -2797,8 +2808,8 @@ class _RepresentativeDashboardScreenState
   Widget _buildCuotaRow(CuotaEstadoCuenta c, {String? alumno}) {
     final (Color accent, IconData chipIcon) = switch (c.estado) {
       'VENCIDO' => (AppColors.errorRed, Icons.error_outline_rounded),
-      'PARCIAL' => (AppColors.warningAmber, Icons.pie_chart_outline_rounded),
-      _ => (AppColors.primaryBlue, Icons.schedule_rounded),
+      'PARCIAL' => (AppColors.primaryBlue, Icons.pie_chart_outline_rounded),
+      _ => (AppColors.warningAmber, Icons.schedule_rounded),
     };
     final String titulo = c.periodo.isNotEmpty ? c.periodo : c.concepto;
     final String detalle = [
@@ -3154,11 +3165,11 @@ class _RepresentativeDashboardScreenState
                     iconBackground: const Color(0xFFF0EDFF),
                     title: 'Boletín de calificaciones',
                     description:
-                        'Consulta de las calificaciones del estudiante.',
-                    status: accessStatus,
-                    statusIcon: accessIcon,
-                    statusBackground: accessBg,
-                    statusColor: accessFg,
+                        'Consulta las notas guardadas y los boletines publicados en Documentos.',
+                    status: 'Ver en Documentos',
+                    statusIcon: Icons.folder_open_outlined,
+                    statusBackground: AppColors.primaryLight,
+                    statusColor: AppColors.primaryBlue,
                   ),
                 ),
                 SizedBox(
@@ -3177,6 +3188,13 @@ class _RepresentativeDashboardScreenState
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 14),
+            OutlinedButton.icon(
+              onPressed: () =>
+                  setState(() => _selectedNavIndex = _tabDocumentos),
+              icon: const Icon(Icons.folder_open_outlined),
+              label: const Text('Consultar calificaciones y boletines'),
             ),
             const SizedBox(height: 14),
             const Row(
@@ -3505,8 +3523,9 @@ class _FamilyMarkPainter extends CustomPainter {
   bool shouldRepaint(_FamilyMarkPainter old) => old.background != background;
 }
 
-// Tres capas orgánicas muy tenues, limitadas a la esquina superior derecha.
-// El color se parametriza para respetar el estado de solvencia.
+// Círculo decorativo en la esquina superior derecha. El color se parametriza
+// para respetar el estado de solvencia. Con `scale` > 1 (hover) crece anclado
+// a la esquina, sin mover el contenido de la tarjeta.
 class _FeatureCornerCurvesPainter extends CustomPainter {
   final Color color;
   final double scale;
@@ -3518,33 +3537,19 @@ class _FeatureCornerCurvesPainter extends CustomPainter {
     final h = size.height;
     if (w <= 0 || h <= 0) return;
 
-    // Se ancla en la esquina superior derecha: al aumentar de 1 a 1.13,
-    // las ondas avanzan suavemente hacia abajo y hacia la izquierda.
+    final radius = (h * 0.5).clamp(34.0, 75.0).toDouble();
+    final center = Offset(w - radius * 0.45, radius * 0.2);
+
     canvas.save();
+    // Escala anclada en la esquina superior derecha.
     canvas.translate(w, 0);
     canvas.scale(scale, scale);
     canvas.translate(-w, 0);
-
-    final outer = Path()
-      ..moveTo(w - 210, 0)
-      ..cubicTo(w - 165, 55, w - 118, 127, w, 96)
-      ..lineTo(w, 0)
-      ..close();
-    canvas.drawPath(outer, Paint()..color = color.withValues(alpha: 0.060));
-
-    final mid = Path()
-      ..moveTo(w - 138, 0)
-      ..cubicTo(w - 111, 44, w - 66, 85, w, 60)
-      ..lineTo(w, 0)
-      ..close();
-    canvas.drawPath(mid, Paint()..color = color.withValues(alpha: 0.055));
-
-    final inner = Path()
-      ..moveTo(w - 68, 0)
-      ..cubicTo(w - 48, 28, w - 24, 44, w, 35)
-      ..lineTo(w, 0)
-      ..close();
-    canvas.drawPath(inner, Paint()..color = color.withValues(alpha: 0.055));
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()..color = color.withValues(alpha: 0.10),
+    );
     canvas.restore();
   }
 
