@@ -1177,35 +1177,45 @@ class _RepresentativePaymentsSectionState
       hoverColor: color,
       child: Container(
         width: double.infinity,
+        clipBehavior: Clip.antiAlias,
         decoration: _cardDecoration(),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-        child: Row(
+        child: Stack(
+          alignment: Alignment.centerLeft,
           children: [
-            Container(
-              padding: const EdgeInsets.all(11),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.09),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(icon, color: color, size: 22),
-            ),
-            const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '$count',
-                  style: const TextStyle(
-                    color: _navy,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 22,
+            // Círculo decorativo en la esquina superior derecha; crece al hover.
+            Positioned.fill(child: _CornerCircle(color: color)),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(11),
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.09),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(icon, color: color, size: 22),
                   ),
-                ),
-                Text(
-                  label,
-                  style: const TextStyle(color: _muted, fontSize: 12),
-                ),
-              ],
+                  const SizedBox(width: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '$count',
+                        style: const TextStyle(
+                          color: _navy,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 22,
+                        ),
+                      ),
+                      Text(
+                        label,
+                        style: const TextStyle(color: _muted, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -2645,4 +2655,73 @@ class _PaymentStatusFilterState extends State<_PaymentStatusFilter> {
       ),
     );
   }
+}
+
+/// Círculo decorativo anclado a la esquina superior derecha de una tarjeta.
+/// Crece un 25 % cuando el cursor pasa por encima, sin mover el contenido.
+class _CornerCircle extends StatefulWidget {
+  const _CornerCircle({required this.color});
+
+  final Color color;
+
+  @override
+  State<_CornerCircle> createState() => _CornerCircleState();
+}
+
+class _CornerCircleState extends State<_CornerCircle> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    return MouseRegion(
+      opaque: false,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: IgnorePointer(
+        child: TweenAnimationBuilder<double>(
+          tween: Tween<double>(end: _hovered ? 1.25 : 1.0),
+          duration: reduceMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 330),
+          curve: Curves.easeOutCubic,
+          builder: (context, scale, _) =>
+              CustomPaint(painter: _CornerCirclePainter(widget.color, scale)),
+        ),
+      ),
+    );
+  }
+}
+
+class _CornerCirclePainter extends CustomPainter {
+  const _CornerCirclePainter(this.color, this.scale);
+
+  final Color color;
+  final double scale;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    if (w <= 0 || h <= 0) return;
+    // Radio proporcional a la altura de la tarjeta; el centro se ancla a la
+    // esquina superior derecha en proporción al radio, así el círculo se ve
+    // igual de equilibrado en tarjetas bajas y altas.
+    final radius = (h * 0.5).clamp(34.0, 75.0).toDouble();
+    canvas.save();
+    // Escala anclada en la esquina superior derecha.
+    canvas.translate(w, 0);
+    canvas.scale(scale, scale);
+    canvas.translate(-w, 0);
+    canvas.drawCircle(
+      Offset(w - radius * 0.45, radius * 0.2),
+      radius,
+      Paint()..color = color.withValues(alpha: 0.10),
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _CornerCirclePainter old) =>
+      old.color != color || old.scale != scale;
 }

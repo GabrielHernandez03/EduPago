@@ -61,9 +61,9 @@ const Duration _hoverDuration = Duration(milliseconds: 150);
 
 // Barra lateral: tamaños y animación de contraer / expandir.
 const double _sidebarExpandedW = 250.0;
-const double _sidebarCollapsedW = 78.0;
-// Red de seguridad: con los rebotes actuales la barra no baja de ~68 px.
-const double _sidebarMinW = 62.0;
+const double _sidebarCollapsedW = 68.0;
+// Ancho mínimo para mantener el menú utilizable durante la animación.
+const double _sidebarMinW = 64.0;
 
 // Margen visual del menú flotante. El ancho expandido compensa los
 // 16 px adicionales de separación izquierda para conservar el área principal.
@@ -84,7 +84,7 @@ const bool _respectReduceMotion = false;
 const Duration _expandDuration = Duration(milliseconds: 650);
 const Duration _collapseDuration = Duration(milliseconds: 480);
 const Curve _expandCurve = _SpringCurve(damping: 0.62);
-const Curve _collapseCurve = _SpringCurve(damping: 0.72);
+const Curve _collapseCurve = Curves.easeInOutCubic;
 
 // Fundido cruzado entre el diseño contraído y el expandido:
 // empieza cuando la barra lleva ~18 % del recorrido y termina al ~68 %.
@@ -372,7 +372,7 @@ class _DashboardShellState extends State<DashboardShell>
     final main = Expanded(
       child: Column(
         children: [
-          _buildTopHeader(w, isDesktop),
+          _buildTopHeader(isDesktop),
           // Desvanece el contenido al llegar a la cabecera para evitar
           // el corte horizontal brusco durante el desplazamiento.
           // El fondo compartido queda fuera de la máscara y sigue continuo.
@@ -408,7 +408,21 @@ class _DashboardShellState extends State<DashboardShell>
                   ],
                 ).createShader(bounds);
               },
-              child: widget.body,
+              // Ajusta los breakpoints del contenido al ancho realmente
+              // disponible, no al ancho total que incluye el menú.
+              // Al cerrar el menú, el dashboard aprovecha el espacio extra.
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final original = MediaQuery.of(context);
+                  final contentWidth = constraints.maxWidth;
+                  return MediaQuery(
+                    data: original.copyWith(
+                      size: Size(contentWidth, original.size.height),
+                    ),
+                    child: widget.body,
+                  );
+                },
+              ),
             ),
           ),
         ],
@@ -564,7 +578,7 @@ class _DashboardShellState extends State<DashboardShell>
   /// Barra lateral de escritorio animada.
   ///
   /// El ancho sigue a [t] (con rebote). Dentro hay DOS capas a su tamaño real
-  /// (contraída de 78 px y expandida de 250 px) con un fundido cruzado entre
+  /// (contraída de 68 px y expandida de 250 px) con un fundido cruzado entre
   /// ellas. Los íconos están casi en el mismo punto en ambas, así que se ve
   /// como si se quedaran quietos mientras las etiquetas aparecen y se
   /// desvelan con el borde de la barra. No hay corte ni parpadeo.
@@ -670,7 +684,7 @@ class _DashboardShellState extends State<DashboardShell>
             ),
             Padding(
               padding: EdgeInsets.symmetric(
-                horizontal: expanded ? 16 : 12,
+                horizontal: expanded ? 16 : 8,
                 vertical: 20,
               ),
               child: Column(
@@ -751,7 +765,7 @@ class _DashboardShellState extends State<DashboardShell>
               curve: Curves.easeOutCubic,
               width: double.infinity,
               padding: EdgeInsets.symmetric(
-                horizontal: expanded ? 11 : 6,
+                horizontal: expanded ? 11 : 4,
                 vertical: expanded ? 11 : 8,
               ),
               decoration: BoxDecoration(
@@ -828,8 +842,8 @@ class _DashboardShellState extends State<DashboardShell>
                       message: 'EduPago · Inicio',
                       child: Center(
                         child: SizedBox(
-                          width: 40,
-                          height: 40,
+                          width: 36,
+                          height: 36,
                           child: FittedBox(
                             fit: BoxFit.contain,
                             child: _brandMark(),
@@ -1281,165 +1295,185 @@ class _DashboardShellState extends State<DashboardShell>
     }
   }
 
-  Widget _buildTopHeader(double w, bool isDesktop) {
-    final compact = Breakpoints.isCompact(w);
-    final showUserText = w > 1040;
-    final showActions = w > 1180;
+  Widget _buildTopHeader(bool isDesktop) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableWidth = constraints.maxWidth;
+        final compact = Breakpoints.isCompact(availableWidth);
+        // Con el menú desplegado hay menos espacio que en la ventana.
+        // Mostramos cada elemento solo si cabe en la zona principal.
+        final showUserText = availableWidth >= 860;
+        final showActions =
+            availableWidth >= 1160 + widget.headerActions.length * 125;
 
-    return Container(
-      height: 90,
-      padding: EdgeInsets.symmetric(
-        horizontal: compact ? 12 : 24,
-        vertical: 12,
-      ),
-      color: Colors.transparent,
-      child: Row(
-        children: [
-          if (!isDesktop) ...[
-            IconButton(
-              icon: const Icon(Icons.menu_rounded, color: AppColors.darkNavy),
-              onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-              tooltip: 'Abrir menú',
-            ),
-            const SizedBox(width: 6),
-          ],
-          Expanded(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 680),
-              child: Container(
-                padding: const EdgeInsets.all(4),
+        return Container(
+          height: 90,
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 12 : 24,
+            vertical: 12,
+          ),
+          color: Colors.transparent,
+          child: Row(
+            children: [
+              if (!isDesktop) ...[
+                IconButton(
+                  icon: const Icon(
+                    Icons.menu_rounded,
+                    color: AppColors.darkNavy,
+                  ),
+                  onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+                  tooltip: 'Abrir menú',
+                ),
+                const SizedBox(width: 6),
+              ],
+              Expanded(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: availableWidth >= 1180 ? 800 : 680,
+                  ),
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(32),
+                      border: Border.all(color: Colors.white),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.darkNavy.withValues(alpha: 0.035),
+                          blurRadius: 13,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: TextField(
+                      textInputAction: TextInputAction.search,
+                      onSubmitted: _searchSections,
+                      decoration: InputDecoration(
+                        hintText: compact
+                            ? 'Buscar sección...'
+                            : 'Buscar sección del menú...',
+                        hintStyle: const TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 14,
+                        ),
+                        prefixIcon: const Icon(
+                          Icons.search_rounded,
+                          size: 23,
+                          color: Color(0xFF6381B5),
+                        ),
+                        filled: true,
+                        fillColor: Colors.white,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 15,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(27),
+                          borderSide: const BorderSide(
+                            color: Color(0xFFE5EDF9),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(27),
+                          borderSide: const BorderSide(
+                            color: AppColors.primaryBlue,
+                            width: 1.6,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              if (showActions)
+                for (final action in widget.headerActions) ...[
+                  const SizedBox(width: 12),
+                  action,
+                ],
+              SizedBox(width: availableWidth < 830 ? 10 : 20),
+              DecoratedBox(
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(32),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: NotificationBell(
+                  key: const ValueKey('notification-bell'),
+                  onOpen: widget.onNotificationTap,
+                ),
+              ),
+              SizedBox(width: availableWidth < 830 ? 10 : 16),
+              if (availableWidth >= 680) ...[
+                Container(width: 1, height: 34, color: AppColors.cardBorder),
+                SizedBox(width: availableWidth < 830 ? 10 : 16),
+              ],
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 11,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(28),
                   border: Border.all(color: Colors.white),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.darkNavy.withValues(alpha: 0.035),
-                      blurRadius: 13,
-                      offset: const Offset(0, 3),
-                    ),
-                  ],
                 ),
-                child: TextField(
-                  textInputAction: TextInputAction.search,
-                  onSubmitted: _searchSections,
-                  decoration: InputDecoration(
-                    hintText: compact
-                        ? 'Buscar sección...'
-                        : 'Buscar sección del menú...',
-                    hintStyle: const TextStyle(
-                      color: AppColors.textMuted,
-                      fontSize: 14,
-                    ),
-                    prefixIcon: const Icon(
-                      Icons.search_rounded,
-                      size: 23,
-                      color: Color(0xFF6381B5),
-                    ),
-                    filled: true,
-                    fillColor: Colors.white,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 15,
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(27),
-                      borderSide: const BorderSide(color: Color(0xFFE5EDF9)),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(27),
-                      borderSide: const BorderSide(
-                        color: AppColors.primaryBlue,
-                        width: 1.6,
+                child: _userMenu(
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 21,
+                        backgroundColor: AppColors.primaryBlue,
+                        child: Text(
+                          widget.userInitials,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
+                        ),
                       ),
-                    ),
+                      if (showUserText) ...[
+                        const SizedBox(width: 12),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 155),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                widget.userName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: AppColors.darkNavy,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                widget.userRole,
+                                style: const TextStyle(
+                                  color: AppColors.textMuted,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        const Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          color: AppColors.darkNavy,
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ),
-            ),
-          ),
-          if (showActions)
-            for (final action in widget.headerActions) ...[
-              const SizedBox(width: 12),
-              action,
             ],
-          const SizedBox(width: 20),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: NotificationBell(
-              key: const ValueKey('notification-bell'),
-              onOpen: widget.onNotificationTap,
-            ),
           ),
-          const SizedBox(width: 16),
-          Container(width: 1, height: 34, color: AppColors.cardBorder),
-          const SizedBox(width: 16),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(28),
-              border: Border.all(color: Colors.white),
-            ),
-            child: _userMenu(
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 21,
-                    backgroundColor: AppColors.primaryBlue,
-                    child: Text(
-                      widget.userInitials,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                  if (showUserText) ...[
-                    const SizedBox(width: 12),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 155),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.userName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppColors.darkNavy,
-                              fontSize: 13,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            widget.userRole,
-                            style: const TextStyle(
-                              color: AppColors.textMuted,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    const Icon(
-                      Icons.keyboard_arrow_down_rounded,
-                      color: AppColors.darkNavy,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

@@ -37,12 +37,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
   static const List<AuthSegment> _segments = [
     AuthSegment(
-      label: 'Portal Representante',
+      label: 'Representante',
       icon: Icons.person_outline,
       color: AppColors.primaryBlue,
     ),
     AuthSegment(
-      label: 'Administrativo',
+      label: 'Administrador',
       icon: Icons.account_balance_outlined,
       color: AppColors.darkNavy,
     ),
@@ -125,7 +125,7 @@ class _LoginScreenState extends State<LoginScreen> {
         setState(() {
           _isLoading = false;
           _portalError =
-              'Esta cuenta pertenece al portal Administrativo. Selecciona esa opción para continuar.';
+              'Esta cuenta pertenece al portal Administrador. Selecciona esa opción para continuar.';
         });
         return;
       }
@@ -136,7 +136,7 @@ class _LoginScreenState extends State<LoginScreen> {
         setState(() {
           _isLoading = false;
           _portalError =
-              'Esta cuenta pertenece al Portal Representante. Selecciona esa opción para continuar.';
+              'Esta cuenta pertenece al portal Representante. Selecciona esa opción para continuar.';
         });
         return;
       }
@@ -226,115 +226,56 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final bool isDesktop = MediaQuery.of(context).size.width > 900;
-    final Color targetColor = _isRepresentanteRole
+    // El portal Administrador usa el azul marino como acento.
+    final Color accent = _isRepresentanteRole
         ? AppColors.primaryBlue
         : AppColors.darkNavy;
 
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: Row(
+    return AuthShell(
+      onBack: () => Navigator.pop(context),
+      cardMaxWidth: 560,
+      cardExtraVerticalPadding: 24,
+      intro: const AuthBrandIntro(
+        lead: 'Bienvenido de nuevo',
+        title: 'Administrar la educación también puede sentirse simple.',
+        description:
+            'Todo lo que necesitas para mantener las cuentas claras y la comunidad conectada.',
         children: [
-          if (isDesktop)
-            Expanded(
-              flex: 5,
-              child: AuthBrandPanel(
-                imageAsset: 'assets/images/login_img1.webp',
-                onLogoTap: () => Navigator.pop(context),
-                headline: '¿Ya tienes cuenta?',
-                subtitle:
-                    'Administrar la educación\ntambién puede sentirse simple.',
-                description:
-                    'Todo lo que necesitas para mantener las cuentas claras y la comunidad conectada.',
-                features: const [
-                  AuthFeature(
-                    Icons.person_outline,
-                    'Portal Representante',
-                    description: 'Tus hijos y tus cuentas en un solo lugar.',
-                  ),
-                  AuthFeature(
-                    Icons.account_balance_outlined,
-                    'Portal Administrativo',
-                    description: 'La gestión escolar de toda la institución.',
-                  ),
-                ],
-              ),
-            ),
-          Expanded(
-            flex: 5,
-            child: AuthFormPanel(
-              isDesktop: isDesktop,
-              maxWidth: 560,
-              onBack: () => Navigator.pop(context),
-              child: _buildFormContent(targetColor),
-            ),
+          SizedBox(
+            width: 460,
+            child: Divider(height: 1, thickness: 1, color: Color(0xB3FFFFFF)),
+          ),
+          SizedBox(height: 22),
+          AuthFeatureChips(
+            features: [
+              AuthFeature(Icons.payments_outlined, 'Gestión de pagos'),
+              AuthFeature(Icons.verified_user_outlined, 'Solvencias digitales'),
+              AuthFeature(Icons.receipt_long_outlined, 'Control y seguimiento'),
+            ],
           ),
         ],
       ),
+      child: _buildFormContent(accent),
     );
   }
 
-  // Cambia un color con una transición corta, pero solo en el widget pequeño
-  // que lo usa (antes se animaba y reconstruía el formulario completo).
-  Widget _accent(Color target, Widget Function(Color color) builder) {
-    return TweenAnimationBuilder<Color?>(
-      tween: ColorTween(end: target),
-      duration: const Duration(milliseconds: 450),
-      curve: Curves.easeInOut,
-      builder: (context, color, _) => builder(color ?? target),
-    );
-  }
-
-  Widget _buildFormContent(Color activeColor) {
+  Widget _buildFormContent(Color accent) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        // ── Cabecera ──
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 300),
-          transitionBuilder: (child, anim) => FadeTransition(
-            opacity: anim,
-            child: ScaleTransition(
-              scale: Tween<double>(begin: 0.8, end: 1.0).animate(anim),
-              child: child,
-            ),
-          ),
-          child: Container(
-            key: ValueKey(_isRepresentanteRole),
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: activeColor.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(
-              _isRepresentanteRole
-                  ? Icons.lock_outline
-                  : Icons.admin_panel_settings_outlined,
-              color: activeColor,
-              size: 24,
-            ),
-          ),
+        AuthCardHeader(
+          icon: Icons.lock_rounded,
+          accent: accent,
+          iconDecorated: false,
+          title: 'Inicia sesión',
+          subtitle: 'Elige tu portal e ingresa con tu correo y contraseña.',
         ),
-        const SizedBox(height: 12),
-        const Text(
-          'Bienvenido de nuevo',
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-            color: AppColors.darkNavy,
-          ),
-        ),
-        const SizedBox(height: 4),
-        const Text(
-          'Ingresa a tu espacio de gestión escolar.',
-          style: TextStyle(color: AppColors.textMuted, fontSize: 13.5),
-        ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 18),
 
-        // ── Selector líquido de portal ──
-        LiquidSegmentedSelector(
+        // ── Selector de portal ──
+        AuthSegmentedSelector(
+          height: 44,
           segments: _segments,
           hasError: _portalError != null,
           selectedIndex: _isRepresentanteRole ? 0 : 1,
@@ -344,7 +285,7 @@ class _LoginScreenState extends State<LoginScreen> {
           }),
         ),
         if (_portalError != null) AuthFieldError(_portalError!, left: 4),
-        const SizedBox(height: 20),
+        const SizedBox(height: 16),
 
         // ── Formulario ──
         Form(
@@ -358,7 +299,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 label: 'Correo electrónico',
                 hint: 'nombre@correo.com',
                 icon: Icons.email_outlined,
-                activeColor: activeColor,
+                activeColor: accent,
                 keyboardType: TextInputType.emailAddress,
                 autofillHints: const [AutofillHints.email],
                 textInputAction: TextInputAction.next,
@@ -378,14 +319,21 @@ class _LoginScreenState extends State<LoginScreen> {
                   return null;
                 },
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
               AuthTextField(
                 controller: _passwordController,
                 focusNode: _passwordFocusNode,
                 label: 'Contraseña',
-                hint: 'Mínimo 8 caracteres',
+                labelTrailing: AuthTextLink(
+                  label: '¿Olvidaste tu contraseña?',
+                  onTap: _showForgotPasswordModal,
+                  color: accent,
+                  fontSize: 12.5,
+                  dense: true,
+                ),
+                hint: 'Tu contraseña',
                 icon: Icons.lock_outline,
-                activeColor: activeColor,
+                activeColor: accent,
                 obscureText: _obscurePassword,
                 autofillHints: const [AutofillHints.password],
                 textInputAction: TextInputAction.done,
@@ -394,14 +342,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 serverError: _credentialsError
                     ? 'Correo o contraseña incorrectos.'
                     : null,
-                suffix: IconButton(
-                  icon: Icon(
-                    _obscurePassword
-                        ? Icons.visibility_outlined
-                        : Icons.visibility_off_outlined,
-                  ),
-                  color: AppColors.textMuted,
-                  iconSize: 20,
+                suffix: AuthVisibilityToggle(
+                  obscured: _obscurePassword,
                   onPressed: () =>
                       setState(() => _obscurePassword = !_obscurePassword),
                 ),
@@ -415,104 +357,34 @@ class _LoginScreenState extends State<LoginScreen> {
                   return null;
                 },
               ),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerRight,
-                child: InkWell(
-                  onTap: _showForgotPasswordModal,
-                  borderRadius: BorderRadius.circular(4),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 2),
-                    child: _accent(
-                      activeColor,
-                      (c) => Text(
-                        '¿Olvidó su contraseña?',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          color: c,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
               if (_formError != null) ...[
                 const SizedBox(height: 12),
                 AuthErrorBanner(message: _formError!),
               ],
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                height: 46,
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : _submitLogin,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: activeColor,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    elevation: 0,
-                  ),
-                  child: _isLoading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              'Iniciar sesión',
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            SizedBox(width: 8),
-                            Icon(Icons.arrow_forward, size: 18),
-                          ],
-                        ),
-                ),
+              const SizedBox(height: 20),
+              AuthPrimaryButton(
+                label: 'Iniciar sesión',
+                loadingLabel: 'Ingresando…',
+                loading: _isLoading,
+                color: accent,
+                onPressed: _submitLogin,
               ),
             ],
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 18),
 
-        // ── Enlace a registro ──
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text(
-              '¿Aún no tienes cuenta? ',
-              style: TextStyle(color: AppColors.textMuted, fontSize: 13),
-            ),
-            InkWell(
-              onTap: () {
-                Navigator.pushReplacement(
-                  context,
-                  authFadeRoute(const RegisterScreen()),
-                );
-              },
-              child: _accent(
-                activeColor,
-                (c) => Text(
-                  'Créala aquí',
-                  style: TextStyle(
-                    color: c,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                  ),
-                ),
-              ),
-            ),
-          ],
+        // ── Acceso a registro ──
+        AuthSwitchRow(
+          prompt: '¿Aún no tienes cuenta?',
+          action: 'Crear cuenta',
+          color: accent,
+          onTap: () {
+            Navigator.pushReplacement(
+              context,
+              authFadeRoute(const RegisterScreen()),
+            );
+          },
         ),
       ],
     );

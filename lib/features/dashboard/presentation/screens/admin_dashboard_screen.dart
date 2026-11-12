@@ -1,3 +1,4 @@
+
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show kDebugMode;
@@ -13,7 +14,7 @@ import '../../../../core/session/idle_session_store.dart';
 import '../../../../main.dart';
 import '../../../landing/presentation/screens/home_screen.dart';
 import '../../../students/presentation/widgets/students_import_card.dart';
-import '../../../students/presentation/widgets/admin_students_section.dart';
+import '../../../academics/presentation/widgets/admin_academic_section.dart';
 import '../../../payments/presentation/widgets/payment_reconciliation_widget.dart';
 import '../../../billing/presentation/widgets/generate_billing_dialog.dart';
 import '../../../billing/presentation/widgets/concepts_dialog.dart';
@@ -911,7 +912,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
     // Directorio académico y cuentas por cobrar por estudiante.
     if (_navIndex == 1 && _colegioId != null) {
-      return AdminStudentsSection(colegioId: _colegioId!);
+      return AdminAcademicSection(colegioId: _colegioId!);
     }
 
     // --- INTEGRACIÓN HU9: Pestaña "Conciliación" (_navIndex == 3) ---
@@ -1112,23 +1113,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       spacing: 12,
       runSpacing: 12,
       children: [
-        OutlinedButton.icon(
-          onPressed: () => _soon('Vincular estudiantes'),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: AppColors.darkNavy,
-            backgroundColor: Colors.white,
-            side: const BorderSide(color: AppColors.cardBorder),
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-          icon: const Icon(Icons.people_outline, size: 18),
-          label: const Text(
-            'Vincular estudiantes',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-          ),
-        ),
         ElevatedButton.icon(
           onPressed: () => setState(() => _navIndex = 3),
           style: ElevatedButton.styleFrom(
@@ -1276,22 +1260,19 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             onTap: () => _soon('La auditoría de transacciones'),
           ),
           _quickTile(
-            leading: const Text(
-              'WA',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
-              ),
+            leading: const Icon(
+              Icons.group_add_outlined,
+              color: Colors.white,
+              size: 18,
             ),
-            leadingBg: const Color(0xFF16A34A),
-            title: 'Simular bot de cobranza',
-            subtitle: 'WhatsApp automatizado',
+            leadingBg: AppColors.primaryBlue,
+            title: 'Ver y agregar estudiantes',
+            subtitle: 'Directorio y registro manual',
             bg: Colors.white,
             border: AppColors.cardBorder,
             titleColor: AppColors.darkNavy,
-            subColor: const Color(0xFF15803D),
-            onTap: () => _soon('El simulador del bot de cobranza'),
+            subColor: AppColors.primaryBlue,
+            onTap: () => setState(() => _navIndex = 1),
           ),
         ],
       ),
@@ -2771,3 +2752,6 @@ class _DonutPainter extends CustomPainter {
   bool shouldRepaint(covariant _DonutPainter old) =>
       old.values != values || old.colors != colors || old.stroke != stroke;
 }
+
+
+
