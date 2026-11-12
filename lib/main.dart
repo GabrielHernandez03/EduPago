@@ -7,9 +7,11 @@ import 'core/theme/app_colors.dart';
 import 'features/auth/presentation/screens/email_confirmed_screen.dart';
 import 'features/auth/presentation/screens/reset_password_screen.dart';
 import 'features/landing/presentation/screens/home_screen.dart';
+import 'core/services/cobranza_link.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+    CobranzaLink.captureFromUrl(); // antes de cualquier navegación
 
   // Inicialización de Supabase con flujo implícito configurado correctamente
   await Supabase.initialize(

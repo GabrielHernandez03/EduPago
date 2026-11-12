@@ -6,6 +6,7 @@ import '../../data/supabase_payment_submission_repository.dart';
 import '../../../../core/services/bcv_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import 'package:file_selector/file_selector.dart' as fs;
+import '../../../../core/services/colegio_datos_pago.dart';
 
 class ReportPaymentDialog extends StatefulWidget {
   final String studentName;
@@ -95,25 +96,11 @@ class _ReportPaymentDialogState extends State<ReportPaymentDialog> {
   final TextEditingController _bankSearchController = TextEditingController();
   final FocusNode _bankSearchFocus = FocusNode();
 
-  // Datos bancarios oficiales del colegio
-  final Map<String, String> _pagoMovilColegio = {
-    'Banco': 'Mercantil (0105)',
-    'RIF': 'J-30062942-0',
-    'Teléfono': '0412-3456789',
-    'Titular': 'U.E. Nueva Generación',
-  };
-
-  final Map<String, String> _zelleColegio = {
-    'Correo': 'pagos@nuevageneracion.edu.ve',
-    'Titular': 'U.E. Nueva Generación Inc.',
-  };
-
-  final Map<String, String> _transferenciaColegio = {
-    'Banco': 'Mercantil',
-    'Cuenta': '0105-0123-45-6789012345',
-    'RIF': 'J-30062942-0',
-    'Titular': 'U.E. Nueva Generación',
-  };
+  // Datos bancarios oficiales del colegio (fuente única compartida)
+  final Map<String, String> _pagoMovilColegio = ColegioDatosPago.pagoMovil;
+  final Map<String, String> _zelleColegio = ColegioDatosPago.zelle;
+  final Map<String, String> _transferenciaColegio =
+      ColegioDatosPago.transferencia;
 
   @override
   void initState() {

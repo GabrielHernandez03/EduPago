@@ -18,6 +18,12 @@ import '../../../calendar/presentation/widgets/representative_calendar_section.d
 import '../../../../core/services/notification_service.dart';
 import '../../../../core/widgets/dashboard_shell.dart';
 import '../../../../core/widgets/skeleton_loader.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import '../../../../core/services/colegio_datos_pago.dart';
+import '../../../../core/services/cobranza_link.dart';
+// ignore: avoid_web_libraries_in_flutter, deprecated_member_use
+import 'dart:html' as html;
 
 class RepresentativeDashboardScreen extends StatefulWidget {
   const RepresentativeDashboardScreen({super.key});
@@ -94,7 +100,325 @@ class _RepresentativeDashboardScreenState
         setState(() => _welcomeNow = now);
       }
     });
-    fetchUserProfileAndStudents();
+    fetchUserProfileAndStudents().then((_) {
+    _handleEmailActionParams();
+  });
+}
+
+/// Procesa las acciones que vienen desde los botones del correo electrónico (HU15)
+  void _handleEmailActionParams() {
+    // Enlaces de cobranza: se capturan en main() y sobreviven al login.
+    final cobranza = CobranzaLink.take();
+    if (cobranza != null) {
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showCobranzaDialog(cobranza);
+      });
+      return;
+    }
+
+    final Uri currentUri = Uri.base;
+    final String? action = currentUri.queryParameters['action'];
+
+    if (action == null || !mounted) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      switch (action) {
+        case 'report_payment':
+          _showReportPaymentModal(context);
+          break;
+        case 'support':
+          _showSupportDialog();
+          break;
+        case 'view_account':
+          setState(() => _selectedNavIndex = _tabEstadoCuenta);
+          break;
+      }
+      // Limpia los parámetros de la barra de direcciones sin recargar la página
+      if (kIsWeb) {
+        html.window.history.replaceState(null, '', currentUri.path);
+      }
+    });
+  }
+    Future<void> _showCobranzaDialog(CobranzaLink link) async {
+    CuotaEstadoCuenta? cuota;
+    for (final c in _estadoCuenta?.cuotasPendientes() ??
+        const <CuotaEstadoCuenta>[]) {
+      if (c.cuotaId == link.cuotaId) {
+        cuota = c;
+        break;
+      }
+    }
+
+    if (cuota == null) {
+      final sinDatos = _estadoCuenta == null;
+      setState(() => _selectedNavIndex = _tabEstadoCuenta);
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(sinDatos
+              ? 'No pudimos verificar tu cuenta'
+              : 'Cuota sin saldo pendiente'),
+          content: Text(sinDatos
+              ? 'Intenta nuevamente en unos minutos desde tu estado de cuenta.'
+              : 'Esta cuota ya no tiene saldo pendiente o no corresponde a tu cuenta. Revisa tu estado de cuenta.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Entendido'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    final c = cuota;
+    final title = switch (link.tipo) {
+      'corte_dia_0' => 'Tu cuota vence hoy',
+      'mora_dia_5' => 'Tu cuota tiene 5 días de retraso',
+      _ => 'Tu cuota vence pronto',
+    };
+
+    await showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.5),
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(title,
+                    style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.darkNavy)),
+                const SizedBox(height: 6),
+                Text(
+                  '${c.periodo.isNotEmpty ? c.periodo : c.concepto} · '
+                  'Vence ${_fmtFecha(c.fechaVencimiento)} · '
+                  'Saldo ${_fmtUsd(c.saldoUsd)}',
+                  style: const TextStyle(
+                      fontSize: 13, color: AppColors.textMuted),
+                ),
+                const SizedBox(height: 18),
+                _cobranzaOption(
+                  number: 1,
+                  icon: Icons.account_balance_outlined,
+                  title: 'Ver datos de pago',
+                  subtitle: 'Consulta cómo y dónde pagar',
+                  highlighted: link.opcion == 'ver',
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    _showPaymentDataDialog(c);
+                  },
+                ),
+                _cobranzaOption(
+                  number: 2,
+                  icon: Icons.upload_file_outlined,
+                  title: 'Adjuntar comprobante',
+                  subtitle: 'Reporta tu pago para que sea revisado',
+                  highlighted: link.opcion == 'reportar',
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    _showReportPaymentModal(context);
+                  },
+                ),
+                _cobranzaOption(
+                  number: 3,
+                  icon: Icons.support_agent_outlined,
+                  title: 'Solicitar atención humana',
+                  subtitle: link.opcion == 'convenio'
+                      ? 'Pide un convenio de pago al colegio'
+                      : 'El colegio se pondrá en contacto contigo',
+                  highlighted: link.opcion == 'convenio',
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    _requestHumanAttention(link, c);
+                  },
+                ),
+                const SizedBox(height: 4),
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('Cerrar'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _cobranzaOption({
+    required int number,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool highlighted,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: highlighted ? AppColors.primaryLight : Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(
+            color: highlighted ? AppColors.primaryBlue : AppColors.cardBorder,
+          ),
+        ),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                Icon(icon, color: AppColors.primaryBlue),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('$number. $title',
+                          style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.darkNavy)),
+                      const SizedBox(height: 2),
+                      Text(subtitle,
+                          style: const TextStyle(
+                              fontSize: 12, color: AppColors.textMuted)),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right_rounded,
+                    color: AppColors.textMuted),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _requestHumanAttention(
+    CobranzaLink link,
+    CuotaEstadoCuenta cuota,
+  ) async {
+    String message;
+    try {
+      await supabase.from('solicitudes_atencion').insert({
+        'colegio_id': _repSchoolId,
+        'cuota_id': cuota.cuotaId,
+        'representante_id': _repDbId,
+        'motivo': link.opcion == 'convenio' ? 'convenio' : 'atencion_humana',
+        'tipo_notificacion': link.tipo,
+      });
+      message = 'Solicitud enviada. El colegio se pondrá en contacto contigo.';
+    } on PostgrestException catch (e) {
+      debugPrint('Error al crear solicitud de atención: $e');
+      message = e.code == '23505'
+          ? 'Ya tienes una solicitud abierta para esta cuota.'
+          : 'No pudimos enviar tu solicitud. Intenta nuevamente.';
+    } catch (e) {
+      debugPrint('Error al crear solicitud de atención: $e');
+      message = 'No pudimos enviar tu solicitud. Intenta nuevamente.';
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _showPaymentDataDialog(CuotaEstadoCuenta c) {
+    void copy(String text, String label) {
+      Clipboard.setData(ClipboardData(text: text));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text('$label copiado'),
+            duration: const Duration(seconds: 1)),
+      );
+    }
+
+    Widget section(String title, Map<String, String> data) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 14, bottom: 4),
+              child: Text(title,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w800, color: AppColors.darkNavy)),
+            ),
+            for (final e in data.entries)
+              InkWell(
+                onTap: () => copy(e.value, e.key),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(children: [
+                    SizedBox(
+                        width: 84,
+                        child: Text(e.key,
+                            style: const TextStyle(
+                                fontSize: 13, color: AppColors.textMuted))),
+                    Expanded(
+                        child: Text(e.value,
+                            style: const TextStyle(
+                                fontSize: 13.5, fontWeight: FontWeight.w700))),
+                    const Icon(Icons.copy_rounded,
+                        size: 16, color: AppColors.primaryBlue),
+                  ]),
+                ),
+              ),
+          ],
+        );
+
+    final ves = _tasaBcv > 0 ? c.saldoUsd * _tasaBcv : 0.0;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Datos de pago'),
+        content: SizedBox(
+          width: 440,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                    'Saldo: ${_fmtUsd(c.saldoUsd)} USD'
+                    '${ves > 0 ? ' · Bs. ${_fmtVes(ves)}' : ''}',
+                    style: const TextStyle(fontWeight: FontWeight.w700)),
+                section('Pago Móvil', ColegioDatosPago.pagoMovil),
+                section('Transferencia', ColegioDatosPago.transferencia),
+                section('Zelle', ColegioDatosPago.zelle),
+                const SizedBox(height: 12),
+                const Text('Toca un dato para copiarlo.',
+                    style:
+                        TextStyle(fontSize: 12, color: AppColors.textMuted)),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _showReportPaymentModal(context);
+            },
+            child: const Text('Ya pagué: adjuntar comprobante'),
+          ),
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cerrar')),
+        ],
+      ),
+    );
   }
 
   @override
