@@ -858,28 +858,52 @@ class _RepresentativePaymentsSectionState
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Wrap(
-                              alignment: WrapAlignment.spaceBetween,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              spacing: 12,
-                              runSpacing: 12,
-                              children: [
-                                Text(
-                                  'Historial por fecha de reporte',
-                                  style: const TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w800,
-                                    color: _navy,
-                                  ),
-                                ),
-                                Text(
-                                  '${_visible.length} de ${_payments.length} reportes',
-                                  style: const TextStyle(
-                                    color: _muted,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
+                            LayoutBuilder(
+                              builder: (context, constraints) {
+                                final heading = Wrap(
+                                  spacing: 12,
+                                  runSpacing: 5,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    const Text(
+                                      'Historial por fecha de reporte',
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w800,
+                                        color: _navy,
+                                      ),
+                                    ),
+                                    Text(
+                                      '${_visible.length} de ${_payments.length} reportes',
+                                      style: const TextStyle(
+                                        color: _muted,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                );
+                                if (constraints.maxWidth < 600) {
+                                  return Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      heading,
+                                      const SizedBox(height: 12),
+                                      Align(
+                                        alignment: Alignment.centerRight,
+                                        child: _statusDropdown(),
+                                      ),
+                                    ],
+                                  );
+                                }
+                                return Row(
+                                  children: [
+                                    Expanded(child: heading),
+                                    const SizedBox(width: 12),
+                                    _statusDropdown(),
+                                  ],
+                                );
+                              },
                             ),
                             // No tiene sentido mostrar búsqueda y filtros si no
                             // existe ningún reporte; además evita scroll residual.
@@ -920,21 +944,6 @@ class _RepresentativePaymentsSectionState
                                       width: 1.6,
                                     ),
                                   ),
-                                ),
-                              ),
-                              const SizedBox(height: 14),
-                              SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                child: Row(
-                                  children: [
-                                    _filterChip('todos', 'Todos'),
-                                    const SizedBox(width: 8),
-                                    _filterChip('pendiente', 'En espera'),
-                                    const SizedBox(width: 8),
-                                    _filterChip('aprobado', 'Aprobados'),
-                                    const SizedBox(width: 8),
-                                    _filterChip('rechazado', 'Rechazados'),
-                                  ],
                                 ),
                               ),
                             ],
@@ -1223,35 +1232,89 @@ class _RepresentativePaymentsSectionState
     );
   }
 
-  Widget _filterChip(String value, String label) {
-    // Cada estado tiene identidad propia, tanto activo como en hover.
-    final color = switch (value) {
-      'pendiente' => _orange,
-      'aprobado' => _green,
-      'rechazado' => _red,
-      _ => _blue,
-    };
-    final icon = switch (value) {
-      'pendiente' => Icons.schedule_rounded,
-      'aprobado' => Icons.check_circle_outline_rounded,
-      'rechazado' => Icons.highlight_off_rounded,
-      _ => Icons.grid_view_rounded,
-    };
-    return _PaymentStatusFilter(
-      label: label,
-      icon: icon,
-      color: color,
-      selected: _filter == value,
-      onTap: () {
+  /// Selector de estado del historial, compacto y alineado a la derecha.
+  Widget _statusDropdown() {
+    final options = <(String, String, IconData, Color)>[
+      ('todos', 'Todos', Icons.grid_view_rounded, _blue),
+      ('pendiente', 'En espera', Icons.schedule_rounded, _orange),
+      ('aprobado', 'Aprobados', Icons.check_circle_outline_rounded, _green),
+      ('rechazado', 'Rechazados', Icons.highlight_off_rounded, _red),
+    ];
+    final current = options.firstWhere((option) => option.$1 == _filter);
+    return PopupMenuButton<String>(
+      tooltip: 'Filtrar historial por estado',
+      initialValue: _filter,
+      position: PopupMenuPosition.under,
+      offset: const Offset(0, 7),
+      color: Colors.white,
+      surfaceTintColor: Colors.transparent,
+      elevation: 5,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(13),
+        side: const BorderSide(color: _border),
+      ),
+      onSelected: (value) {
         if (_filter == value) return;
         setState(() {
           _filter = value;
-          // Mostrar primero los resultados del nuevo filtro. Después de eso
-          // sus meses y días permanecen plegables sin importar el estado.
           _collapsedMonths.clear();
           _collapsedDays.clear();
         });
       },
+      itemBuilder: (context) => [
+        for (final option in options)
+          PopupMenuItem<String>(
+            value: option.$1,
+            height: 46,
+            child: Row(
+              children: [
+                Icon(option.$3, color: option.$4, size: 18),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Text(
+                    option.$2,
+                    style: const TextStyle(
+                      color: _navy,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                if (_filter == option.$1)
+                  const Icon(Icons.check_rounded, color: _blue, size: 18),
+              ],
+            ),
+          ),
+      ],
+      child: Container(
+        width: 195,
+        height: 44,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(11),
+          border: Border.all(color: _border),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.filter_list_rounded, color: current.$4, size: 19),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                current.$2,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: _navy,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const Icon(Icons.keyboard_arrow_down_rounded, color: _blue),
+          ],
+        ),
+      ),
     );
   }
 
@@ -2545,113 +2608,6 @@ class _PaymentHoverSurfaceState extends State<_PaymentHoverSurface> {
           ),
         ),
         child: widget.child,
-      ),
-    );
-  }
-}
-
-/// Filtro visual por estado: colores consistentes con los KPI y el hover
-/// de las tarjetas, sin intervenir en la consulta ni en la agrupación.
-class _PaymentStatusFilter extends StatefulWidget {
-  const _PaymentStatusFilter({
-    required this.label,
-    required this.icon,
-    required this.color,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final IconData icon;
-  final Color color;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  State<_PaymentStatusFilter> createState() => _PaymentStatusFilterState();
-}
-
-class _PaymentStatusFilterState extends State<_PaymentStatusFilter> {
-  bool _hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = widget.color;
-    final selected = widget.selected;
-    final highlighted = selected || _hovered;
-    final reducedMotion = MediaQuery.of(context).disableAnimations;
-
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: 'Filtrar pagos: ${widget.label}',
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: AnimatedContainer(
-          duration: reducedMotion
-              ? Duration.zero
-              : const Duration(milliseconds: 155),
-          curve: Curves.easeOutCubic,
-          constraints: const BoxConstraints(minHeight: 38),
-          decoration: BoxDecoration(
-            color: selected
-                ? color.withValues(alpha: 0.105)
-                : _hovered
-                ? color.withValues(alpha: 0.045)
-                : Colors.white,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: highlighted
-                  ? color.withValues(alpha: selected ? 0.74 : 0.55)
-                  : AppColors.cardBorder,
-              width: 1,
-            ),
-            boxShadow: _hovered
-                ? [
-                    BoxShadow(
-                      color: color.withValues(alpha: 0.075),
-                      blurRadius: 10,
-                      offset: const Offset(0, 3),
-                    ),
-                  ]
-                : const [],
-          ),
-          child: Material(
-            color: Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
-            child: InkWell(
-              onTap: widget.onTap,
-              borderRadius: BorderRadius.circular(10),
-              hoverColor: Colors.transparent,
-              splashColor: color.withValues(alpha: 0.10),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(widget.icon, size: 15, color: color),
-                    const SizedBox(width: 7),
-                    Text(
-                      widget.label,
-                      style: TextStyle(
-                        color: highlighted ? color : AppColors.textMuted,
-                        fontSize: 12,
-                        fontWeight: selected
-                            ? FontWeight.w800
-                            : FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
       ),
     );
   }

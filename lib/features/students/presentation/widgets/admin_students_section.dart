@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/widgets/skeleton_loader.dart';
 import '../../../academics/presentation/widgets/academic_widgets.dart';
 import '../../data/student_repository.dart';
 import '../../data/supabase_student_repository.dart';
@@ -290,29 +291,9 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
         LayoutBuilder(
           builder: (context, box) {
             final narrow = box.maxWidth < 700;
-            final search = TextField(
+            final search = SchoolSearchField(
               controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Buscar estudiante, cédula o representante',
-                prefixIcon: const Icon(Icons.search_rounded, color: _blue),
-                suffixIcon: _search.isNotEmpty
-                    ? IconButton(
-                        tooltip: 'Limpiar búsqueda',
-                        icon: const Icon(Icons.close_rounded),
-                        onPressed: _searchController.clear,
-                      )
-                    : null,
-                filled: true,
-                fillColor: const Color(0xFFF4F7FD),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(11),
-                  borderSide: const BorderSide(color: _border),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(11),
-                  borderSide: const BorderSide(color: _blue, width: 1.8),
-                ),
-              ),
+              hintText: 'Buscar estudiante, cédula o representante',
             );
             final grade = _picker(
               label: 'Grado',
@@ -534,10 +515,7 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
                       const SizedBox(height: 16),
                     ],
                     if (_loading) ...[
-                      const SizedBox(height: 100),
-                      const Center(
-                        child: CircularProgressIndicator(color: _blue),
-                      ),
+                      const StudentsListSkeleton(),
                     ] else ...[
                       LayoutBuilder(
                         builder: (context, box) {
@@ -1941,6 +1919,104 @@ class _StudentDetailsDialog extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+// =============================================================================
+// BUSCADOR (estilo del módulo de pagos)
+// =============================================================================
+
+/// Buscador con el estilo del módulo de pagos.
+///
+/// Valores medidos sobre las capturas de referencia:
+///  - reposo:  relleno #F2F6FC, borde 1 px #EDF1F9
+///  - hover:   relleno #E9ECF2
+///  - foco:    relleno #E9ECF2 + borde azul de 1.5 px
+///  - alto 48, radio 14, hint #526C98, icono #6381B5
+///
+/// El botón de limpiar aparece solo cuando hay texto y se gestiona aquí dentro
+/// (escucha el controller), así la pantalla que lo usa no necesita setState
+/// solo por eso.
+class SchoolSearchField extends StatelessWidget {
+  const SchoolSearchField({
+    super.key,
+    required this.controller,
+    required this.hintText,
+    this.onChanged,
+    this.focusNode,
+  });
+
+  final TextEditingController controller;
+  final String hintText;
+  final ValueChanged<String>? onChanged;
+  final FocusNode? focusNode;
+
+  static const Color _idle = Color(0xFFF2F6FC);
+  static const Color _hover = Color(0xFFE9ECF2);
+  static const Color _edge = Color(0xFFEDF1F9);
+  static const Color _hint = Color(0xFF526C98);
+  static const Color _icon = Color(0xFF6381B5);
+
+  static OutlineInputBorder _border(Color color, [double width = 1]) =>
+      OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: color, width: width),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: controller,
+      builder: (context, value, _) {
+        return TextField(
+          controller: controller,
+          focusNode: focusNode,
+          onChanged: onChanged,
+          textInputAction: TextInputAction.search,
+          style: const TextStyle(
+            color: AppColors.darkNavy,
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+          ),
+          decoration: InputDecoration(
+            hintText: hintText,
+            hintStyle: const TextStyle(
+              color: _hint,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+            prefixIcon: const Icon(
+              Icons.search_rounded,
+              size: 22,
+              color: _icon,
+            ),
+            suffixIcon: value.text.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: 'Limpiar búsqueda',
+                    icon: const Icon(Icons.close_rounded, size: 20),
+                    color: _icon,
+                    onPressed: controller.clear,
+                  ),
+            filled: true,
+            // Colores explícitos por estado; se anula el overlay por defecto de
+            // Material para que el hover sea exactamente #E9ECF2.
+            fillColor: WidgetStateColor.resolveWith((states) {
+              final active =
+                  states.contains(WidgetState.hovered) ||
+                  states.contains(WidgetState.focused);
+              return active ? _hover : _idle;
+            }),
+            hoverColor: Colors.transparent,
+            focusColor: Colors.transparent,
+            contentPadding: const EdgeInsets.symmetric(vertical: 14),
+            border: _border(_edge),
+            enabledBorder: _border(_edge),
+            focusedBorder: _border(AppColors.primaryBlue, 1.5),
+          ),
+        );
+      },
     );
   }
 }

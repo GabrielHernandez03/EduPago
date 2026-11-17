@@ -6,6 +6,7 @@ import '../../data/supabase_calendar_repository.dart';
 import '../../domain/calendar_event.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/widgets/skeleton_loader.dart';
 
 /// Calendario de movimientos y cuotas del representante.
 /// Ruta: lib/features/calendar/presentation/widgets/representative_calendar_section.dart
@@ -664,12 +665,7 @@ class _RepresentativeCalendarSectionState
                 _header(),
                 const SizedBox(height: 20),
                 if (_loading) ...[
-                  const SizedBox(
-                    height: 190,
-                    child: Center(
-                      child: CircularProgressIndicator(strokeWidth: 2.5),
-                    ),
-                  ),
+                  const CalendarSkeleton(),
                 ] else if (_error != null) ...[
                   _notice(_error!, isError: true, retry: true),
                 ] else ...[
@@ -1476,36 +1472,95 @@ class _RepresentativeCalendarSectionState
       orElse: () => filters.first,
     );
 
-    Widget filterButton(double w) => _selectorButton(
+    // Desplegable compacto situado a la derecha, con los mismos criterios.
+    Widget filterButton(double w) => SizedBox(
       width: w,
-      avatar: _selectorAvatar(
-        icon: current['icon'] as IconData,
-        color: current['color'] as Color,
-      ),
-      caption: 'MOVIMIENTOS',
-      value: current['label'] as String,
-      detail: current['sub'] as String,
-      onOpen: (ctx) async {
-        final choice = await _showSelectMenu<String>(
-          ctx,
-          header: 'FILTRAR MOVIMIENTOS',
-          selected: _filter,
-          options: [
-            for (final f in filters)
-              _MenuOption<String>(
-                value: f['label'] as String,
-                title: f['label'] as String,
-                subtitle: f['sub'] as String,
-                avatar: _selectorAvatar(
-                  icon: f['icon'] as IconData,
-                  color: f['color'] as Color,
-                  size: 36,
+      child: PopupMenuButton<String>(
+        tooltip: 'Filtrar movimientos del calendario',
+        initialValue: _filter,
+        position: PopupMenuPosition.under,
+        offset: const Offset(0, 6),
+        color: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 5,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(13),
+          side: const BorderSide(color: _border),
+        ),
+        onSelected: (value) {
+          if (value != _filter) setState(() => _filter = value);
+        },
+        itemBuilder: (context) => [
+          for (final option in filters)
+            PopupMenuItem<String>(
+              value: option['label'] as String,
+              height: 51,
+              child: Row(
+                children: [
+                  Icon(
+                    option['icon'] as IconData,
+                    color: option['color'] as Color,
+                    size: 19,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          option['label'] as String,
+                          style: const TextStyle(
+                            color: _navy,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          option['sub'] as String,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: _muted, fontSize: 10.5),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (_filter == option['label'])
+                    const Icon(Icons.check_rounded, color: _blue, size: 18),
+                ],
+              ),
+            ),
+        ],
+        child: Container(
+          height: 56,
+          padding: const EdgeInsets.symmetric(horizontal: 13),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(color: _border),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.filter_list_rounded, color: current['color'] as Color),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  current['label'] as String,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _navy,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
-          ],
-        );
-        if (choice != null && mounted) setState(() => _filter = choice);
-      },
+              const Icon(Icons.keyboard_arrow_down_rounded, color: _blue),
+            ],
+          ),
+        ),
+      ),
     );
 
     Widget studentButton(double w) {
@@ -1586,26 +1641,33 @@ class _RepresentativeCalendarSectionState
       );
     }
 
-    // Los dos selectores se reparten el ancho disponible (el del calendario).
+    // Estudiante a la izquierda; filtro de movimientos desplegable a la derecha.
     final single = widget.students.length < 2;
     if (width < 560 && !single) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          filterButton(double.infinity),
-          const SizedBox(height: 12),
           studentButton(double.infinity),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: filterButton(width < 250 ? width : 250),
+          ),
         ],
       );
     }
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Expanded(child: filterButton(double.infinity)),
         if (!single) ...[
-          const SizedBox(width: 14),
           Expanded(child: studentButton(double.infinity)),
-        ],
+          const SizedBox(width: 14),
+        ] else
+          const Spacer(),
+        SizedBox(
+          width: single ? (width < 250 ? width : 250) : width * 0.45,
+          child: filterButton(double.infinity),
+        ),
       ],
     );
   }

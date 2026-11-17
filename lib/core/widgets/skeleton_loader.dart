@@ -570,3 +570,321 @@ class AdminDashboardSkeleton extends StatelessWidget {
     );
   }
 }
+
+// =============================================================================
+// ADMINISTRADOR · LISTADO DE ESTUDIANTES
+// (solo el cuerpo: el título y el botón "Actualizar" son reales y ya visibles)
+// =============================================================================
+class StudentsListSkeleton extends StatelessWidget {
+  final int rows;
+  const StudentsListSkeleton({super.key, this.rows = 6});
+
+  @override
+  Widget build(BuildContext context) {
+    return SkeletonScope(
+      child: LayoutBuilder(
+        builder: (context, box) {
+          final w = box.maxWidth;
+          final columns = w < 540 ? 1 : (w < 850 ? 2 : 4);
+          const gap = 12.0;
+          final statWidth = (w - (columns - 1) * gap) / columns;
+          final wideTable = w >= 1000;
+
+          final statCard = SizedBox(
+            width: statWidth,
+            child: const SkeletonCard(
+              padding: EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  SkeletonBox(width: 42, height: 42, radius: 12),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _Line(width: 40, height: 22),
+                        SizedBox(height: 8),
+                        _Line(width: 80, height: 11),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+
+          final filters = SkeletonCard(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const _Line(width: 140, height: 16),
+                const SizedBox(height: 18),
+                const SkeletonBox(height: 48, radius: 11),
+                const SizedBox(height: 12),
+                if (w < 700) ...const [
+                  SkeletonBox(height: 48, radius: 10),
+                  SizedBox(height: 12),
+                  SkeletonBox(height: 48, radius: 10),
+                  SizedBox(height: 12),
+                  SkeletonBox(height: 48, radius: 10),
+                ] else
+                  const Row(
+                    children: [
+                      Expanded(child: SkeletonBox(height: 48, radius: 10)),
+                      SizedBox(width: 12),
+                      Expanded(child: SkeletonBox(height: 48, radius: 10)),
+                      SizedBox(width: 12),
+                      Expanded(child: SkeletonBox(height: 48, radius: 10)),
+                    ],
+                  ),
+              ],
+            ),
+          );
+
+          Widget row() => Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: SkeletonCard(
+              padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 14),
+              child: Row(
+                children: [
+                  const SkeletonBox(width: 40, height: 40, circle: true),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    flex: 4,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _Line(width: 170, height: 13),
+                        SizedBox(height: 8),
+                        _Line(width: 110, height: 10),
+                      ],
+                    ),
+                  ),
+                  if (wideTable) ...const [
+                    Expanded(
+                      flex: 2,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: _Line(width: 90, height: 12),
+                      ),
+                    ),
+                    Expanded(
+                      flex: 2,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: _Line(width: 60, height: 14),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(width: 12),
+                  const SkeletonBox(width: 72, height: 24, radius: 30),
+                  if (wideTable) ...const [
+                    SizedBox(width: 16),
+                    SkeletonBox(width: 110, height: 36, radius: 10),
+                  ],
+                ],
+              ),
+            ),
+          );
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Wrap(
+                spacing: gap,
+                runSpacing: gap,
+                children: List.generate(4, (_) => statCard),
+              ),
+              const SizedBox(height: 18),
+              filters,
+              const SizedBox(height: 16),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: _Line(width: 170, height: 16),
+              ),
+              const SizedBox(height: 14),
+              for (var i = 0; i < rows; i++) row(),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// REPRESENTANTE · CALENDARIO
+// (solo el cuerpo: título y botón "Actualizar" son reales y ya visibles)
+// =============================================================================
+class CalendarSkeleton extends StatelessWidget {
+  const CalendarSkeleton({super.key});
+
+  static const double _panelHeight = 446;
+
+  Widget _summaryCard() => const SkeletonCard(
+    padding: EdgeInsets.all(18),
+    child: Row(
+      children: [
+        SkeletonBox(width: 44, height: 44, radius: 13),
+        SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _Line(width: 130, height: 11),
+              SizedBox(height: 10),
+              _Line(width: 36, height: 24),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _calendarCard() => SkeletonCard(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Row(
+          children: [
+            _Line(width: 150, height: 20),
+            Spacer(),
+            SkeletonBox(width: 34, height: 34, radius: 10),
+            SizedBox(width: 8),
+            SkeletonBox(width: 34, height: 34, radius: 10),
+          ],
+        ),
+        const SizedBox(height: 18),
+        Row(
+          children: [
+            for (var i = 0; i < 7; i++)
+              const Expanded(
+                child: Center(child: _Line(width: 24, height: 10)),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        for (var r = 0; r < 5; r++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(
+              children: [
+                for (var c = 0; c < 7; c++)
+                  const Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 2),
+                      child: SkeletonBox(height: 56, radius: 12),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    ),
+  );
+
+  Widget _agendaCard() => const SkeletonCard(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _Line(width: 150, height: 16),
+        SizedBox(height: 8),
+        _Line(width: 100, height: 10),
+        SizedBox(height: 14),
+        _ListRowSkeleton(),
+        _ListRowSkeleton(),
+        _ListRowSkeleton(),
+        _ListRowSkeleton(),
+      ],
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return SkeletonScope(
+      child: LayoutBuilder(
+        builder: (context, c) {
+          final summary = c.maxWidth < 570
+              ? Column(
+                  children: [
+                    for (var i = 0; i < 3; i++) ...[
+                      if (i > 0) const SizedBox(height: 10),
+                      _summaryCard(),
+                    ],
+                  ],
+                )
+              : Row(
+                  children: [
+                    for (var i = 0; i < 3; i++) ...[
+                      if (i > 0) const SizedBox(width: 13),
+                      Expanded(child: _summaryCard()),
+                    ],
+                  ],
+                );
+
+          final Widget body;
+          if (c.maxWidth < 830) {
+            body = Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SkeletonBox(height: 64, radius: 16),
+                const SizedBox(height: 16),
+                _calendarCard(),
+                const SizedBox(height: 18),
+                const SkeletonBox(height: 52, radius: 14),
+                const SizedBox(height: 12),
+                _agendaCard(),
+              ],
+            );
+          } else {
+            body = Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Row(
+                  children: [
+                    Expanded(
+                      flex: 8,
+                      child: SkeletonBox(height: 64, radius: 16),
+                    ),
+                    SizedBox(width: 18),
+                    Expanded(
+                      flex: 5,
+                      child: SkeletonBox(height: 64, radius: 16),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 8,
+                      child: SizedBox(
+                        height: _panelHeight,
+                        child: _calendarCard(),
+                      ),
+                    ),
+                    const SizedBox(width: 18),
+                    Expanded(
+                      flex: 5,
+                      child: SizedBox(
+                        height: _panelHeight,
+                        child: _agendaCard(),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          }
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [summary, const SizedBox(height: 22), body],
+          );
+        },
+      ),
+    );
+  }
+}

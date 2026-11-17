@@ -1,4 +1,3 @@
-
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show kDebugMode;
@@ -2752,6 +2751,3 @@ class _DonutPainter extends CustomPainter {
   bool shouldRepaint(covariant _DonutPainter old) =>
       old.values != values || old.colors != colors || old.stroke != stroke;
 }
-
-
-

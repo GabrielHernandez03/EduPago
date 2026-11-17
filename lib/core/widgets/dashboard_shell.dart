@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -56,14 +57,16 @@ class DashboardNavItem {
 
 const Color _navy = AppColors.sidebarBottom;
 const Color _navActive = AppColors.primaryBlue;
-const Color _danger = Color(0xFFDC2626);
+const Color _danger = AppColors.errorRed;
 const Duration _hoverDuration = Duration(milliseconds: 150);
 
 // Barra lateral: tamaños y animación de contraer / expandir.
-const double _sidebarExpandedW = 250.0;
-const double _sidebarCollapsedW = 68.0;
-// Ancho mínimo para mantener el menú utilizable durante la animación.
-const double _sidebarMinW = 64.0;
+const double _sidebarExpandedW = 260.0;
+const double _sidebarCollapsedW = 76.0;
+// Relleno horizontal interno: con 76 px queda un carril de 44 px, justo el
+// tamaño del indicador activo cuando el menú está plegado.
+const double _sidebarPadX = 16.0;
+const double _railInnerExpanded = _sidebarExpandedW - 2 * _sidebarPadX; // 228
 
 // Margen visual del menú flotante. El ancho expandido compensa los
 // 16 px adicionales de separación izquierda para conservar el área principal.
@@ -80,37 +83,22 @@ const double _dashboardBackdropOpacity = 0.50;
 // animación apagado). Déjalo en false para que SIEMPRE se vea la animación.
 const bool _respectReduceMotion = false;
 
-// Al abrir: más larga y con un rebote elegante. Al cerrar: más corta y casi seca.
-const Duration _expandDuration = Duration(milliseconds: 650);
-const Duration _collapseDuration = Duration(milliseconds: 480);
-const Curve _expandCurve = _SpringCurve(damping: 0.62);
-const Curve _collapseCurve = Curves.easeInOutCubic;
+// Movimiento del menú: curva tipo "spring suave" (sin rebote) y una sola
+// duración para expandir y contraer. Al contraer se usa la curva invertida
+// (`flipped`), de modo que el arranque sea igual de ágil en ambos sentidos.
+const double _navMs = 300;
+const Duration _navDuration = Duration(milliseconds: 300);
+const Cubic _navCurve = Cubic(0.22, 1.0, 0.36, 1.0);
 
-// Fundido cruzado entre el diseño contraído y el expandido:
-// empieza cuando la barra lleva ~18 % del recorrido y termina al ~68 %.
-const double _fadeStart = 0.18;
-const double _fadeSpan = 0.50;
+// Coreografía de las etiquetas (se miden en tiempo, no en la curva de ancho):
+//   contraer → desaparecen en los primeros 150 ms
+//   expandir → esperan 100 ms y aparecen durante 200 ms
+const double _labelOutMs = 120;
+const double _labelInDelayMs = 65;
+const double _labelInMs = 170;
+const double _labelShift = 8; // px de desplazamiento horizontal
 
-/// Resorte amortiguado normalizado a la duración de la animación.
-///   [damping]  0.5 = muy elástico · 0.6 = elegante · 0.8 = casi sin rebote
-///   El asentamiento se mantiene fijo en 0.001 (oscilación invisible).
-/// La frecuencia se deduce del asentamiento, así que la animación SIEMPRE termina
-/// asentada al llegar a t = 1, sin importar el amortiguamiento que elijas.
-/// Sobrepaso aprox.: 0.5 → 16 % · 0.6 → 9.5 % · 0.7 → 4.6 % · 0.8 → 1.5 %
-class _SpringCurve extends Curve {
-  final double damping;
-  const _SpringCurve({this.damping = 0.6}) : assert(damping > 0 && damping < 1);
-
-  @override
-  double transformInternal(double t) {
-    const settle = 0.001;
-    final wn = -math.log(settle) / damping; // frecuencia natural
-    final wd = wn * math.sqrt(1 - damping * damping); // frecuencia amortiguada
-    final decay = math.exp(-damping * wn * t);
-    return 1 -
-        decay * (math.cos(wd * t) + (damping * wn / wd) * math.sin(wd * t));
-  }
-}
+double _lerp(double a, double b, double t) => a + (b - a) * t;
 
 /// Fondo vectorial animado del menú lateral.
 ///
@@ -222,7 +210,8 @@ class _SidebarWavePainter extends CustomPainter {
     final shiftX = progress.value * wavelength;
     final firstTile = ((-shiftX) / wavelength).floor() - 1;
     final lastTile = ((size.width - shiftX) / wavelength).ceil() + 1;
-    const segments = 96;
+    // Menos vértices: mantiene las ondas sin sobrecargar Canvas en Flutter Web.
+    const segments = 48;
 
     for (var tile = firstTile; tile <= lastTile; tile++) {
       final originX = tile * wavelength + shiftX;
@@ -311,13 +300,74 @@ class DashboardShell extends StatefulWidget {
 }
 
 class _DashboardShellState extends State<DashboardShell>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
   // Un único reloj para las dos capas del menú: sus ondas quedan sincronizadas
   // también durante la animación de expandir/contraer.
   late final AnimationController _waveController;
   bool _drawerOpen = false;
+
+  // 0 = menú plegado, 1 = desplegado. Lineal: las curvas se aplican abajo.
+  late final AnimationController _navController = AnimationController(
+    vsync: this,
+    duration: _navDuration,
+  );
+  // Ancho y giro del chevron (sin rebote, simétrico al abrir y cerrar).
+  late final CurvedAnimation _navWidth = CurvedAnimation(
+    parent: _navController,
+    curve: _navCurve,
+    reverseCurve: _navCurve.flipped,
+  );
+  // Opacidad de etiquetas: ventanas de tiempo distintas según el sentido.
+  late final CurvedAnimation _navLabels = CurvedAnimation(
+    parent: _navController,
+    curve: const Interval(
+      _labelInDelayMs / _navMs,
+      (_labelInDelayMs + _labelInMs) / _navMs,
+      curve: Curves.easeOut,
+    ),
+    reverseCurve: const Interval(
+      1 - _labelOutMs / _navMs,
+      1.0,
+      curve: Curves.easeIn,
+    ),
+  );
+  bool? _navTarget;
+
+  // Reducir carga gráfica mientras el menú cambia de tamaño.
+  // El layout principal continúa usando el ancho REAL en cada fotograma;
+  // no se conserva un viewport ficticio que termine cortando las tarjetas.
+  void _onNavAnimationStatus(AnimationStatus status) {
+    if (status == AnimationStatus.forward ||
+        status == AnimationStatus.reverse) {
+      _waveController.stop();
+    } else if (mounted) {
+      _syncWaveAnimation();
+    }
+  }
+
+  /// Lleva el controlador al estado pedido. La primera vez salta sin animar;
+  /// después anima (también cuando el cambio viene de redimensionar la ventana).
+  void _syncSidebar(bool expanded, bool reduceMotion) {
+    if (_navTarget == expanded) return;
+    final first = _navTarget == null;
+    _navTarget = expanded;
+    if (first) {
+      _navController.value = expanded ? 1.0 : 0.0;
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final target = _navTarget ?? expanded;
+      _navController.duration = reduceMotion ? Duration.zero : _navDuration;
+      if (target) {
+        _navController.forward();
+      } else {
+        _navController.reverse();
+      }
+    });
+  }
 
   @override
   void initState() {
@@ -326,6 +376,7 @@ class _DashboardShellState extends State<DashboardShell>
       vsync: this,
       duration: const Duration(seconds: 28),
     );
+    _navController.addStatusListener(_onNavAnimationStatus);
   }
 
   @override
@@ -340,6 +391,7 @@ class _DashboardShellState extends State<DashboardShell>
     final enabled =
         !MediaQuery.disableAnimationsOf(context) &&
         TickerMode.valuesOf(context).enabled &&
+        !_navController.isAnimating &&
         (Breakpoints.isDesktop(MediaQuery.sizeOf(context).width) ||
             _drawerOpen);
     if (enabled) {
@@ -353,6 +405,10 @@ class _DashboardShellState extends State<DashboardShell>
   @override
   void dispose() {
     _waveController.dispose();
+    _navController.removeStatusListener(_onNavAnimationStatus);
+    _navWidth.dispose();
+    _navLabels.dispose();
+    _navController.dispose();
     super.dispose();
   }
 
@@ -366,9 +422,12 @@ class _DashboardShellState extends State<DashboardShell>
     final expanded = _expandedOverride ?? (w >= Breakpoints.wide);
     final reduceMotion =
         _respectReduceMotion && MediaQuery.disableAnimationsOf(context);
+    _syncSidebar(expanded, reduceMotion);
 
-    // Parte que NO depende de la animación: se construye una sola vez y se
-    // reutiliza en cada fotograma (solo se vuelve a medir, no a construir).
+    // La geometría del dashboard responde al ancho real del Row. Se reutiliza
+    // el árbol en AnimatedBuilder para evitar reconstruirlo innecesariamente,
+    // pero el layout se recalcula cuando cambian las restricciones. Esto evita
+    // que 4 tarjetas queden fuera de la ventana al expandir el menú.
     final main = Expanded(
       child: Column(
         children: [
@@ -419,7 +478,7 @@ class _DashboardShellState extends State<DashboardShell>
                     data: original.copyWith(
                       size: Size(contentWidth, original.size.height),
                     ),
-                    child: widget.body,
+                    child: RepaintBoundary(child: widget.body),
                   );
                 },
               ),
@@ -457,7 +516,7 @@ class _DashboardShellState extends State<DashboardShell>
                   ),
                 ),
                 child: SafeArea(
-                  child: _buildSidebar(expanded: true, inDrawer: true),
+                  child: _buildSidebar(t: 1, labels: 1, inDrawer: true),
                 ),
               ),
         // Las ondas de la landing se reutilizan, sin imágenes ni assets.
@@ -466,34 +525,39 @@ class _DashboardShellState extends State<DashboardShell>
           fit: StackFit.expand,
           children: [
             const Positioned.fill(
-              child: IgnorePointer(
-                child: Opacity(
-                  opacity: _dashboardBackdropOpacity,
-                  child: LandingBackdrop(style: LandingWaveStyle.hero),
+              child: RepaintBoundary(
+                child: IgnorePointer(
+                  child: Opacity(
+                    opacity: _dashboardBackdropOpacity,
+                    child: LandingBackdrop(style: LandingWaveStyle.hero),
+                  ),
                 ),
               ),
             ),
-            // t: 0 = barra contraída, 1 = expandida.
-            TweenAnimationBuilder<double>(
-              tween: Tween<double>(end: expanded ? 1.0 : 0.0),
-              duration: reduceMotion
-                  ? Duration.zero
-                  : (expanded ? _expandDuration : _collapseDuration),
-              curve: expanded ? _expandCurve : _collapseCurve,
+            // t: 0 = barra contraída, 1 = expandida (curva ya aplicada).
+            AnimatedBuilder(
+              animation: _navController,
               child: main,
-              builder: (context, t, mainChild) {
-                // El resorte puede sobrepasar [0,1] levemente.
-                final sidebarW =
-                    (_sidebarCollapsedW +
-                            (_sidebarExpandedW - _sidebarCollapsedW) * t)
-                        .clamp(_sidebarMinW, _sidebarExpandedW + 40)
-                        .toDouble();
+              builder: (context, mainChild) {
+                final t = _navWidth.value;
+                final labels = _navLabels.value;
+                final sidebarW = _lerp(
+                  _sidebarCollapsedW,
+                  _sidebarExpandedW,
+                  t,
+                );
                 return Stack(
                   children: [
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        if (isDesktop) _buildAnimatedSidebar(t, sidebarW),
+                        if (isDesktop)
+                          _buildAnimatedSidebar(
+                            t: t,
+                            labels: labels,
+                            width: sidebarW,
+                            tooltips: !expanded,
+                          ),
                         mainChild!,
                       ],
                     ),
@@ -516,12 +580,27 @@ class _DashboardShellState extends State<DashboardShell>
   //
   // Cierre de sesión con confirmación
   //
+  // Mantiene el botón «Cerrar sesión» activo mientras el diálogo está abierto,
+  // aunque el mouse se haya movido fuera de la barra lateral.
+  bool _logoutDialogOpen = false;
+
   Future<void> _confirmLogout() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.5),
-      builder: (_) => const _LogoutConfirmDialog(),
-    );
+    if (_logoutDialogOpen) return;
+    setState(() => _logoutDialogOpen = true);
+
+    bool? confirmed;
+    try {
+      confirmed = await showDialog<bool>(
+        context: context,
+        barrierColor: Colors.black.withValues(alpha: 0.5),
+        builder: (_) => const _LogoutConfirmDialog(),
+      );
+    } finally {
+      // También se desactiva al pulsar Cancelar, Escape o fuera del diálogo.
+      if (mounted) setState(() => _logoutDialogOpen = false);
+    }
+
+    if (!mounted) return;
     if (confirmed == true) widget.onLogout();
   }
 
@@ -539,7 +618,11 @@ class _DashboardShellState extends State<DashboardShell>
           child: InkWell(
             onTap: () => setState(() => _expandedOverride = !expanded),
             customBorder: const CircleBorder(),
+            splashFactory: NoSplash.splashFactory,
+            splashColor: Colors.transparent,
             hoverColor: Colors.transparent,
+            highlightColor: Colors.transparent,
+            focusColor: Colors.transparent,
             child: AnimatedContainer(
               duration: _hoverDuration,
               width: 24,
@@ -551,14 +634,9 @@ class _DashboardShellState extends State<DashboardShell>
                   color: hovered ? AppColors.primaryBlue : Colors.white24,
                 ),
               ),
-              // La flecha gira suave y se queda en 0°–180° aunque la barra rebote.
               child: Transform.rotate(
-                angle:
-                    (1 -
-                        Curves.easeInOutCubic.transform(
-                          t.clamp(0.0, 1.0).toDouble(),
-                        )) *
-                    math.pi,
+                // Misma curva que el ancho: gira 180° sincronizado con el menú.
+                angle: (1 - t) * math.pi,
                 child: const Icon(
                   Icons.chevron_left,
                   color: Colors.white,
@@ -577,44 +655,18 @@ class _DashboardShellState extends State<DashboardShell>
   //
   /// Barra lateral de escritorio animada.
   ///
-  /// El ancho sigue a [t] (con rebote). Dentro hay DOS capas a su tamaño real
-  /// (contraída de 68 px y expandida de 250 px) con un fundido cruzado entre
-  /// ellas. Los íconos están casi en el mismo punto en ambas, así que se ve
-  /// como si se quedaran quietos mientras las etiquetas aparecen y se
-  /// desvelan con el borde de la barra. No hay corte ni parpadeo.
-  Widget _buildAnimatedSidebar(double t, double width) {
-    // p: 0 = solo contraída, 1 = solo expandida.
-    final p = Curves.easeInOut.transform(
-      ((t - _fadeStart) / _fadeSpan).clamp(0.0, 1.0).toDouble(),
-    );
-
-    Widget layer({
-      required bool expanded,
-      required double opacity,
-      required bool active,
-    }) {
-      final w = expanded ? _sidebarExpandedW : _sidebarCollapsedW;
-      return IgnorePointer(
-        ignoring: !active,
-        child: ExcludeSemantics(
-          excluding: !active,
-          child: Opacity(
-            opacity: opacity,
-            child: OverflowBox(
-              alignment: Alignment.topLeft,
-              minWidth: w,
-              maxWidth: w,
-              child: _buildSidebar(expanded: expanded),
-            ),
-          ),
-        ),
-      );
-    }
-
-    // El menú expandido y sus márgenes ocupan 290 px en total,
-    // conservando el espacio original disponible para el dashboard.
-    // El borde y la sombra pertenecen SOLO al contenedor externo;
-    // las ondas y las dos capas animadas quedan recortadas al mismo radio.
+  /// UNA sola capa: el ancho sigue a [t] (0 = plegada, 1 = desplegada) y cada
+  /// elemento se adapta a ese ancho. El indicador activo es el propio carril
+  /// del ítem (228 px → 44 px), así que "se contrae" de verdad en vez de
+  /// fundirse con otro. Los iconos mantienen su eje (x = 38 px) en ambos
+  /// estados; solo las etiquetas se desvanecen ([labels]) y se desplazan.
+  /// Todo se recorta al radio del contenedor.
+  Widget _buildAnimatedSidebar({
+    required double t,
+    required double labels,
+    required double width,
+    required bool tooltips,
+  }) {
     return RepaintBoundary(
       child: SizedBox(
         width: width + _sidebarInsetLeft + _sidebarInsetRight,
@@ -649,13 +701,7 @@ class _DashboardShellState extends State<DashboardShell>
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(32),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  layer(expanded: false, opacity: 1 - p, active: p < 0.5),
-                  layer(expanded: true, opacity: p, active: p >= 0.5),
-                ],
-              ),
+              child: _buildSidebar(t: t, labels: labels, tooltips: tooltips),
             ),
           ),
         ),
@@ -663,55 +709,99 @@ class _DashboardShellState extends State<DashboardShell>
     );
   }
 
-  Widget _buildSidebar({required bool expanded, bool inDrawer = false}) {
-    return SizedBox(
-      width: inDrawer
-          ? null
-          : (expanded ? _sidebarExpandedW : _sidebarCollapsedW),
-      child: ClipRect(
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            // Las ondas viajan hacia la derecha y expanden su altura
-            // suavemente; la posterior llega más arriba que la delantera.
-            // No usa imágenes; sigue nítido en cualquier resolución.
-            Positioned.fill(
-              child: RepaintBoundary(
-                child: CustomPaint(
-                  painter: _SidebarWavePainter(progress: _waveController),
+  /// Contenido del menú. [t] y [labels] son 1 en el cajón móvil.
+  Widget _buildSidebar({
+    required double t,
+    required double labels,
+    bool tooltips = false,
+    bool inDrawer = false,
+  }) {
+    return ClipRect(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Las ondas viajan hacia la derecha y expanden su altura
+          // suavemente; la posterior llega más arriba que la delantera.
+          Positioned.fill(
+            child: RepaintBoundary(
+              child: CustomPaint(
+                painter: _SidebarWavePainter(progress: _waveController),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: _sidebarPadX,
+              vertical: 20,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _sidebarInstitution(
+                  t: t,
+                  labels: labels,
+                  tooltips: tooltips,
+                  inDrawer: inDrawer,
                 ),
-              ),
-            ),
-            Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: expanded ? 16 : 8,
-                vertical: 20,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _sidebarInstitution(expanded, inDrawer),
-                  SizedBox(height: expanded ? 34 : 28),
-                  Expanded(
-                    child: ListView(
-                      padding: EdgeInsets.zero,
-                      children: [
-                        for (var i = 0; i < widget.navItems.length; i++)
-                          _navItem(i, expanded, inDrawer),
-                      ],
-                    ),
+                SizedBox(height: _lerp(28, 34, t)),
+                Expanded(
+                  child: ListView(
+                    padding: EdgeInsets.zero,
+                    // Sin recorte: la sombra del indicador activo no se corta.
+                    clipBehavior: Clip.none,
+                    children: [
+                      for (var i = 0; i < widget.navItems.length; i++)
+                        _navItem(
+                          i,
+                          labels: labels,
+                          tooltips: tooltips,
+                          inDrawer: inDrawer,
+                        ),
+                    ],
                   ),
-                  _supportItem(expanded),
-                  const SizedBox(height: 16),
-                  _sidebarLogout(expanded),
-                ],
-              ),
+                ),
+                _supportItem(
+                  t: t,
+                  labels: labels,
+                  tooltips: tooltips,
+                  inDrawer: inDrawer,
+                ),
+                const SizedBox(height: 16),
+                _sidebarLogout(
+                  labels: labels,
+                  tooltips: tooltips,
+                  inDrawer: inDrawer,
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
+
+  /// Contenedor rígido: el contenido mantiene SIEMPRE su ancho desplegado y
+  /// el carril solo lo "revela" (equivale a un `min-width` interno con
+  /// `overflow: hidden`). Así el texto no se re-ajusta mientras se encoge.
+  Widget _rigid(bool inDrawer, Widget child) => inDrawer
+      ? child
+      : ClipRect(
+          child: OverflowBox(
+            alignment: Alignment.centerLeft,
+            minWidth: _railInnerExpanded,
+            maxWidth: _railInnerExpanded,
+            child: child,
+          ),
+        );
+
+  /// Etiqueta: fundido + desplazamiento horizontal de 8 px, sin saltos de línea.
+  Widget _fadeLabel(double labels, Widget child) => Opacity(
+    opacity: labels,
+    child: Transform.translate(
+      offset: Offset(-_labelShift * (1 - labels), 0),
+      child: child,
+    ),
+  );
 
   /// Logotipo HD (1024 x 1024) reconstruido en formato vectorial.
   /// Se representa sin ClipRRect para no cortar detalles en los bordes.
@@ -742,78 +832,86 @@ class _DashboardShellState extends State<DashboardShell>
     );
   }
 
-  /// Cabecera de marca: hover sutil sobre toda la tarjeta (expandida o
-  /// contraída). Al pulsarla se regresa al primer apartado del menú.
-  Widget _sidebarInstitution(bool expanded, bool inDrawer) {
-    return HoverBuilder(
-      cursor: widget.navItems.isEmpty
-          ? MouseCursor.defer
-          : SystemMouseCursors.click,
-      builder: (context, hovered) => Semantics(
-        button: widget.navItems.isNotEmpty,
-        label: 'EduPago, ir al inicio',
-        child: Material(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(22),
-          child: InkWell(
+  /// Cabecera de marca: hover sutil sobre toda la tarjeta. Al pulsarla se
+  /// regresa al primer apartado del menú. Altura y logo crecen con [t].
+  Widget _sidebarInstitution({
+    required double t,
+    required double labels,
+    required bool tooltips,
+    required bool inDrawer,
+  }) {
+    final logo = _lerp(36, 46, t);
+    return _SideTooltip(
+      message: 'EduPago · Inicio',
+      enabled: tooltips,
+      child: HoverBuilder(
+        cursor: widget.navItems.isEmpty
+            ? MouseCursor.defer
+            : SystemMouseCursors.click,
+        builder: (context, hovered) => Semantics(
+          button: widget.navItems.isNotEmpty,
+          label: 'EduPago, ir al inicio',
+          child: _SidebarPressSurface(
             onTap: widget.navItems.isEmpty ? null : () => _select(0, inDrawer),
-            hoverColor: Colors.transparent,
-            splashColor: Colors.white.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(22),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 190),
-              curve: Curves.easeOutCubic,
-              width: double.infinity,
-              padding: EdgeInsets.symmetric(
-                horizontal: expanded ? 11 : 4,
-                vertical: expanded ? 11 : 8,
-              ),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: hovered
-                      ? const [Color(0xFF2F568B), Color(0xFF224777)]
-                      : const [Color(0xFF254B7F), Color(0xFF1B3868)],
-                ),
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: hovered ? 0.34 : 0.12),
-                ),
-                boxShadow: hovered
-                    ? [
-                        BoxShadow(
-                          color: const Color(
-                            0xFF60A5FA,
-                          ).withValues(alpha: 0.13),
-                          blurRadius: 14,
-                          offset: const Offset(0, 4),
-                        ),
-                      ]
-                    : [],
-              ),
-              child: expanded
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        SizedBox(
-                          width: 46,
-                          height: 46,
-                          child: FittedBox(
-                            fit: BoxFit.contain,
-                            child: _brandMark(),
+            radius: 20,
+            pressedColor: Colors.white.withValues(alpha: 0.13),
+            child: SizedBox(
+              height: _lerp(54, 68, t),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 190),
+                curve: Curves.easeOutCubic,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: hovered
+                        ? const [Color(0xFF2F568B), Color(0xFF224777)]
+                        : const [Color(0xFF254B7F), Color(0xFF1B3868)],
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: Colors.white.withValues(
+                      alpha: hovered ? 0.34 : 0.12,
+                    ),
+                  ),
+                  boxShadow: hovered
+                      ? [
+                          BoxShadow(
+                            color: const Color(
+                              0xFF60A5FA,
+                            ).withValues(alpha: 0.13),
+                            blurRadius: 14,
+                            offset: const Offset(0, 4),
                           ),
+                        ]
+                      : [],
+                ),
+                child: _rigid(
+                  inDrawer,
+                  Row(
+                    children: [
+                      SizedBox(width: _lerp(3, 10, t)),
+                      SizedBox(
+                        width: logo,
+                        height: logo,
+                        child: FittedBox(
+                          fit: BoxFit.contain,
+                          child: _brandMark(),
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _fadeLabel(
+                          labels,
+                          Column(
                             mainAxisSize: MainAxisSize.min,
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               const Text(
                                 'EduPago',
                                 maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                                overflow: TextOverflow.clip,
                                 style: TextStyle(
                                   color: Colors.white,
                                   fontSize: 23,
@@ -827,6 +925,7 @@ class _DashboardShellState extends State<DashboardShell>
                                     ? 'Tu colegio, más cerca'
                                     : widget.schoolName,
                                 maxLines: 1,
+                                softWrap: false,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   color: AppColors.onDarkMuted,
@@ -836,21 +935,11 @@ class _DashboardShellState extends State<DashboardShell>
                             ],
                           ),
                         ),
-                      ],
-                    )
-                  : Tooltip(
-                      message: 'EduPago · Inicio',
-                      child: Center(
-                        child: SizedBox(
-                          width: 36,
-                          height: 36,
-                          child: FittedBox(
-                            fit: BoxFit.contain,
-                            child: _brandMark(),
-                          ),
-                        ),
                       ),
-                    ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
         ),
@@ -863,103 +952,131 @@ class _DashboardShellState extends State<DashboardShell>
     if (inDrawer) _scaffoldKey.currentState?.closeDrawer();
   }
 
-  Widget _navItem(int index, bool expanded, bool inDrawer) {
+  /// Ítem de navegación. El carril mide 228 px (desplegado) o 44 px (plegado)
+  /// y es a la vez el indicador activo; el icono queda fijo a 12 px del borde
+  /// (centro en x = 22 del carril de 44), por eso no se desplaza al plegar.
+  ///
+  /// Hover: fondo y borde sutiles, el icono crece un 12 % y la etiqueta se
+  /// adelanta 3 px. Plegado: tooltip lateral con 150 ms de retraso.
+  Widget _navItem(
+    int index, {
+    required double labels,
+    required bool tooltips,
+    required bool inDrawer,
+  }) {
     final item = widget.navItems[index];
     final selected = widget.selectedIndex == index;
 
-    return HoverBuilder(
-      builder: (context, hovered) {
-        final bg = selected
-            ? _navActive
-            : (hovered
-                  ? Colors.white.withValues(alpha: 0.08)
-                  : Colors.transparent);
-        final fg = (selected || hovered) ? Colors.white : AppColors.onDarkMuted;
-
-        if (!expanded) {
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Center(
-              child: Tooltip(
-                message: item.title,
-                child: InkWell(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: _SideTooltip(
+        message: item.title,
+        enabled: tooltips,
+        child: HoverBuilder(
+          cursor: SystemMouseCursors.click,
+          builder: (context, hovered) {
+            final lit = selected || hovered;
+            return Semantics(
+              button: true,
+              selected: selected,
+              label: item.title,
+              excludeSemantics: true,
+              // La selección se anima sobre todo el botón; la pulsación no genera ondas.
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOutCubic,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: selected
+                      ? _navActive
+                      : (hovered
+                            ? Colors.white.withValues(alpha: 0.10)
+                            : Colors.transparent),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: (!selected && hovered)
+                        ? Colors.white.withValues(alpha: 0.12)
+                        : Colors.transparent,
+                  ),
+                  boxShadow: selected
+                      ? [
+                          BoxShadow(
+                            color: _navActive.withValues(alpha: 0.40),
+                            blurRadius: 14,
+                            offset: const Offset(0, 5),
+                          ),
+                        ]
+                      : const [],
+                ),
+                child: _SidebarPressSurface(
                   onTap: () => _select(index, inDrawer),
-                  borderRadius: BorderRadius.circular(12),
-                  hoverColor: Colors.transparent,
-                  child: AnimatedContainer(
-                    duration: _hoverDuration,
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: bg,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: selected
-                            ? AppColors.primaryBlue
-                            : Colors.transparent,
-                      ),
-                    ),
-                    child: Icon(
-                      selected ? item.activeIcon : item.icon,
-                      color: fg,
-                      size: 20,
+                  radius: 14,
+                  pressedColor: selected
+                      ? Colors.white.withValues(alpha: 0.16)
+                      : _navActive.withValues(alpha: 0.34),
+                  child: _rigid(
+                    inDrawer,
+                    Row(
+                      children: [
+                        const SizedBox(width: 12),
+                        AnimatedScale(
+                          scale: (hovered && !selected) ? 1.12 : 1.0,
+                          duration: _hoverDuration,
+                          curve: Curves.easeOut,
+                          child: Icon(
+                            selected ? item.activeIcon : item.icon,
+                            color: lit ? Colors.white : AppColors.onDarkMuted,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _fadeLabel(
+                            labels,
+                            AnimatedSlide(
+                              offset: (hovered && !selected)
+                                  ? const Offset(0.03, 0)
+                                  : Offset.zero,
+                              duration: _hoverDuration,
+                              curve: Curves.easeOut,
+                              child: Text(
+                                item.title,
+                                maxLines: 1,
+                                softWrap: false,
+                                overflow: TextOverflow.clip,
+                                style: TextStyle(
+                                  color: lit
+                                      ? Colors.white
+                                      : AppColors.onDarkMuted,
+                                  fontSize: 14,
+                                  fontWeight: selected
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
               ),
-            ),
-          );
-        }
-
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: InkWell(
-            onTap: () => _select(index, inDrawer),
-            borderRadius: BorderRadius.circular(18),
-            hoverColor: Colors.transparent,
-            child: AnimatedContainer(
-              duration: _hoverDuration,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-              decoration: BoxDecoration(
-                color: bg,
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    selected ? item.activeIcon : item.icon,
-                    color: fg,
-                    size: 18,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      item.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: (selected || hovered)
-                            ? Colors.white
-                            : AppColors.onDarkMuted,
-                        fontSize: 14,
-                        fontWeight: selected
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
+            );
+          },
+        ),
+      ),
     );
   }
 
-  /// Tarjeta de ayuda con resaltado azul en hover. En el menú compacto
-  /// el mismo efecto se aplica al botón con icono.
-  Widget _supportItem(bool expanded) {
+  /// Tarjeta de ayuda con resaltado azul en hover. Plegada, queda como un
+  /// botón de 44 px con el icono centrado (los dos iconos se funden).
+  Widget _supportItem({
+    required double t,
+    required double labels,
+    required bool tooltips,
+    required bool inDrawer,
+  }) {
     void onTap() {
       if (widget.onSupportTap != null) {
         widget.onSupportTap!();
@@ -972,30 +1089,24 @@ class _DashboardShellState extends State<DashboardShell>
       }
     }
 
-    return HoverBuilder(
-      cursor: SystemMouseCursors.click,
-      builder: (context, hovered) => Tooltip(
-        message: expanded ? 'Abrir soporte' : '¿Necesitas ayuda?',
-        child: Semantics(
+    return _SideTooltip(
+      message: '¿Necesitas ayuda?',
+      enabled: tooltips,
+      child: HoverBuilder(
+        cursor: SystemMouseCursors.click,
+        builder: (context, hovered) => Semantics(
           button: true,
           label: '¿Necesitas ayuda? Abrir soporte',
-          child: Material(
-            color: Colors.transparent,
-            borderRadius: BorderRadius.circular(14),
-            child: InkWell(
-              onTap: onTap,
-              borderRadius: BorderRadius.circular(14),
-              hoverColor: Colors.transparent,
-              splashColor: const Color(0xFF60A5FA).withValues(alpha: 0.14),
+          excludeSemantics: true,
+          child: _SidebarPressSurface(
+            onTap: onTap,
+            radius: 14,
+            pressedColor: const Color(0xFF60A5FA).withValues(alpha: 0.17),
+            child: SizedBox(
+              height: _lerp(AppSizes.minTarget.toDouble(), 62, t),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
                 curve: Curves.easeOutCubic,
-                constraints: const BoxConstraints(
-                  minHeight: AppSizes.minTarget,
-                ),
-                padding: expanded
-                    ? const EdgeInsets.symmetric(horizontal: 12, vertical: 13)
-                    : const EdgeInsets.symmetric(horizontal: 0, vertical: 12),
                 decoration: BoxDecoration(
                   color: hovered
                       ? const Color(0xFF3564A8).withValues(alpha: 0.70)
@@ -1018,52 +1129,82 @@ class _DashboardShellState extends State<DashboardShell>
                         ]
                       : [],
                 ),
-                child: expanded
-                    ? Row(
-                        children: [
-                          const Icon(
-                            Icons.info_rounded,
-                            color: Color(0xFF75ACFF),
-                            size: 24,
-                          ),
-                          const SizedBox(width: 10),
-                          const Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  '¿Necesitas ayuda?',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                SizedBox(height: 3),
-                                Text(
-                                  'Estamos para ti',
-                                  style: TextStyle(
-                                    color: AppColors.onDarkMuted,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ],
+                child: _rigid(
+                  inDrawer,
+                  Row(
+                    children: [
+                      const SizedBox(width: 9),
+                      SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            Opacity(
+                              opacity: 1 - labels,
+                              child: const Icon(
+                                Icons.headset_mic_outlined,
+                                color: Colors.white,
+                                size: 22,
+                              ),
                             ),
-                          ),
-                          Icon(
-                            Icons.chevron_right,
-                            color: hovered
-                                ? Colors.white
-                                : AppColors.onDarkMuted,
-                            size: 19,
-                          ),
-                        ],
-                      )
-                    : const Icon(
-                        Icons.headset_mic_outlined,
-                        color: Colors.white,
-                        size: 22,
+                            Opacity(
+                              opacity: labels,
+                              child: const Icon(
+                                Icons.info_rounded,
+                                color: Color(0xFF75ACFF),
+                                size: 24,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _fadeLabel(
+                          labels,
+                          const Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '¿Necesitas ayuda?',
+                                maxLines: 1,
+                                softWrap: false,
+                                overflow: TextOverflow.clip,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              SizedBox(height: 3),
+                              Text(
+                                'Estamos para ti',
+                                maxLines: 1,
+                                softWrap: false,
+                                overflow: TextOverflow.clip,
+                                style: TextStyle(
+                                  color: AppColors.onDarkMuted,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      _fadeLabel(
+                        labels,
+                        Icon(
+                          Icons.chevron_right,
+                          color: hovered ? Colors.white : AppColors.onDarkMuted,
+                          size: 19,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
@@ -1074,87 +1215,107 @@ class _DashboardShellState extends State<DashboardShell>
 
   /// Última acción de la barra lateral: salir sin mostrar la cuenta.
   /// El avatar y el menú de perfil se conservan exclusivamente en el header.
-  Widget _sidebarLogout(bool expanded) {
-    const hoverRed = Color(0xFFEF4444);
+  /// Última acción de la barra lateral: Cerrar sesión.
+  /// Mismo estado de selección que el resto del menú, pero en rojo.
+  Widget _sidebarLogout({
+    required double labels,
+    required bool tooltips,
+    required bool inDrawer,
+  }) {
+    const hoverRed = AppColors.errorRed;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Divider(height: 1, color: Colors.white.withValues(alpha: 0.17)),
         const SizedBox(height: 12),
-        Tooltip(
+        _SideTooltip(
           message: 'Cerrar sesión',
+          enabled: tooltips,
           child: HoverBuilder(
             cursor: SystemMouseCursors.click,
-            builder: (context, hovered) => Semantics(
-              button: true,
-              label: 'Cerrar sesión',
-              child: Material(
-                color: Colors.transparent,
-                borderRadius: BorderRadius.circular(12),
-                child: InkWell(
-                  onTap: _confirmLogout,
-                  borderRadius: BorderRadius.circular(12),
-                  hoverColor: Colors.transparent,
-                  splashColor: hoverRed.withValues(alpha: 0.14),
-                  highlightColor: hoverRed.withValues(alpha: 0.10),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 170),
-                    curve: Curves.easeOutCubic,
-                    constraints: const BoxConstraints(
-                      minHeight: AppSizes.minTarget,
-                    ),
-                    padding: EdgeInsets.symmetric(
-                      vertical: 12,
-                      horizontal: expanded ? 13 : 0,
-                    ),
+            builder: (context, hovered) {
+              final active = hovered || _logoutDialogOpen;
+              return Semantics(
+                button: true,
+                label: 'Cerrar sesión',
+                selected: _logoutDialogOpen,
+                excludeSemantics: true,
+                // Sin AnimatedContainer en el fondo ni en la sombra.
+                // Al salir del hover desaparecen al instante, sin pasar por vino.
+                child: SizedBox(
+                  height: 44,
+                  child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: hovered
-                          ? hoverRed.withValues(alpha: 0.18)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: hovered
-                            ? hoverRed.withValues(alpha: 0.40)
-                            : Colors.transparent,
-                      ),
+                      color: active ? hoverRed : Colors.transparent,
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: active
+                          ? [
+                              BoxShadow(
+                                color: hoverRed.withValues(alpha: 0.30),
+                                blurRadius: 14,
+                                offset: const Offset(0, 5),
+                              ),
+                            ]
+                          : const [],
                     ),
-                    child: Row(
-                      mainAxisAlignment: expanded
-                          ? MainAxisAlignment.start
-                          : MainAxisAlignment.center,
-                      children: [
-                        AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 170),
-                          child: Icon(
-                            Icons.logout_rounded,
-                            key: ValueKey(hovered),
-                            color: hovered
-                                ? const Color(0xFFFFB4B4)
-                                : AppColors.onDarkMuted,
-                            size: 22,
-                          ),
-                        ),
-                        if (expanded) ...[
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Text(
-                              'Cerrar sesión',
-                              style: TextStyle(
-                                color: hovered
-                                    ? const Color(0xFFFFD8D8)
-                                    : Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
+                    child: _SidebarPressSurface(
+                      onTap: _confirmLogout,
+                      radius: 14,
+                      // Sin tinte residual de pulsación al retirar el cursor.
+                      // El estado del diálogo mantiene el rojo al confirmar.
+                      pressedColor: Colors.transparent,
+                      child: _rigid(
+                        inDrawer,
+                        Row(
+                          children: [
+                            const SizedBox(width: 12),
+                            AnimatedScale(
+                              scale: active ? 1.12 : 1.0,
+                              duration: _hoverDuration,
+                              curve: Curves.easeOut,
+                              child: Icon(
+                                Icons.logout_rounded,
+                                color: active
+                                    ? Colors.white
+                                    : AppColors.onDarkMuted,
+                                size: 20,
                               ),
                             ),
-                          ),
-                        ],
-                      ],
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _fadeLabel(
+                                labels,
+                                AnimatedSlide(
+                                  offset: active
+                                      ? const Offset(0.03, 0)
+                                      : Offset.zero,
+                                  duration: _hoverDuration,
+                                  curve: Curves.easeOut,
+                                  child: Text(
+                                    'Cerrar sesión',
+                                    maxLines: 1,
+                                    softWrap: false,
+                                    overflow: TextOverflow.clip,
+                                    style: TextStyle(
+                                      color: active
+                                          ? Colors.white
+                                          : AppColors.onDarkMuted,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
         ),
       ],
@@ -1576,7 +1737,7 @@ class _LogoutConfirmDialog extends StatelessWidget {
                           ).copyWith(
                             backgroundColor: WidgetStateProperty.resolveWith(
                               (s) => s.contains(WidgetState.hovered)
-                                  ? const Color(0xFFB91C1C)
+                                  ? AppColors.errorRed
                                   : _danger,
                             ),
                           ),
@@ -1603,6 +1764,68 @@ class _LogoutConfirmDialog extends StatelessWidget {
 // Utilidades de hover reutilizables (solo reaccionan a mouse/trackpad;
 // en táctil no cambian nada).
 //
+
+/// Pulsación uniforme del menú: la tarjeta completa recibe un tinte suave.
+/// Sin splash/ripple circular, también en móvil, teclado y menús desplegables.
+/// El material se recorta al radio del botón y el contenido conserva su diseño.
+class _SidebarPressSurface extends StatefulWidget {
+  final Widget child;
+  final VoidCallback? onTap;
+  final double radius;
+  final Color pressedColor;
+
+  const _SidebarPressSurface({
+    required this.child,
+    required this.onTap,
+    required this.radius,
+    required this.pressedColor,
+  });
+
+  @override
+  State<_SidebarPressSurface> createState() => _SidebarPressSurfaceState();
+}
+
+class _SidebarPressSurfaceState extends State<_SidebarPressSurface> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      type: MaterialType.transparency,
+      borderRadius: BorderRadius.circular(widget.radius),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: widget.onTap,
+        onHighlightChanged: (pressed) {
+          if (_pressed != pressed && mounted) {
+            setState(() => _pressed = pressed);
+          }
+        },
+        borderRadius: BorderRadius.circular(widget.radius),
+        splashFactory: NoSplash.splashFactory,
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        focusColor: Colors.transparent,
+        child: Stack(
+          fit: StackFit.passthrough,
+          children: [
+            widget.child,
+            Positioned.fill(
+              child: IgnorePointer(
+                child: AnimatedContainer(
+                  duration: Duration(milliseconds: _pressed ? 85 : 165),
+                  curve: Curves.easeOutCubic,
+                  color: _pressed ? widget.pressedColor : Colors.transparent,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 /// Expone si el puntero está encima para construir cualquier widget.
 class HoverBuilder extends StatefulWidget {
@@ -1958,9 +2181,10 @@ class _AccountMenuAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return _SidebarPressSurface(
       onTap: onTap,
-      hoverColor: Colors.transparent,
+      radius: 10,
+      pressedColor: hoverColor.withValues(alpha: 0.55),
       child: SizedBox(
         height: 52,
         child: HoverBuilder(
@@ -1989,6 +2213,151 @@ class _AccountMenuAction extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Tooltip lateral para el menú plegado: aparece a la derecha del elemento
+/// tras 150 ms de hover, con fundido y un leve deslizamiento. Se dibuja en el
+/// Overlay, por lo que el recorte redondeado del menú no lo corta.
+class _SideTooltip extends StatefulWidget {
+  const _SideTooltip({
+    required this.message,
+    required this.enabled,
+    required this.child,
+  });
+
+  final String message;
+  final bool enabled;
+  final Widget child;
+
+  @override
+  State<_SideTooltip> createState() => _SideTooltipState();
+}
+
+class _SideTooltipState extends State<_SideTooltip>
+    with SingleTickerProviderStateMixin {
+  static const _delay = Duration(milliseconds: 150);
+
+  final OverlayPortalController _portal = OverlayPortalController();
+  final LayerLink _link = LayerLink();
+  late final AnimationController _anim = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 160),
+  );
+  late final Animation<double> _curve = CurvedAnimation(
+    parent: _anim,
+    curve: Curves.easeOutCubic,
+    reverseCurve: Curves.easeIn,
+  );
+  Timer? _timer;
+  bool _hover = false;
+
+  void _enter() {
+    _hover = true;
+    if (!widget.enabled) return;
+    _timer?.cancel();
+    _timer = Timer(_delay, () {
+      if (!mounted || !_hover || !widget.enabled) return;
+      _portal.show();
+      _anim.forward();
+    });
+  }
+
+  void _exit() {
+    _hover = false;
+    _timer?.cancel();
+    if (_portal.isShowing) {
+      _anim.reverse().whenComplete(() {
+        if (mounted && !_hover && _portal.isShowing) _portal.hide();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _SideTooltip old) {
+    super.didUpdateWidget(old);
+    if (!widget.enabled && old.enabled) {
+      _timer?.cancel();
+      _anim.value = 0;
+      if (_portal.isShowing) _portal.hide();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _anim.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => _enter(),
+      onExit: (_) => _exit(),
+      child: CompositedTransformTarget(
+        link: _link,
+        child: OverlayPortal(
+          controller: _portal,
+          overlayChildBuilder: (context) => CompositedTransformFollower(
+            link: _link,
+            showWhenUnlinked: false,
+            targetAnchor: Alignment.centerRight,
+            followerAnchor: Alignment.centerLeft,
+            offset: const Offset(14, 0),
+            child: IgnorePointer(
+              child: Align(
+                alignment: Alignment.topLeft,
+                widthFactor: 1,
+                heightFactor: 1,
+                child: FadeTransition(
+                  opacity: _curve,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(-0.12, 0),
+                      end: Offset.zero,
+                    ).animate(_curve),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.darkNavy,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.14),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.22),
+                            blurRadius: 14,
+                            offset: const Offset(0, 5),
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        widget.message,
+                        maxLines: 1,
+                        softWrap: false,
+                        // El Overlay queda fuera del Theme del shell: se fija Lexend.
+                        style: GoogleFonts.lexend(
+                          color: Colors.white,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          child: widget.child,
         ),
       ),
     );

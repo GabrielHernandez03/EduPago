@@ -254,6 +254,9 @@ class SchoolEmptyState extends StatelessWidget {
   );
 }
 
+/// Selector Estudiantes / Calificaciones: un solo riel con un indicador azul
+/// que se desliza entre las dos opciones. Mantiene la API anterior
+/// (`grades`, `onChanged`), por lo que no cambia ningún llamador.
 class SchoolTabs extends StatelessWidget {
   const SchoolTabs({
     super.key,
@@ -268,101 +271,158 @@ class SchoolTabs extends StatelessWidget {
   final ValueChanged<bool> onChanged;
   final String firstLabel, secondLabel;
   final IconData firstIcon, secondIcon;
+
+  static const double _segmentWidth = 200;
+  static const Color _track = Color(0xFFF2F6FC);
+  static const Color _edge = Color(0xFFEDF1F9);
+
   @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, box) {
-      Widget tab(bool value, String label, IconData icon) {
-        final selected = grades == value;
-        return Semantics(
-          selected: selected,
-          button: true,
-          child: AnimatedContainer(
-            duration: MediaQuery.disableAnimationsOf(context)
-                ? Duration.zero
-                : const Duration(milliseconds: 180),
+  Widget build(BuildContext context) {
+    final duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 240);
+    // Con texto grande del sistema el riel crece en vez de recortar.
+    final scale = (MediaQuery.textScalerOf(context).scale(14) / 14)
+        .clamp(1.0, 1.6)
+        .toDouble();
+
+    return LayoutBuilder(
+      builder: (context, box) {
+        const natural = _segmentWidth * 2 + 10; // 2 segmentos + padding y borde
+        final width = box.maxWidth < natural ? box.maxWidth : natural;
+        return Align(
+          alignment: Alignment.center,
+          child: Container(
+            width: width,
+            height: 54 * scale,
+            padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
-              color: selected ? AppColors.primaryBlue : AppColors.surfaceWhite,
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(
-                color: selected
-                    ? AppColors.primaryBlue
-                    : AppColors.primaryBlue.withValues(alpha: .3),
-              ),
-              boxShadow: selected
-                  ? [
-                      BoxShadow(
-                        color: AppColors.primaryBlue.withValues(alpha: .13),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                      ),
-                    ]
-                  : [],
+              color: _track,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _edge),
             ),
-            child: Material(
-              color: Colors.transparent,
-              borderRadius: BorderRadius.circular(999),
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                onTap: () => onChanged(value),
-                borderRadius: BorderRadius.circular(999),
-                hoverColor: selected
-                    ? Colors.white.withValues(alpha: .1)
-                    : AppColors.primaryLight,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 12,
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        icon,
-                        size: 19,
-                        color: selected ? Colors.white : AppColors.primaryBlue,
-                      ),
-                      const SizedBox(width: 10),
-                      Flexible(
-                        child: Text(
-                          label,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                            color: selected ? Colors.white : AppColors.darkNavy,
+            child: Stack(
+              children: [
+                AnimatedAlign(
+                  duration: duration,
+                  curve: Curves.easeOutCubic,
+                  alignment: grades
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft,
+                  child: FractionallySizedBox(
+                    widthFactor: .5,
+                    heightFactor: 1,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryBlue,
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primaryBlue.withValues(alpha: .28),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
                           ),
-                        ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
-              ),
+                // Material propio: el hover/ripple se pinta encima del
+                // indicador y no queda tapado por el riel.
+                Positioned.fill(
+                  child: Material(
+                    type: MaterialType.transparency,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: _SchoolTab(
+                            label: firstLabel,
+                            icon: firstIcon,
+                            selected: !grades,
+                            duration: duration,
+                            onTap: () => onChanged(false),
+                          ),
+                        ),
+                        Expanded(
+                          child: _SchoolTab(
+                            label: secondLabel,
+                            icon: secondIcon,
+                            selected: grades,
+                            duration: duration,
+                            onTap: () => onChanged(true),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         );
-      }
+      },
+    );
+  }
+}
 
-      final vertical =
-          box.maxWidth < 340 || MediaQuery.textScalerOf(context).scale(14) > 20;
-      return vertical
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+class _SchoolTab extends StatelessWidget {
+  const _SchoolTab({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.duration,
+    required this.onTap,
+  });
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final Duration duration;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? Colors.white : AppColors.textMuted;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      excludeSemantics: true,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        hoverColor: selected
+            ? Colors.transparent
+            : AppColors.primaryBlue.withValues(alpha: .07),
+        splashColor: AppColors.primaryBlue.withValues(alpha: .10),
+        highlightColor: Colors.transparent,
+        child: TweenAnimationBuilder<Color?>(
+          tween: ColorTween(end: color),
+          duration: duration,
+          builder: (context, c, _) => Center(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                tab(false, firstLabel, firstIcon),
-                const SizedBox(height: 10),
-                tab(true, secondLabel, secondIcon),
+                Icon(icon, size: 19, color: c),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: c,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
               ],
-            )
-          : Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Expanded(child: tab(false, firstLabel, firstIcon)),
-                const SizedBox(width: 12),
-                Expanded(child: tab(true, secondLabel, secondIcon)),
-              ],
-            );
-    },
-  );
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// Conserva la tipografía heredada y aplica los colores existentes a los controles.
