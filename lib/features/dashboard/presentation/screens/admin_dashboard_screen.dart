@@ -17,6 +17,7 @@ import '../../../academics/presentation/widgets/admin_academic_section.dart';
 import '../../../payments/presentation/widgets/payment_reconciliation_widget.dart';
 import '../../../billing/presentation/widgets/generate_billing_dialog.dart';
 import '../../../billing/presentation/widgets/concepts_dialog.dart';
+import '../../../audit/presentation/widgets/audit_log_section.dart';
 
 import '../../../../core/widgets/dashboard_shell.dart';
 import '../../../../core/widgets/skeleton_loader.dart';
@@ -151,6 +152,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   bool _hasLoaded = false; // true tras la primera carga exitosa
   String? _error;
   int _navIndex = 0;
+  bool _showAudit = false; // HS20: vista de auditoría sobre el shell
 
   // Validación de cuenta / colegio
   String? _colegioId;
@@ -782,7 +784,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return DashboardShell(
       navItems: _navItems,
       selectedIndex: _navIndex,
-      onNavSelected: (i) => setState(() => _navIndex = i),
+      onNavSelected: (i) => setState(() {
+        _navIndex = i;
+        _showAudit = false;
+      }),
       schoolName: _schoolName,
       userName: _adminName.isEmpty ? 'Administrador' : _adminName,
       userInitials: _initials(_adminName),
@@ -791,7 +796,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       searchHint: 'Buscar alumno por cédula, código escolar o nombre...',
       onNotificationTap: (n) {
         // Un pago reportado lleva directo a la pestaña de Conciliación.
-        if (n.tipo == 'pago_reportado') setState(() => _navIndex = 3);
+        if (n.tipo == 'pago_reportado') {
+          setState(() {
+            _navIndex = 3;
+            _showAudit = false;
+          });
+        }
       },
       headerActions: [_tasaChip(MediaQuery.sizeOf(context).width < 1150)],
       body: _buildBody(),
@@ -907,6 +917,23 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
     if (_needsStudents && _colegioId != null) {
       return StudentsImportCard(colegioId: _colegioId!, onImported: _load);
+    }
+
+    // HS20: Auditoría de transacciones
+    if (_showAudit && _colegioId != null) {
+      return SingleChildScrollView(
+        padding: pagePad,
+        child: Center(
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 1200),
+            child: AuditLogSection(
+              key: ValueKey('audit-$_colegioId'),
+              colegioId: _colegioId!,
+              onBack: () => setState(() => _showAudit = false),
+            ),
+          ),
+        ),
+      );
     }
 
     // Directorio académico y cuentas por cobrar por estudiante.
@@ -1256,7 +1283,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             border: AppColors.cardBorder,
             titleColor: AppColors.darkNavy,
             subColor: AppColors.textMuted,
-            onTap: () => _soon('La auditoría de transacciones'),
+            onTap: () => setState(() => _showAudit = true),
           ),
           _quickTile(
             leading: const Icon(

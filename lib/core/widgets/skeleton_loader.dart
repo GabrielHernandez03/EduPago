@@ -888,3 +888,167 @@ class CalendarSkeleton extends StatelessWidget {
     );
   }
 }
+
+// =============================================================================
+// AUDITORÍA DE TRANSACCIONES (HS20)
+// =============================================================================
+/// Skeleton de la pantalla de auditoría.
+/// - Completo (cabecera + filtros + filas): carga inicial de la pantalla.
+/// - [listOnly]: solo las filas, para cuando cambian los filtros o se pide
+///   "Cargar más" (cabecera y filtros reales se quedan en pantalla).
+class AuditLogSkeleton extends StatelessWidget {
+  final int rows;
+  final bool listOnly;
+  const AuditLogSkeleton({super.key, this.rows = 6, this.listOnly = false});
+
+  Widget _header(bool narrow) {
+    final text = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const SkeletonBox(width: 30, height: 30, radius: 8),
+            const SizedBox(width: 12),
+            Flexible(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 300),
+                child: const SkeletonBox(height: 26, radius: 6),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: const SkeletonBox(height: 13, radius: 6),
+        ),
+      ],
+    );
+    const back = SkeletonBox(width: 170, height: 44, radius: 10);
+    if (narrow) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [text, const SizedBox(height: 12), back],
+      );
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: text),
+        const SizedBox(width: 16),
+        back,
+      ],
+    );
+  }
+
+  Widget _filters() {
+    return const SkeletonCard(
+      padding: EdgeInsets.all(16),
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 12,
+        children: [
+          SkeletonBox(width: 250, height: 44, radius: 10),
+          SkeletonBox(width: 230, height: 44, radius: 10),
+          SkeletonBox(width: 190, height: 44, radius: 10),
+        ],
+      ),
+    );
+  }
+
+  Widget _row(bool narrow) {
+    const avatar = SkeletonBox(width: 28, height: 28, circle: true);
+    const badge = SkeletonBox(width: 88, height: 24, radius: 20);
+    const date = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _Line(width: 72, height: 13),
+        SizedBox(height: 6),
+        _Line(width: 52, height: 11),
+      ],
+    );
+
+    final content = narrow
+        ? const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [badge, date],
+              ),
+              SizedBox(height: 12),
+              _Line(width: 220, height: 14),
+              SizedBox(height: 10),
+              Row(
+                children: [
+                  avatar,
+                  SizedBox(width: 8),
+                  _Line(width: 110, height: 13),
+                ],
+              ),
+            ],
+          )
+        : const Row(
+            children: [
+              SizedBox(width: 100, child: date),
+              SizedBox(
+                width: 120,
+                child: Align(alignment: Alignment.centerLeft, child: badge),
+              ),
+              SizedBox(
+                width: 200,
+                child: Row(
+                  children: [
+                    avatar,
+                    SizedBox(width: 8),
+                    _Line(width: 110, height: 13),
+                  ],
+                ),
+              ),
+              SizedBox(width: 12),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: _Line(width: 260, height: 14),
+                ),
+              ),
+              SizedBox(width: 12),
+              SkeletonBox(width: 16, height: 16, radius: 4),
+            ],
+          );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: SkeletonCard(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+        child: content,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SkeletonScope(
+      child: LayoutBuilder(
+        builder: (context, box) {
+          final narrow = box.maxWidth < 700;
+          final list = Column(
+            children: [for (var i = 0; i < rows; i++) _row(narrow)],
+          );
+          if (listOnly) return list;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _header(narrow),
+              const SizedBox(height: 20),
+              _filters(),
+              const SizedBox(height: 16),
+              list,
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
