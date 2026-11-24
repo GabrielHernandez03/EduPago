@@ -18,6 +18,7 @@ import '../../../payments/presentation/widgets/representative_payments_section.d
 import '../../../calendar/presentation/widgets/representative_calendar_section.dart';
 import '../../../../core/services/notification_service.dart';
 import '../../../../core/widgets/dashboard_shell.dart';
+import '../../../support/presentation/widgets/support_chat_dialog.dart';
 import '../../../../core/widgets/skeleton_loader.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -102,11 +103,11 @@ class _RepresentativeDashboardScreenState
       }
     });
     fetchUserProfileAndStudents().then((_) {
-    _handleEmailActionParams();
-  });
-}
+      _handleEmailActionParams();
+    });
+  }
 
-/// Procesa las acciones que vienen desde los botones del correo electrónico (HU15)
+  /// Procesa las acciones que vienen desde los botones del correo electrónico (HU15)
   void _handleEmailActionParams() {
     // Enlaces de cobranza: se capturan en main() y sobreviven al login.
     final cobranza = CobranzaLink.take();
@@ -141,10 +142,11 @@ class _RepresentativeDashboardScreenState
       }
     });
   }
-    Future<void> _showCobranzaDialog(CobranzaLink link) async {
+
+  Future<void> _showCobranzaDialog(CobranzaLink link) async {
     CuotaEstadoCuenta? cuota;
-    for (final c in _estadoCuenta?.cuotasPendientes() ??
-        const <CuotaEstadoCuenta>[]) {
+    for (final c
+        in _estadoCuenta?.cuotasPendientes() ?? const <CuotaEstadoCuenta>[]) {
       if (c.cuotaId == link.cuotaId) {
         cuota = c;
         break;
@@ -157,12 +159,16 @@ class _RepresentativeDashboardScreenState
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: Text(sinDatos
-              ? 'No pudimos verificar tu cuenta'
-              : 'Cuota sin saldo pendiente'),
-          content: Text(sinDatos
-              ? 'Intenta nuevamente en unos minutos desde tu estado de cuenta.'
-              : 'Esta cuota ya no tiene saldo pendiente o no corresponde a tu cuenta. Revisa tu estado de cuenta.'),
+          title: Text(
+            sinDatos
+                ? 'No pudimos verificar tu cuenta'
+                : 'Cuota sin saldo pendiente',
+          ),
+          content: Text(
+            sinDatos
+                ? 'Intenta nuevamente en unos minutos desde tu estado de cuenta.'
+                : 'Esta cuota ya no tiene saldo pendiente o no corresponde a tu cuenta. Revisa tu estado de cuenta.',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(),
@@ -194,18 +200,23 @@ class _RepresentativeDashboardScreenState
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(title,
-                    style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.darkNavy)),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.darkNavy,
+                  ),
+                ),
                 const SizedBox(height: 6),
                 Text(
                   '${c.periodo.isNotEmpty ? c.periodo : c.concepto} · '
                   'Vence ${_fmtFecha(c.fechaVencimiento)} · '
                   'Saldo ${_fmtUsd(c.saldoUsd)}',
                   style: const TextStyle(
-                      fontSize: 13, color: AppColors.textMuted),
+                    fontSize: 13,
+                    color: AppColors.textMuted,
+                  ),
                 ),
                 const SizedBox(height: 18),
                 _cobranzaOption(
@@ -287,20 +298,29 @@ class _RepresentativeDashboardScreenState
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('$number. $title',
-                          style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.darkNavy)),
+                      Text(
+                        '$number. $title',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.darkNavy,
+                        ),
+                      ),
                       const SizedBox(height: 2),
-                      Text(subtitle,
-                          style: const TextStyle(
-                              fontSize: 12, color: AppColors.textMuted)),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
                     ],
                   ),
                 ),
-                const Icon(Icons.chevron_right_rounded,
-                    color: AppColors.textMuted),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: AppColors.textMuted,
+                ),
               ],
             ),
           ),
@@ -333,8 +353,9 @@ class _RepresentativeDashboardScreenState
       message = 'No pudimos enviar tu solicitud. Intenta nuevamente.';
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _showPaymentDataDialog(CuotaEstadoCuenta c) {
@@ -342,42 +363,62 @@ class _RepresentativeDashboardScreenState
       Clipboard.setData(ClipboardData(text: text));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text('$label copiado'),
-            duration: const Duration(seconds: 1)),
+          content: Text('$label copiado'),
+          duration: const Duration(seconds: 1),
+        ),
       );
     }
 
     Widget section(String title, Map<String, String> data) => Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 14, bottom: 4),
-              child: Text(title,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w800, color: AppColors.darkNavy)),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 14, bottom: 4),
+          child: Text(
+            title,
+            style: const TextStyle(
+              fontWeight: FontWeight.w800,
+              color: AppColors.darkNavy,
             ),
-            for (final e in data.entries)
-              InkWell(
-                onTap: () => copy(e.value, e.key),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Row(children: [
-                    SizedBox(
-                        width: 84,
-                        child: Text(e.key,
-                            style: const TextStyle(
-                                fontSize: 13, color: AppColors.textMuted))),
-                    Expanded(
-                        child: Text(e.value,
-                            style: const TextStyle(
-                                fontSize: 13.5, fontWeight: FontWeight.w700))),
-                    const Icon(Icons.copy_rounded,
-                        size: 16, color: AppColors.primaryBlue),
-                  ]),
-                ),
+          ),
+        ),
+        for (final e in data.entries)
+          InkWell(
+            onTap: () => copy(e.value, e.key),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 84,
+                    child: Text(
+                      e.key,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      e.value,
+                      style: const TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const Icon(
+                    Icons.copy_rounded,
+                    size: 16,
+                    color: AppColors.primaryBlue,
+                  ),
+                ],
               ),
-          ],
-        );
+            ),
+          ),
+      ],
+    );
 
     final ves = _tasaBcv > 0 ? c.saldoUsd * _tasaBcv : 0.0;
     showDialog<void>(
@@ -392,16 +433,18 @@ class _RepresentativeDashboardScreenState
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                    'Saldo: ${_fmtUsd(c.saldoUsd)} USD'
-                    '${ves > 0 ? ' · Bs. ${_fmtVes(ves)}' : ''}',
-                    style: const TextStyle(fontWeight: FontWeight.w700)),
+                  'Saldo: ${_fmtUsd(c.saldoUsd)} USD'
+                  '${ves > 0 ? ' · Bs. ${_fmtVes(ves)}' : ''}',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
                 section('Pago Móvil', ColegioDatosPago.pagoMovil),
                 section('Transferencia', ColegioDatosPago.transferencia),
                 section('Zelle', ColegioDatosPago.zelle),
                 const SizedBox(height: 12),
-                const Text('Toca un dato para copiarlo.',
-                    style:
-                        TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                const Text(
+                  'Toca un dato para copiarlo.',
+                  style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                ),
               ],
             ),
           ),
@@ -415,8 +458,9 @@ class _RepresentativeDashboardScreenState
             child: const Text('Ya pagué: adjuntar comprobante'),
           ),
           TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cerrar')),
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cerrar'),
+          ),
         ],
       ),
     );
@@ -2428,23 +2472,7 @@ class _RepresentativeDashboardScreenState
     );
   }
 
-  void _showSupportDialog() {
-    showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Soporte'),
-        content: const Text(
-          'El canal de soporte en línea todavía no está disponible. Para consultas sobre pagos, comunícate con la administración de tu colegio.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Entendido'),
-          ),
-        ],
-      ),
-    );
-  }
+  void _showSupportDialog() => SupportChatDialog.show(context);
 
   // --- TARJETA DE SALDOS DINÁMICOS EN MULTIMONEDA (HU7) ---
   Widget _buildNextPaymentCard({double availableWidth = 1000}) {

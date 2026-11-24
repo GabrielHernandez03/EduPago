@@ -11,7 +11,7 @@ import 'core/services/cobranza_link.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-    CobranzaLink.captureFromUrl(); // antes de cualquier navegación
+  CobranzaLink.captureFromUrl(); // antes de cualquier navegación
 
   // Inicialización de Supabase con flujo implícito configurado correctamente
   await Supabase.initialize(
