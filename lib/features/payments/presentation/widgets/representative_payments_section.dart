@@ -10,6 +10,7 @@ import '../../../../core/widgets/skeleton_loader.dart';
 import '../../data/payment_repository.dart';
 import '../../data/supabase_payment_repository.dart';
 import '../../domain/reported_payment.dart';
+import '../../application/payment_receipt_pdf.dart';
 
 /// Historial de los pagos reportados por el representante autenticado.
 /// Vista revisada 2026-10-30: concepto mensual por periodo y desglose USD
@@ -69,6 +70,27 @@ class _RepresentativePaymentsSectionState
   String? _error;
   String? _focusedId;
   String? _notice;
+  String? _downloadingReceiptId;
+
+Future<void> _downloadReceipt(ReportedPayment payment) async {
+  if (_downloadingReceiptId != null) return;
+  setState(() => _downloadingReceiptId = payment.id);
+  try {
+    await PaymentReceiptPdf.download(payment);
+  } catch (e) {
+    debugPrint('Error al generar recibo PDF: $e');
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('No se pudo generar el recibo PDF. Intenta de nuevo.'),
+      ),
+    );
+  } finally {
+    if (mounted) {
+      setState(() => _downloadingReceiptId = null);
+    }
+  }
+}
   String _filter = 'todos';
   String _search = '';
   int _loadVersion = 0;
@@ -1809,6 +1831,80 @@ class _RepresentativePaymentsSectionState
         ),
         const SizedBox(height: 14),
         _paymentConceptAndAllocations(payment),
+        if (status == 'aprobado') ...[
+  const SizedBox(height: 14),
+  Container(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+    decoration: BoxDecoration(
+      color: _green.withValues(alpha: 0.06),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: _green.withValues(alpha: 0.25)),
+    ),
+    child: Wrap(
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 12,
+      runSpacing: 10,
+      children: [
+        const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.verified_rounded, color: _green, size: 20),
+            SizedBox(width: 9),
+            Text(
+              'Comprobante oficial disponible',
+              style: TextStyle(
+                color: _navy,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+        Semantics(
+          button: true,
+          label: 'Descargar recibo de pago en PDF',
+          child: ElevatedButton.icon(
+            onPressed: _downloadingReceiptId == payment.id
+                ? null
+                : () => _downloadReceipt(payment),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _green,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 11,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            icon: _downloadingReceiptId == payment.id
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.picture_as_pdf_rounded, size: 18),
+            label: Text(
+              _downloadingReceiptId == payment.id
+                  ? 'Generando PDF...'
+                  : 'Descargar recibo PDF',
+              style: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  ),
+],
         if (status == 'rechazado') ...[
           const SizedBox(height: 14),
           Container(
