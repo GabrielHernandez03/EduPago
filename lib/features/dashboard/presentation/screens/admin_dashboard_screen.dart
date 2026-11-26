@@ -497,12 +497,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return parts.isEmpty ? 'administrador' : parts.first;
   }
 
-  void _soon(String what) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$what estará disponible próximamente.')),
-    );
-  }
-
   Future<void> _logout() async {
     if (_loggingOut) return;
     _loggingOut = true;
@@ -1201,106 +1195,108 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   Widget _buildQuickActions() {
+    final items = <Widget>[
+      _quickTile(
+        leading: const Icon(
+          Icons.calendar_month_outlined,
+          color: Colors.white,
+          size: 18,
+        ),
+        leadingBg: AppColors.primaryBlue,
+        title: 'Generar facturación',
+        subtitle: 'Cuotas mensuales',
+        bg: Colors.white,
+        border: AppColors.cardBorder,
+        titleColor: AppColors.darkNavy,
+        subColor: AppColors.textMuted,
+        onTap: () {
+          if (_colegioId != null) {
+            showDialog(
+              context: context,
+              builder: (context) => GenerateBillingDialog(
+                colegioId: _colegioId!,
+                onBillingGenerated: _load,
+              ),
+            );
+          }
+        },
+      ),
+      _quickTile(
+        leading: const Icon(
+          Icons.tune_outlined,
+          color: AppColors.primaryBlue,
+          size: 18,
+        ),
+        leadingBg: const Color(0xFFDBEAFE),
+        title: 'Conceptos de cobro',
+        subtitle: 'Montos y vencimientos',
+        bg: Colors.white,
+        border: AppColors.cardBorder,
+        titleColor: AppColors.darkNavy,
+        subColor: AppColors.textMuted,
+        onTap: () {
+          final colegioId = _colegioId;
+          if (colegioId == null) return;
+          showDialog<bool>(
+            context: context,
+            builder: (_) => ConceptsDialog(colegioId: colegioId),
+          );
+        },
+      ),
+      _quickTile(
+        leading: const Icon(
+          Icons.shield_outlined,
+          color: AppColors.primaryBlue,
+          size: 18,
+        ),
+        leadingBg: const Color(0xFFDBEAFE),
+        title: 'Auditoría de transacciones',
+        subtitle: 'Bitácora y trazabilidad',
+        bg: Colors.white,
+        border: AppColors.cardBorder,
+        titleColor: AppColors.darkNavy,
+        subColor: AppColors.textMuted,
+        onTap: () => setState(() => _showAudit = true),
+      ),
+      _quickTile(
+        leading: const Icon(
+          Icons.group_add_outlined,
+          color: Colors.white,
+          size: 18,
+        ),
+        leadingBg: AppColors.primaryBlue,
+        title: 'Ver y agregar estudiantes',
+        subtitle: 'Directorio y registro',
+        bg: Colors.white,
+        border: AppColors.cardBorder,
+        titleColor: AppColors.darkNavy,
+        subColor: AppColors.textMuted,
+        onTap: () => setState(() => _navIndex = 1),
+      ),
+    ];
+
     return _card(
       padding: const EdgeInsets.all(12),
-      child: _grid(
-        wideCols: 5,
-        narrowCols: 2,
-        gap: 12,
-        items: [
-          _quickTile(
-            leading: const Icon(
-              Icons.calendar_month_outlined,
-              color: Colors.white,
-              size: 18,
-            ),
-            leadingBg: AppColors.primaryBlue,
-            title: 'Generar facturación masiva mensual',
-            subtitle: 'Crea cargos para toda la matrícula',
-            bg: Colors.white,
-            border: AppColors.cardBorder,
-            titleColor: AppColors.darkNavy,
-            subColor: AppColors.textMuted,
-            onTap: () {
-              if (_colegioId != null) {
-                showDialog(
-                  context: context,
-                  builder: (context) => GenerateBillingDialog(
-                    colegioId: _colegioId!,
-                    onBillingGenerated: _load,
-                  ),
-                );
-              }
-            },
-          ),
-          _quickTile(
-            leading: const Icon(
-              Icons.tune_outlined,
-              color: AppColors.primaryBlue,
-              size: 18,
-            ),
-            leadingBg: const Color(0xFFDBEAFE),
-            title: 'Configurar conceptos de cobro',
-            subtitle: 'Montos y vencimientos',
-            bg: Colors.white,
-            border: AppColors.cardBorder,
-            titleColor: AppColors.darkNavy,
-            subColor: AppColors.textMuted,
-            onTap: () {
-              final colegioId = _colegioId;
-              if (colegioId == null) return;
-              showDialog<bool>(
-                context: context,
-                builder: (_) => ConceptsDialog(colegioId: colegioId),
-              );
-            },
-          ),
-          _quickTile(
-            leading: const Icon(
-              Icons.file_download_outlined,
-              color: AppColors.darkNavy,
-              size: 18,
-            ),
-            leadingBg: const Color(0xFFF1F5F9),
-            title: 'Exportar reportes',
-            subtitle: 'PDF o CSV',
-            bg: Colors.white,
-            border: AppColors.cardBorder,
-            titleColor: AppColors.darkNavy,
-            subColor: AppColors.textMuted,
-            onTap: () => _soon('La exportación de reportes'),
-          ),
-          _quickTile(
-            leading: const Icon(
-              Icons.shield_outlined,
-              color: AppColors.primaryBlue,
-              size: 18,
-            ),
-            leadingBg: const Color(0xFFDBEAFE),
-            title: 'Ver auditoría de transacciones',
-            subtitle: 'Bitácora y trazabilidad',
-            bg: Colors.white,
-            border: AppColors.cardBorder,
-            titleColor: AppColors.darkNavy,
-            subColor: AppColors.textMuted,
-            onTap: () => setState(() => _showAudit = true),
-          ),
-          _quickTile(
-            leading: const Icon(
-              Icons.group_add_outlined,
-              color: Colors.white,
-              size: 18,
-            ),
-            leadingBg: AppColors.primaryBlue,
-            title: 'Ver y agregar estudiantes',
-            subtitle: 'Directorio y registro manual',
-            bg: Colors.white,
-            border: AppColors.cardBorder,
-            titleColor: AppColors.darkNavy,
-            subColor: AppColors.primaryBlue,
-            onTap: () => setState(() => _navIndex = 1),
-          ),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          const gap = 12.0;
+          final scale = MediaQuery.textScalerOf(context).scale(12) / 12;
+          final columns = constraints.maxWidth >= 860 * scale
+              ? 4
+              : constraints.maxWidth >= 430 * scale
+              ? 2
+              : 1;
+          final width = (constraints.maxWidth - gap * (columns - 1)) / columns;
+          final height = 92.0 + math.max(0.0, scale - 1) * 76.0;
+          return Wrap(
+            spacing: gap,
+            runSpacing: gap,
+            children: [
+              for (final item in items)
+                SizedBox(width: width, height: height, child: item),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1362,6 +1358,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         Text(
                           subtitle,
                           style: TextStyle(fontSize: 10, color: subColor),
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ],
@@ -1837,21 +1834,27 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Widget _buildChartsRow() {
     return LayoutBuilder(
       builder: (context, c) {
-        if (c.maxWidth >= 900) {
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(flex: 3, child: _buildMonthlyChartCard()),
-              const SizedBox(width: 20),
-              Expanded(flex: 2, child: _buildSolvencyCard()),
-            ],
+        final scale = MediaQuery.textScalerOf(context).scale(12) / 12;
+        final height = 390.0 + math.max(0.0, scale - 1) * 190.0;
+        if (c.maxWidth >= 900 * math.max(1.0, scale)) {
+          return SizedBox(
+            height: height,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(flex: 3, child: _buildMonthlyChartCard()),
+                const SizedBox(width: 20),
+                Expanded(flex: 2, child: _buildSolvencyCard()),
+              ],
+            ),
           );
         }
         return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _buildMonthlyChartCard(),
+            SizedBox(height: height, child: _buildMonthlyChartCard()),
             const SizedBox(height: 20),
-            _buildSolvencyCard(),
+            SizedBox(height: height, child: _buildSolvencyCard()),
           ],
         );
       },
@@ -1935,8 +1938,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               HoverTint(borderRadius: 8, child: rangeMenu),
             ],
           ),
-          const SizedBox(height: 20),
-          _buildBarChart(),
+          const SizedBox(height: 28),
+          Expanded(child: _buildBarChart()),
         ],
       ),
     );
@@ -2172,32 +2175,40 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ],
           ),
           const SizedBox(height: 20),
-          Center(
-            child: _donut(
-              values: [
-                _solventes.toDouble(),
-                _pendientes.toDouble(),
-                _insolventes.toDouble(),
-              ],
-              colors: const [_green, _amber, _red],
-              size: 170,
-              stroke: 20,
-              center: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    '$_studentsTotal',
-                    style: const TextStyle(
-                      fontSize: 30,
-                      fontWeight: FontWeight.w800,
-                      color: AppColors.darkNavy,
-                    ),
+          Expanded(
+            child: Center(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: _donut(
+                  values: [
+                    _solventes.toDouble(),
+                    _pendientes.toDouble(),
+                    _insolventes.toDouble(),
+                  ],
+                  colors: const [_green, _amber, _red],
+                  size: 170,
+                  stroke: 20,
+                  center: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '$_studentsTotal',
+                        style: const TextStyle(
+                          fontSize: 30,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.darkNavy,
+                        ),
+                      ),
+                      const Text(
+                        'estudiantes',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                    ],
                   ),
-                  const Text(
-                    'estudiantes',
-                    style: TextStyle(fontSize: 11, color: AppColors.textMuted),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
@@ -2251,83 +2262,80 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   // Pagos recientes
   //
   Widget _buildRecentPayments() {
-    const headerStyle = TextStyle(
-      fontSize: 10,
-      fontWeight: FontWeight.bold,
-      color: AppColors.textMuted,
-      letterSpacing: 0.5,
-    );
-
-    Widget header() => Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      decoration: const BoxDecoration(
-        color: Color(0xFFF8FAFC),
-        border: Border.symmetric(
-          horizontal: BorderSide(color: AppColors.cardBorder),
-        ),
-      ),
-      child: const Row(
-        children: [
-          Expanded(flex: 3, child: Text('REPRESENTANTE', style: headerStyle)),
-          Expanded(flex: 3, child: Text('ESTUDIANTE', style: headerStyle)),
-          Expanded(flex: 3, child: Text('CONCEPTO', style: headerStyle)),
-          Expanded(flex: 2, child: Text('MONTO', style: headerStyle)),
-          Expanded(flex: 2, child: Text('ESTADO', style: headerStyle)),
-          Expanded(flex: 2, child: Text('FECHA', style: headerStyle)),
-        ],
-      ),
-    );
-
     return _card(
+      hover: false,
       padding: EdgeInsets.zero,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.all(20),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+            child: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 16,
+              runSpacing: 8,
               children: [
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Pagos recientes',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.darkNavy,
-                        ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEFF6FF),
+                        borderRadius: BorderRadius.circular(11),
                       ),
-                      SizedBox(height: 2),
-                      Text(
-                        'Últimas operaciones registradas',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: AppColors.textMuted,
-                        ),
+                      child: const Icon(
+                        Icons.receipt_long_outlined,
+                        color: AppColors.primaryBlue,
+                        size: 20,
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 12),
+                    const Flexible(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Pagos recientes',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.darkNavy,
+                            ),
+                          ),
+                          SizedBox(height: 3),
+                          Text(
+                            'Últimos pagos reportados',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textMuted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
                 TextButton(
-                  onPressed: () => _soon('El historial completo de pagos'),
+                  onPressed: () => setState(() => _navIndex = 3),
                   child: const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        'Ver todos',
+                        'Ir a conciliación',
                         style: TextStyle(
-                          color: AppColors.primaryBlue,
                           fontSize: 12,
-                          fontWeight: FontWeight.bold,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primaryBlue,
                         ),
                       ),
                       SizedBox(width: 6),
                       Icon(
-                        Icons.arrow_forward,
-                        size: 14,
+                        Icons.arrow_forward_rounded,
+                        size: 16,
                         color: AppColors.primaryBlue,
                       ),
                     ],
@@ -2336,116 +2344,141 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ],
             ),
           ),
-          LayoutBuilder(
-            builder: (context, c) {
-              if (c.maxWidth < 640) return _recentPaymentsCompact();
-              final width = math.max(c.maxWidth, 760.0);
-              return SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: SizedBox(
-                  width: width,
-                  child: Column(
-                    children: [
-                      header(),
-                      if (_recent.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.all(28),
-                          child: Center(
-                            child: Text(
-                              'Aún no hay pagos registrados. Cuando un representante reporte uno, aparecerá aquí.',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: AppColors.textMuted,
-                              ),
-                            ),
-                          ),
-                        )
-                      else
-                        for (var i = 0; i < _recent.length; i++) ...[
-                          HoverTint(child: _payRow(_recent[i])),
-                          if (i < _recent.length - 1)
-                            const Divider(
-                              height: 1,
-                              color: AppColors.cardBorder,
-                            ),
-                        ],
-                    ],
+          if (_recent.isEmpty)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(24, 16, 24, 32),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.receipt_long_outlined,
+                    size: 30,
+                    color: AppColors.textMuted,
                   ),
-                ),
-              );
-            },
-          ),
+                  SizedBox(height: 10),
+                  Text(
+                    'No hay pagos recientes para mostrar.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                  ),
+                ],
+              ),
+            )
+          else
+            LayoutBuilder(
+              builder: (context, c) {
+                final scale = MediaQuery.textScalerOf(context).scale(12) / 12;
+                if (c.maxWidth < 820 * math.max(1.0, scale)) {
+                  return _recentPaymentsCompact();
+                }
+                return Column(
+                  children: [
+                    _recentPaymentsHeader(),
+                    for (var i = 0; i < _recent.length; i++) ...[
+                      _RecentPaymentHover(child: _payRow(_recent[i])),
+                      if (i < _recent.length - 1)
+                        const Divider(height: 1, color: Color(0xFFE9EEF5)),
+                    ],
+                  ],
+                );
+              },
+            ),
         ],
       ),
     );
   }
 
-  // Vista de pagos para pantallas angostas: una tarjeta por pago.
-  Widget _recentPaymentsCompact() {
-    if (_recent.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.all(28),
-        child: Center(
-          child: Text(
-            'Aún no hay pagos registrados. Cuando un representante reporte uno, aparecerá aquí.',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 12, color: AppColors.textMuted),
-          ),
-        ),
-      );
-    }
-    return Column(
+  // Columnas idénticas para encabezado y filas: mantienen los datos alineados.
+  Widget _recentColumns(List<Widget> cells) {
+    const flexes = [4, 3, 3, 2, 2];
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        const Divider(height: 1, color: AppColors.cardBorder),
-        for (var i = 0; i < _recent.length; i++) ...[
-          HoverTint(child: _payRowCompact(_recent[i])),
-          if (i < _recent.length - 1)
-            const Divider(height: 1, color: AppColors.cardBorder),
+        for (var i = 0; i < cells.length; i++) ...[
+          if (i > 0) const SizedBox(width: 12),
+          Expanded(flex: flexes[i], child: cells[i]),
         ],
       ],
     );
   }
 
-  Widget _payRowCompact(_PagoRow p) {
-    final amount = p.currency == 'USD'
-        ? '\$${_money(p.amount)}'
-        : 'Bs. ${_money(p.amount)}';
+  Widget _recentPaymentsHeader() {
+    const style = TextStyle(
+      fontSize: 10,
+      fontWeight: FontWeight.w700,
+      color: AppColors.textMuted,
+      letterSpacing: 0.35,
+    );
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: const BoxDecoration(
+        color: Color(0xFFF5F8FC),
+        border: Border.symmetric(
+          horizontal: BorderSide(color: Color(0xFFE2E8F0)),
+        ),
+      ),
+      child: _recentColumns(const [
+        Text('REPRESENTANTE / ESTUDIANTE', style: style),
+        Text('CONCEPTO', style: style),
+        Text('MONTO', style: style, textAlign: TextAlign.right),
+        Text('ESTADO', style: style, textAlign: TextAlign.center),
+        Text('FECHA DE REPORTE', style: style, textAlign: TextAlign.right),
+      ]),
+    );
+  }
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          CircleAvatar(
-            radius: 16,
-            backgroundColor: const Color(0xFFEFF6FF),
-            child: Text(
-              _initials(p.representative),
-              style: const TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-                color: AppColors.primaryBlue,
-              ),
+  String _recentAmount(_PagoRow p) =>
+      p.currency == 'USD' ? '\$${_money(p.amount)}' : 'Bs. ${_money(p.amount)}';
+
+  String _recentStudent(_PagoRow p) =>
+      p.student.trim().isEmpty || p.student == '-'
+      ? 'Estudiante no disponible'
+      : p.student;
+
+  String _recentConcept(_PagoRow p) =>
+      p.concept.trim().isEmpty || p.concept == '-'
+      ? 'Concepto no disponible'
+      : p.concept;
+
+  Widget _recentIdentity(_PagoRow p) {
+    final student = _recentStudent(p);
+    return Row(
+      children: [
+        CircleAvatar(
+          radius: 17,
+          backgroundColor: const Color(0xFFEAF2FF),
+          child: Text(
+            _initials(p.representative),
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: AppColors.primaryBlue,
             ),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Tooltip(
+                message: p.representative,
+                child: Text(
                   p.representative,
-                  maxLines: 1,
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
                     color: AppColors.darkNavy,
                   ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  '${p.student} • ${p.concept}',
+              ),
+              const SizedBox(height: 4),
+              Tooltip(
+                message: student,
+                child: Text(
+                  student,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -2453,146 +2486,157 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     color: AppColors.textMuted,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  _when(p.date),
-                  style: const TextStyle(
-                    fontSize: 10,
-                    color: AppColors.textMuted,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                amount,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.darkNavy,
-                ),
               ),
-              const SizedBox(height: 6),
-              _statusChip(p.status),
             ],
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _recentAmountText(_PagoRow p) => Text(
+    _recentAmount(p),
+    textAlign: TextAlign.right,
+    style: const TextStyle(
+      fontSize: 13,
+      fontWeight: FontWeight.w800,
+      color: AppColors.darkNavy,
+    ),
+  );
+
+  Widget _payRow(_PagoRow p) {
+    final concept = _recentConcept(p);
+    return Container(
+      constraints: const BoxConstraints(minHeight: 76),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      child: _recentColumns([
+        _recentIdentity(p),
+        Tooltip(
+          message: concept,
+          child: Text(
+            concept,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              color: p.concept.trim().isEmpty || p.concept == '-'
+                  ? AppColors.textMuted
+                  : AppColors.darkNavy,
+            ),
+          ),
+        ),
+        _recentAmountText(p),
+        Center(child: _statusChip(p.status)),
+        Text(
+          _when(p.date),
+          textAlign: TextAlign.right,
+          style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+        ),
+      ]),
+    );
+  }
+
+  // En pantallas pequeñas se apilan los datos sin scroll horizontal.
+  Widget _recentPaymentsCompact() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      child: Column(
+        children: [
+          for (var i = 0; i < _recent.length; i++) ...[
+            if (i > 0) const SizedBox(height: 8),
+            _payRowCompact(_recent[i]),
+          ],
         ],
       ),
     );
   }
 
-  Widget _payRow(_PagoRow p) {
-    final amount = p.currency == 'USD'
-        ? '\$${_money(p.amount)}'
-        : 'Bs. ${_money(p.amount)}';
-    const cell = TextStyle(fontSize: 12, color: AppColors.darkNavy);
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-      child: Row(
-        children: [
-          Expanded(
-            flex: 3,
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 16,
-                  backgroundColor: const Color(0xFFEFF6FF),
-                  child: Text(
-                    _initials(p.representative),
-                    style: const TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.primaryBlue,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Flexible(
-                  child: Text(
-                    p.representative,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.darkNavy,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
+  Widget _payRowCompact(_PagoRow p) {
+    return _RecentPaymentHover(
+      compact: true,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _recentIdentity(p),
+            const SizedBox(height: 10),
+            Text(
+              _recentConcept(p),
+              style: const TextStyle(fontSize: 12, color: AppColors.darkNavy),
             ),
-          ),
-          Expanded(
-            flex: 3,
-            child: Text(
-              p.student,
-              style: cell,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          Expanded(
-            flex: 3,
-            child: Text(
-              p.concept,
-              style: cell,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Text(
-              amount,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: AppColors.darkNavy,
-              ),
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: _statusChip(p.status),
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Text(
+            const SizedBox(height: 4),
+            Text(
               _when(p.date),
               style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
             ),
-          ),
-        ],
+            const SizedBox(height: 10),
+            const Divider(height: 1, color: Color(0xFFE9EEF5)),
+            const SizedBox(height: 10),
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 12,
+              runSpacing: 8,
+              children: [_statusChip(p.status), _recentAmountText(p)],
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _statusChip(String status) {
-    switch (status) {
-      case 'aprobado':
-        return _pill(
-          text: 'Verificado',
-          bg: const Color(0xFFDCFCE7),
-          fg: const Color(0xFF166534),
-        );
-      case 'rechazado':
-        return _pill(
-          text: 'Rechazado',
-          bg: const Color(0xFFFEE2E2),
-          fg: const Color(0xFFB91C1C),
-        );
-      default:
-        return _pill(
-          text: 'En revisión',
-          bg: const Color(0xFFFEF3C7),
-          fg: const Color(0xFFB45309),
-        );
-    }
+    final (label, icon, bg, fg) = switch (status) {
+      'aprobado' => (
+        'Aprobado',
+        Icons.check_circle_outline_rounded,
+        const Color(0xFFDCFCE7),
+        const Color(0xFF166534),
+      ),
+      'rechazado' => (
+        'Rechazado',
+        Icons.cancel_outlined,
+        const Color(0xFFFEE2E2),
+        const Color(0xFFB91C1C),
+      ),
+      'pendiente' => (
+        'En revisión',
+        Icons.schedule_rounded,
+        const Color(0xFFFEF3C7),
+        const Color(0xFF92400E),
+      ),
+      _ => (
+        'Sin confirmar',
+        Icons.help_outline_rounded,
+        const Color(0xFFF1F5F9),
+        AppColors.textMuted,
+      ),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Wrap(
+        spacing: 5,
+        runSpacing: 3,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        alignment: WrapAlignment.center,
+        children: [
+          Icon(icon, size: 13, color: fg),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: fg,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildFooterNotice() {
@@ -2691,19 +2735,19 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Widget _card({
     required Widget child,
     EdgeInsets padding = const EdgeInsets.all(20),
+    bool hover = true,
   }) {
-    return _dashboardHover(
-      Container(
-        padding: padding,
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.cardBorder),
-        ),
-        child: _cornerWaves(child),
+    final card = Container(
+      padding: padding,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.cardBorder),
       ),
+      child: _cornerWaves(child),
     );
+    return hover ? _dashboardHover(card) : card;
   }
 
   Widget _grid({
@@ -2720,6 +2764,85 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       narrowCols: 1,
       gap: gap,
       hoverLift: hoverLift ?? 0,
+    );
+  }
+}
+
+/// Hover exclusivo de pagos recientes. No escala ni mueve las filas, no
+/// añade sombras y no intercepta los tooltips. El estado es local a cada fila.
+class _RecentPaymentHover extends StatefulWidget {
+  const _RecentPaymentHover({required this.child, this.compact = false});
+
+  final Widget child;
+  final bool compact;
+
+  @override
+  State<_RecentPaymentHover> createState() => _RecentPaymentHoverState();
+}
+
+class _RecentPaymentHoverState extends State<_RecentPaymentHover> {
+  bool _hovered = false;
+
+  void _setHovered(bool value) {
+    if (!mounted || _hovered == value) return;
+    setState(() => _hovered = value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Entrada suave, salida inmediata: nunca queda una fila resaltada
+    // durante una transición al mover rápidamente el puntero.
+    final duration = !_hovered || MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 100);
+    final background = _hovered
+        ? Color.alphaBlend(
+            AppColors.primaryBlue.withValues(alpha: 0.065),
+            Colors.white,
+          )
+        : Colors.white;
+    final accent = _hovered ? AppColors.primaryBlue : Colors.transparent;
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.basic,
+      onEnter: (_) => _setHovered(true),
+      onExit: (_) => _setHovered(false),
+      child: AnimatedContainer(
+        duration: duration,
+        curve: Curves.easeOut,
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: widget.compact ? BorderRadius.circular(12) : null,
+          border: widget.compact
+              ? Border.all(
+                  color: _hovered
+                      ? AppColors.primaryBlue.withValues(alpha: 0.38)
+                      : const Color(0xFFE2E8F0),
+                )
+              : null,
+        ),
+        child: Stack(
+          children: [
+            widget.child,
+            Positioned(
+              left: widget.compact ? 3 : 0,
+              top: 10,
+              bottom: 10,
+              width: 3,
+              child: IgnorePointer(
+                child: AnimatedContainer(
+                  duration: duration,
+                  curve: Curves.easeOut,
+                  decoration: BoxDecoration(
+                    color: accent,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -6,6 +6,7 @@ import '../../../academics/presentation/widgets/academic_widgets.dart';
 import '../../data/student_repository.dart';
 import '../../data/supabase_student_repository.dart';
 import '../../domain/student_account.dart';
+import '../widgets/manual_student_dialog.dart';
 
 /// Directorio académico y estado de cuenta por estudiante.
 /// Todas las consultas se limitan al colegio del administrador. Las políticas
@@ -456,7 +457,7 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
                           subtitle:
                               'Directorio académico y estado de cuenta por estudiante.',
                         );
-                        final action = OutlinedButton.icon(
+                        final refreshAction = OutlinedButton.icon(
                           onPressed: _refreshing ? null : _fetch,
                           icon: _refreshing
                               ? const SizedBox(
@@ -471,6 +472,18 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
                             _refreshing ? 'Actualizando...' : 'Actualizar',
                           ),
                         );
+                        final addAction = FilledButton.icon(
+                          onPressed: _addStudents,
+                          icon: const Icon(
+                            Icons.person_add_alt_1_rounded,
+                            size: 18,
+                          ),
+                          label: const Text('Agregar estudiante'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _blue,
+                            foregroundColor: Colors.white,
+                          ),
+                        );
                         if (box.maxWidth < 650 ||
                             MediaQuery.textScalerOf(context).scale(14) > 20) {
                           return Column(
@@ -478,7 +491,11 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
                             children: [
                               heading,
                               const SizedBox(height: 14),
-                              action,
+                              Wrap(
+                                spacing: 12,
+                                runSpacing: 10,
+                                children: [refreshAction, addAction],
+                              ),
                             ],
                           );
                         }
@@ -486,7 +503,9 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
                           children: [
                             const Expanded(child: heading),
                             const SizedBox(width: 18),
-                            action,
+                            refreshAction,
+                            const SizedBox(width: 12),
+                            addAction,
                           ],
                         );
                       },
@@ -894,6 +913,31 @@ class _AdminStudentsSectionState extends State<AdminStudentsSection> {
                 ),
               ],
             ),
+    );
+  }
+
+  Future<void> _addStudents() async {
+    if (widget.colegioId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo identificar el colegio.')),
+      );
+      return;
+    }
+    final created = await showManualStudentDialog(
+      context,
+      colegioId: widget.colegioId,
+    );
+    if (!mounted || created == null || created <= 0) return;
+    await _fetch();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          created == 1
+              ? 'Estudiante registrado correctamente.'
+              : '$created estudiantes registrados correctamente.',
+        ),
+      ),
     );
   }
 

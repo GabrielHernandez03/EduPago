@@ -990,8 +990,6 @@ class _RepresentativeDashboardScreenState
                   child: _buildDigitalDocumentsSection(),
                 ),
                 const SizedBox(height: _sectionGap),
-                _buildActionButtons(),
-                const SizedBox(height: _sectionGap),
                 _buildFooterSecurityNotice(),
                 const SizedBox(height: 20),
               ],
@@ -2054,8 +2052,8 @@ class _RepresentativeDashboardScreenState
         ),
         _quickAction(
           Icons.headset_mic_rounded,
-          'Soporte',
-          'Estamos aquí para ayudarte',
+          'Soporte virtual',
+          'Consulta con nuestro chatbot',
           const Color(0xFF7028DE), // morado: soporte
           const Color(0xFFF0E7FF),
           const Color(0xFFF9F6FF),
@@ -3345,52 +3343,6 @@ class _RepresentativeDashboardScreenState
     );
   }
 
-  // El botón primario «Reportar pago» vive en la tarjeta de saldo. Aquí queda
-  // solo la acción secundaria, con explicación cuando está deshabilitada.
-  Widget _buildActionButtons() {
-    final bool enabled = _isSolventeFamiliar;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        OutlinedButton.icon(
-          // El QR todavía no está implementado en el código proporcionado.
-          // No simular generación exitosa ni habilitar un botón sin acción.
-          onPressed: null,
-          style: OutlinedButton.styleFrom(
-            foregroundColor: AppColors.darkNavy,
-            side: const BorderSide(color: AppColors.cardBorder),
-            minimumSize: const Size.fromHeight(AppSizes.control),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppSizes.radiusControl),
-            ),
-          ),
-          icon: const Icon(Icons.qr_code, size: 18),
-          label: const Text(
-            'Pase digital (próximamente)',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-          ),
-        ),
-        if (!enabled) ...[
-          const SizedBox(height: 8),
-          const Row(
-            children: [
-              Icon(Icons.info_outline, size: 16, color: AppColors.textMuted),
-              SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  'Para emitir el pase será necesario estar solvente. Esta función está en desarrollo.',
-                  style: TextStyle(fontSize: 12, color: AppColors.textMuted),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ],
-    );
-  }
-
   // Documentación académica: tarjetas informativas mientras los trámites no
   // estén publicados. Se evita mostrar botones de descarga sin acción real.
   Widget _buildDigitalDocumentsSection() {
@@ -3485,7 +3437,7 @@ class _RepresentativeDashboardScreenState
             ),
             const SizedBox(height: 18),
             ResponsiveGrid(
-              wideCols: 3,
+              wideCols: 2,
               mediumCols: 2,
               narrowCols: 1,
               wideBreak: 720,
@@ -3494,21 +3446,6 @@ class _RepresentativeDashboardScreenState
               hoverLift: 0,
               hoverRadius: 14,
               items: [
-                SizedBox(
-                  height: 226,
-                  child: _buildDocCard(
-                    icon: Icons.calendar_month_outlined,
-                    iconColor: AppColors.primaryBlue,
-                    iconBackground: const Color(0xFFEAF2FF),
-                    title: 'Plan de evaluación y horarios',
-                    description:
-                        'Actividades, evaluaciones y horarios escolares.',
-                    status: 'En preparación',
-                    statusIcon: Icons.schedule_rounded,
-                    statusBackground: const Color(0xFFEAF2FF),
-                    statusColor: AppColors.primaryDark,
-                  ),
-                ),
                 SizedBox(
                   height: 226,
                   child: _buildDocCard(
@@ -3522,6 +3459,8 @@ class _RepresentativeDashboardScreenState
                     statusIcon: Icons.folder_open_outlined,
                     statusBackground: AppColors.primaryLight,
                     statusColor: AppColors.primaryBlue,
+                    onPressed: () =>
+                        setState(() => _selectedNavIndex = _tabDocumentos),
                   ),
                 ),
                 SizedBox(
@@ -3586,7 +3525,27 @@ class _RepresentativeDashboardScreenState
     required IconData statusIcon,
     required Color statusBackground,
     required Color statusColor,
+    VoidCallback? onPressed,
   }) {
+    final statusContent = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(statusIcon, size: 15, color: statusColor),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            status,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+              color: statusColor,
+            ),
+          ),
+        ),
+      ],
+    );
     return _dashboardHover(
       Container(
         constraints: const BoxConstraints(minHeight: 188),
@@ -3669,32 +3628,37 @@ class _RepresentativeDashboardScreenState
               ),
             ),
             const Spacer(),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-              decoration: BoxDecoration(
-                color: statusBackground,
-                borderRadius: BorderRadius.circular(9),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(statusIcon, size: 15, color: statusColor),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
-                      status,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w700,
-                        color: statusColor,
-                      ),
-                    ),
+            if (onPressed != null)
+              TextButton(
+                onPressed: onPressed,
+                style: TextButton.styleFrom(
+                  foregroundColor: statusColor,
+                  backgroundColor: statusBackground,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 7,
                   ),
-                ],
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  splashFactory: NoSplash.splashFactory,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                ),
+                child: statusContent,
+              )
+            else
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 7,
+                ),
+                decoration: BoxDecoration(
+                  color: statusBackground,
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: statusContent,
               ),
-            ),
           ],
         ),
       ),

@@ -1078,6 +1078,8 @@ class _DashboardShellState extends State<DashboardShell>
     required bool inDrawer,
   }) {
     void onTap() {
+      // En móvil el menú es un drawer: se cierra antes de abrir el chat.
+      if (inDrawer) _scaffoldKey.currentState?.closeDrawer();
       if (widget.onSupportTap != null) {
         widget.onSupportTap!();
       } else {
@@ -1090,13 +1092,13 @@ class _DashboardShellState extends State<DashboardShell>
     }
 
     return _SideTooltip(
-      message: '¿Necesitas ayuda?',
+      message: 'Habla con el asistente',
       enabled: tooltips,
       child: HoverBuilder(
         cursor: SystemMouseCursors.click,
         builder: (context, hovered) => Semantics(
           button: true,
-          label: '¿Necesitas ayuda? Abrir soporte',
+          label: '¿Necesitas ayuda? Abrir el asistente virtual',
           excludeSemantics: true,
           child: _SidebarPressSurface(
             onTap: onTap,
@@ -1143,7 +1145,7 @@ class _DashboardShellState extends State<DashboardShell>
                             Opacity(
                               opacity: 1 - labels,
                               child: const Icon(
-                                Icons.headset_mic_outlined,
+                                Icons.headset_mic_rounded,
                                 color: Colors.white,
                                 size: 22,
                               ),
@@ -1151,7 +1153,7 @@ class _DashboardShellState extends State<DashboardShell>
                             Opacity(
                               opacity: labels,
                               child: const Icon(
-                                Icons.info_rounded,
+                                Icons.headset_mic_rounded,
                                 color: Color(0xFF75ACFF),
                                 size: 24,
                               ),
@@ -1180,7 +1182,7 @@ class _DashboardShellState extends State<DashboardShell>
                               ),
                               SizedBox(height: 3),
                               Text(
-                                'Estamos para ti',
+                                'Habla con el asistente',
                                 maxLines: 1,
                                 softWrap: false,
                                 overflow: TextOverflow.clip,
